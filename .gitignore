@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+/.takeout
+.takeoutignore
+package-lock.json
+takeout.py
