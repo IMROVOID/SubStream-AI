@@ -1,6 +1,6 @@
 # SubStream AI
 
-A high-performance, context-aware SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built with a modern tech stack including **React, TypeScript, and Vite**, and features a robust AI processing pipeline powered by the **Google GenAI SDK**.
+A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built from the ground up with a modern tech stack including **React, TypeScript, and Vite**, and features a sleek, glassmorphic dark UI with client-side AI processing.
 
 ### [🚀 View Live Demo 🚀](https://imrovoid.github.io/SubStream-AI/)
 
@@ -24,6 +24,7 @@ The project is organized into a clean and scalable structure to make navigation 
 ├── services/       # AI integration logic (Gemini SDK, batching, retry logic)
 ├── utils/          # Helpers for SRT parsing and stringifying
 ├── App.tsx         # Main application logic and state management
+├── index.tsx       # Application entry point
 └── types.ts        # TypeScript definitions for Subtitles and Models
 ```
 
@@ -53,9 +54,9 @@ To get a local copy up and running, follow these simple steps.
 
 This project was designed to be easily customizable. Here’s how you can modify its key parts:
 
-*   **AI Logic & Prompts:** The core translation logic, system instructions, and retry mechanisms are located in `src/services/geminiService.ts`.
-*   **Supported Models:** To add or remove Gemini models, update the `AVAILABLE_MODELS` array in `src/types.ts`.
-*   **UI Components:** The visual elements like the glassmorphic modals and cards are found in `src/components/`.
+*   **AI Logic & Prompts:** The core translation logic, system instructions, and retry mechanisms are located in `services/geminiService.ts`.
+*   **Supported Models:** To add or remove Gemini models, update the `AVAILABLE_MODELS` array in `types.ts`.
+*   **UI Components:** The visual elements like the glassmorphic modals and cards are found in `components/`.
 *   **Styling & Theming:** All global styles, animations, and Tailwind configuration are located in `index.html` and `App.tsx`.
 
 ## 🛠️ Technologies & Libraries Used
