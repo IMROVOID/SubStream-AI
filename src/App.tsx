@@ -209,24 +209,32 @@ const App = () => {
   };
 
   const handleVideoUpload = async (videoFile: File) => {
+    console.log("handleVideoUpload: Starting.");
     try {
       setVideoProcessingStatus(VideoProcessingStatus.LOADING_FFMPEG);
       const ffmpeg = await loadFFmpeg((message) => setVideoProcessingMessage(message));
       ffmpegRef.current = ffmpeg;
+      console.log("handleVideoUpload: FFmpeg loaded successfully.");
       
       setVideoProcessingStatus(VideoProcessingStatus.ANALYZING);
       setVideoProcessingMessage('Analyzing video for subtitle tracks...');
       const tracks = await analyzeVideoFile(ffmpeg, videoFile);
       setExtractedTracks(tracks);
+      console.log("handleVideoUpload: Video analysis complete.");
       
       setVideoSrc(URL.createObjectURL(videoFile));
       setVideoProcessingStatus(VideoProcessingStatus.IDLE); // Now wait for user choice
 
       if (tracks.length === 0) {
-        await handleGenerateSubtitles(); // Automatically trigger generation if no tracks are found
+        console.log("handleVideoUpload: No tracks found, proceeding to generate subtitles.");
+        await handleGenerateSubtitles();
+      } else {
+        console.log(`handleVideoUpload: ${tracks.length} tracks found, waiting for user selection.`);
       }
     } catch (e: any) {
-      setError(e.message || 'Failed to process video file.');
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      console.error("!!!! CRITICAL ERROR in handleVideoUpload !!!!", e);
+      setError(`Failed to process video file: ${errorMessage}`);
       setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -241,7 +249,9 @@ const App = () => {
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
-        setError(e.message || 'Failed to extract subtitle track.');
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error("!!!! CRITICAL ERROR in handleTrackSelection !!!!", e);
+        setError(`Failed to extract subtitle track: ${errorMessage}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -254,7 +264,7 @@ const App = () => {
         return;
     }
     const key = userApiKey || process.env.API_KEY;
-    if (!key) return; // Should be handled by above check, but for TS safety
+    if (!key) return;
 
     try {
         setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_AUDIO);
@@ -269,7 +279,9 @@ const App = () => {
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
-        setError(e.message || 'Failed to generate subtitles.');
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error("!!!! CRITICAL ERROR in handleGenerateSubtitles !!!!", e);
+        setError(`Failed to generate subtitles: ${errorMessage}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -331,7 +343,9 @@ const App = () => {
         downloadFile(`translated_${file.name.split('.')[0]}.mkv`, newVideoBlob);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
-        setError(e.message || 'Failed to package video file.');
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error("!!!! CRITICAL ERROR in handleDownloadVideo !!!!", e);
+        setError(`Failed to package video file: ${errorMessage}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
