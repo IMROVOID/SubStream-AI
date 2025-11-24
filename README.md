@@ -1,26 +1,21 @@
-<<<<<<< HEAD
-
 # SubStream AI
 
-A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built from the ground up with a modern tech stack including **React, TypeScript, and Vite**, and features a sleek, glassmorphic dark UI with client-side AI processing.
-=======
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+A high-performance, context-aware SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built with a modern tech stack including **React, TypeScript, and Vite**, and features a robust AI processing pipeline powered by the **Google GenAI SDK**.
 
-# Run and deploy your AI Studio app
->>>>>>> parent of 76632ae (feat: Improve README with project details)
+### [🚀 View Live Demo 🚀](https://imrovoid.github.io/SubStream-AI/)
 
-This contains everything you need to run your app locally.
+![SubStream AI Screenshot](https://raw.githubusercontent.com/IMROVOID/SubStream-AI/main/public/screenshot.png)
 
-View your app in AI Studio: https://ai.studio/apps/drive/1J88hI5CcZG0wqN0d1wEsrILNxFfSrBMb
+## ✨ Key Features
 
-## Run Locally
+*   **Context-Aware Translation:** Uses intelligent batching to process subtitles in groups, allowing Gemini 3 Pro to understand context, gender, and tone across lines.
+*   **Multi-Model Support:** Switch between **Gemini 3 Pro** (High Reasoning), **Gemini 2.5 Flash** (High Speed), and other models instantly via the configuration overlay.
+*   **Client-Side Privacy:** Your API keys and files are processed locally in the browser memory and sent directly to Google. No data is stored on our servers.
+*   **Live Preview & Editing:** View original and translated text side-by-side in real-time as the AI processes the file.
+*   **Smart Quota Management:** Real-time estimation of API request usage and local quota tracking to help you stay within limits.
 
-**Prerequisites:**  Node.js
+## 📁 Project Structure
 
-
-<<<<<<< HEAD
 The project is organized into a clean and scalable structure to make navigation and modification intuitive.
 
 ```
@@ -29,7 +24,6 @@ The project is organized into a clean and scalable structure to make navigation 
 ├── services/       # AI integration logic (Gemini SDK, batching, retry logic)
 ├── utils/          # Helpers for SRT parsing and stringifying
 ├── App.tsx         # Main application logic and state management
-├── index.tsx       # Application entry point
 └── types.ts        # TypeScript definitions for Subtitles and Models
 ```
 
@@ -45,7 +39,7 @@ To get a local copy up and running, follow these simple steps.
     ```sh
     cd SubStream-AI
     ```
-3.  **Install NPM packages (Requires Node.js):**
+3.  **Install NPM packages:**
     ```sh
     npm install
     ```
@@ -59,9 +53,9 @@ To get a local copy up and running, follow these simple steps.
 
 This project was designed to be easily customizable. Here’s how you can modify its key parts:
 
-*   **AI Logic & Prompts:** The core translation logic, system instructions, and retry mechanisms are located in `services/geminiService.ts`.
-*   **Supported Models:** To add or remove Gemini models, update the `AVAILABLE_MODELS` array in `types.ts`.
-*   **UI Components:** The visual elements like the glassmorphic modals and cards are found in `components/`.
+*   **AI Logic & Prompts:** The core translation logic, system instructions, and retry mechanisms are located in `src/services/geminiService.ts`.
+*   **Supported Models:** To add or remove Gemini models, update the `AVAILABLE_MODELS` array in `src/types.ts`.
+*   **UI Components:** The visual elements like the glassmorphic modals and cards are found in `src/components/`.
 *   **Styling & Theming:** All global styles, animations, and Tailwind configuration are located in `index.html` and `App.tsx`.
 
 ## 🛠️ Technologies & Libraries Used
@@ -82,31 +76,19 @@ This project leverages several modern libraries and tools to achieve its functio
 
 This repository is pre-configured for easy deployment to GitHub Pages.
 
-1.  **Update Configuration Files:**
-    *   **`package.json`**: Add the homepage field:
-        ```json
-        "homepage": "https://imrovoid.github.io/SubStream-AI/",
-        ```
-    *   **`vite.config.ts`**: Set the base path:
-        ```ts
-        export default defineConfig({
-          base: '/SubStream-AI/',
-          plugins: [react()],
-        })
-        ```
-
+1.  **Set `homepage` and `base`:**
+    *   In `package.json`, the `"homepage"` field is set to your GitHub Pages URL.
+    *   In `vite.config.ts`, the `base` property is set to your repository name.
 2.  **Run the deploy script:**
     This single command will build your project and push the `dist` folder to the `gh-pages` branch on your repository.
     ```sh
     npm run deploy
     ```
-    *(Ensure you have the `gh-pages` package installed: `npm install gh-pages --save-dev`)*
-
 3.  **Configure GitHub Settings:**
     *   In your repository settings, navigate to the **Pages** tab.
     *   Set the **Source** to **"Deploy from a branch"**.
     *   Set the **Branch** to **`gh-pages`** with the `/root` folder.
-    *   Save your changes. Your site will be live at `https://imrovoid.github.io/SubStream-AI/` within a few minutes.
+    *   Save your changes. Your site will be live within a few minutes.
 
 ---
 
@@ -137,10 +119,3 @@ If you find this application useful, please consider a donation. As I am based i
 | **USDT** (TRC20) | `THMe6FdXkA2Pw45yKaXBHRnkX3fjyKCzfy` |
 | **Solana** (SOL) | `9QZHMTN4Pu6BCxiN2yABEcR3P4sXtBjkog9GXNxWbav1` |
 | **TON** | `UQCp0OawnofpZTNZk-69wlqIx_wQpzKBgDpxY2JK5iynh3mC` |
-=======
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
->>>>>>> parent of 76632ae (feat: Improve README with project details)
