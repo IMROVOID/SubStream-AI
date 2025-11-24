@@ -1,4 +1,3 @@
-
 import { SubtitleNode } from '../types';
 
 export const parseSRT = (data: string): SubtitleNode[] => {
@@ -45,9 +44,9 @@ export const stringifySRT = (subtitles: SubtitleNode[]): string => {
     .join('\n\n');
 };
 
-export const downloadFile = (filename: string, content: string) => {
+export const downloadFile = (filename: string, content: string | Blob) => {
   const element = document.createElement('a');
-  const file = new Blob([content], { type: 'text/plain' });
+  const file = typeof content === 'string' ? new Blob([content], { type: 'text/plain' }) : content;
   element.href = URL.createObjectURL(file);
   element.download = filename;
   document.body.appendChild(element);

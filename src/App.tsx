@@ -1,13 +1,17 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2 } from 'lucide-react';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS } from './types';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard } from 'lucide-react';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
-import { processFullSubtitleFile, BATCH_SIZE, validateApiKey } from './services/geminiService';
+import { processFullSubtitleFile, BATCH_SIZE, validateApiKey, transcribeAudio } from './services/geminiService';
+import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
 import { StepIndicator } from './components/StepIndicator';
 import { Modal } from './components/Modal';
 import { Documentation } from './components/Documentation';
+import { VideoPlayer } from './components/VideoPlayer';
+import { TrackSelector } from './components/TrackSelector';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 type Page = 'HOME' | 'DOCS';
 type ModalType = 'NONE' | 'PRIVACY' | 'TOS' | 'CONFIG';
@@ -16,30 +20,43 @@ type ApiKeyStatus = 'idle' | 'validating' | 'valid' | 'invalid';
 const ESTIMATED_DAILY_QUOTA = 500; // Rough estimate for Free Tier
 
 const App = () => {
-  // Navigation State
+  // Navigation & Modal State
   const [currentPage, setCurrentPage] = useState<Page>('HOME');
   const [activeModal, setActiveModal] = useState<ModalType>('NONE');
 
-  // App Logic State
+  // Core App State
   const [file, setFile] = useState<File | null>(null);
+  const [fileType, setFileType] = useState<'srt' | 'video' | null>(null);
   const [subtitles, setSubtitles] = useState<SubtitleNode[]>([]);
   const [status, setStatus] = useState<TranslationStatus>(TranslationStatus.IDLE);
-  const [sourceLang, setSourceLang] = useState<string>('auto');
-  const [targetLang, setTargetLang] = useState<string>('es');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  // API Key, Model & Quota State
+  // Language & Translation Settings
+  const [sourceLang, setSourceLang] = useState<string>('auto');
+  const [targetLang, setTargetLang] = useState<string>('es');
+
+  // Video-specific State
+  const [videoProcessingStatus, setVideoProcessingStatus] = useState<VideoProcessingStatus>(VideoProcessingStatus.IDLE);
+  const [videoProcessingMessage, setVideoProcessingMessage] = useState('');
+  const [extractedTracks, setExtractedTracks] = useState<ExtractedSubtitleTrack[]>([]);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  
+  // API Key & Model Config State
   const [userApiKey, setUserApiKey] = useState<string>('');
-  const [tempApiKey, setTempApiKey] = useState<string>(''); // For the input field
+  const [tempApiKey, setTempApiKey] = useState<string>('');
   const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>('idle');
   const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[0].id);
-  const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [requestsUsed, setRequestsUsed] = useState<number>(0);
 
+  // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const ffmpegRef = useRef<FFmpeg | null>(null);
+
+  // --- Effects ---
 
   // API Key validation effect with debounce
   useEffect(() => {
@@ -63,7 +80,7 @@ const App = () => {
       validateApiKey(tempApiKey).then(isValid => {
         setApiKeyStatus(isValid ? 'valid' : 'invalid');
       });
-    }, 800); // 800ms debounce delay
+    }, 800);
 
     return () => {
       if (debounceTimer.current) {
@@ -71,7 +88,6 @@ const App = () => {
       }
     };
   }, [tempApiKey, userApiKey]);
-
 
   // Load persisted settings
   useEffect(() => {
@@ -100,6 +116,24 @@ const App = () => {
     }
   }, []);
 
+  // --- Handlers ---
+
+  const resetState = () => {
+    setFile(null);
+    setFileType(null);
+    setSubtitles([]);
+    setStatus(TranslationStatus.IDLE);
+    setProgress(0);
+    setError(null);
+    setVideoProcessingStatus(VideoProcessingStatus.IDLE);
+    setVideoProcessingMessage('');
+    setExtractedTracks([]);
+    if (videoSrc) {
+        URL.revokeObjectURL(videoSrc);
+    }
+    setVideoSrc(null);
+  };
+
   const saveSettings = () => {
     if (apiKeyStatus === 'valid') {
         localStorage.setItem('substream_api_key', tempApiKey);
@@ -122,46 +156,121 @@ const App = () => {
     localStorage.setItem('substream_daily_usage', total.toString());
     localStorage.setItem('substream_usage_date', new Date().toDateString());
   };
-
-  const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
-  const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
-  const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
-
-  const filteredModels = useMemo(() => {
-    return AVAILABLE_MODELS.filter(model =>
-      model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-      model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())
-    );
-  }, [modelSearchQuery]);
-
+  
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (!selectedFile.name.endsWith('.srt')) {
-        setError("Please upload a valid .srt file");
-        return;
-      }
-      setFile(selectedFile);
-      setError(null);
-      parseFile(selectedFile);
+        resetState();
+        if (selectedFile.name.endsWith('.srt')) {
+            setFileType('srt');
+            setFile(selectedFile);
+            parseSrtFile(selectedFile);
+        } else if (SUPPORTED_VIDEO_FORMATS.includes(selectedFile.type)) {
+            setFileType('video');
+            setFile(selectedFile);
+            handleVideoUpload(selectedFile);
+        } else {
+            setError("Unsupported file type. Please upload an SRT or a supported video file.");
+        }
     }
   };
 
-  const parseFile = async (f: File) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+        resetState();
+        if (droppedFile.name.endsWith('.srt')) {
+            setFileType('srt');
+            setFile(droppedFile);
+            parseSrtFile(droppedFile);
+        } else if (SUPPORTED_VIDEO_FORMATS.includes(droppedFile.type)) {
+            setFileType('video');
+            setFile(droppedFile);
+            handleVideoUpload(droppedFile);
+        } else {
+            setError("Unsupported file type. Please upload an SRT or a supported video file.");
+        }
+    }
+  };
+
+  const parseSrtFile = async (f: File) => {
     setStatus(TranslationStatus.PARSING);
-    const text = await f.text();
     try {
+      const text = await f.text();
       const parsed = parseSRT(text);
-      if (parsed.length === 0) {
-        setError("No subtitles found in file.");
-        setStatus(TranslationStatus.IDLE);
-        return;
-      }
+      if (parsed.length === 0) throw new Error("No subtitles found in file.");
       setSubtitles(parsed);
       setStatus(TranslationStatus.IDLE);
-    } catch (e) {
-      setError("Failed to parse SRT file.");
+    } catch (e: any) {
+      setError(e.message || "Failed to parse SRT file.");
       setStatus(TranslationStatus.ERROR);
+    }
+  };
+
+  const handleVideoUpload = async (videoFile: File) => {
+    try {
+      setVideoProcessingStatus(VideoProcessingStatus.LOADING_FFMPEG);
+      const ffmpeg = await loadFFmpeg((message) => setVideoProcessingMessage(message));
+      ffmpegRef.current = ffmpeg;
+      
+      setVideoProcessingStatus(VideoProcessingStatus.ANALYZING);
+      setVideoProcessingMessage('Analyzing video for subtitle tracks...');
+      const tracks = await analyzeVideoFile(ffmpeg, videoFile);
+      setExtractedTracks(tracks);
+      
+      setVideoSrc(URL.createObjectURL(videoFile));
+      setVideoProcessingStatus(VideoProcessingStatus.IDLE); // Now wait for user choice
+
+      if (tracks.length === 0) {
+        await handleGenerateSubtitles(); // Automatically trigger generation if no tracks are found
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to process video file.');
+      setVideoProcessingStatus(VideoProcessingStatus.ERROR);
+    }
+  };
+
+  const handleTrackSelection = async (trackIndex: number) => {
+    if (!ffmpegRef.current) return;
+    try {
+        setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
+        setVideoProcessingMessage('Extracting selected subtitle track...');
+        const srtContent = await extractSrt(ffmpegRef.current, trackIndex);
+        const parsed = parseSRT(srtContent);
+        setSubtitles(parsed);
+        setVideoProcessingStatus(VideoProcessingStatus.DONE);
+    } catch(e: any) {
+        setError(e.message || 'Failed to extract subtitle track.');
+        setVideoProcessingStatus(VideoProcessingStatus.ERROR);
+    }
+  };
+
+  const handleGenerateSubtitles = async () => {
+    if (!ffmpegRef.current || (!userApiKey && !process.env.API_KEY)) {
+        setActiveModal('CONFIG');
+        setError("Please provide an API Key to generate subtitles.");
+        setVideoProcessingStatus(VideoProcessingStatus.IDLE); // Go back to choice state
+        return;
+    }
+    const key = userApiKey || process.env.API_KEY;
+    if (!key) return; // Should be handled by above check, but for TS safety
+
+    try {
+        setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_AUDIO);
+        setVideoProcessingMessage('Extracting audio from video...');
+        const audioBlob = await extractAudio(ffmpegRef.current);
+
+        setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
+        setVideoProcessingMessage('Generating subtitles with AI, this may take a moment...');
+        const srtContent = await transcribeAudio(audioBlob, sourceLang, key);
+
+        const parsed = parseSRT(srtContent);
+        setSubtitles(parsed);
+        setVideoProcessingStatus(VideoProcessingStatus.DONE);
+    } catch(e: any) {
+        setError(e.message || 'Failed to generate subtitles.');
+        setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
 
@@ -189,12 +298,8 @@ const App = () => {
         targetLang,
         userApiKey || null,
         selectedModelId,
-        (count) => {
-          setProgress(Math.round((count / subtitles.length) * 100));
-        },
-        (updatedSubtitles) => {
-          setSubtitles(updatedSubtitles);
-        }
+        (count) => setProgress(Math.round((count / subtitles.length) * 100)),
+        (updatedSubtitles) => setSubtitles(updatedSubtitles)
       );
       
       setSubtitles(result);
@@ -207,13 +312,43 @@ const App = () => {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownloadSrt = () => {
     if (subtitles.length === 0) return;
     const content = stringifySRT(subtitles);
-    const filename = file ? `translated_${file.name}` : 'translated_subtitles.srt';
+    const filename = file ? `translated_${file.name.split('.')[0]}.srt` : 'translated_subtitles.srt';
     downloadFile(filename, content);
   };
 
+  const handleDownloadVideo = async () => {
+    if (!file || !ffmpegRef.current || status !== TranslationStatus.COMPLETED) return;
+    try {
+        setVideoProcessingStatus(VideoProcessingStatus.MUXING);
+        setVideoProcessingMessage('Packaging your new video file... This will not re-encode the video.');
+        const finalSrt = stringifySRT(subtitles);
+        const targetLangData = LANGUAGES.find(l => l.name === targetLang);
+        const newVideoBlob = await addSrtToVideo(ffmpegRef.current, file, finalSrt, targetLangData?.code || 'eng');
+        
+        downloadFile(`translated_${file.name.split('.')[0]}.mkv`, newVideoBlob);
+        setVideoProcessingStatus(VideoProcessingStatus.DONE);
+    } catch(e: any) {
+        setError(e.message || 'Failed to package video file.');
+        setVideoProcessingStatus(VideoProcessingStatus.ERROR);
+    }
+  };
+
+  // --- Derived Calculations ---
+  const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
+  const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
+  const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
+
+  const filteredModels = useMemo(() => {
+    return AVAILABLE_MODELS.filter(model =>
+      model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+      model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())
+    );
+  }, [modelSearchQuery]);
+
+  // --- Render Logic ---
   if (currentPage === 'DOCS') {
     return <Documentation onBack={() => setCurrentPage('HOME')} />;
   }
@@ -282,90 +417,66 @@ const App = () => {
                   flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm
                   lg:flex-col lg:p-6 lg:justify-between
                 ">
-                    <StepIndicator 
-                        number={1} 
-                        title="Upload" 
-                        isActive={status === TranslationStatus.IDLE && !file} 
-                        isCompleted={!!file} 
-                    />
-                    <StepIndicator 
-                        number={2} 
-                        title="Configure" 
-                        isActive={!!file && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} 
-                        isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} 
-                    />
-                    <StepIndicator 
-                        number={3} 
-                        title="Translate" 
-                        isActive={status === TranslationStatus.TRANSLATING} 
-                        isCompleted={status === TranslationStatus.COMPLETED} 
-                    />
-                    <StepIndicator 
-                        number={4} 
-                        title="Download" 
-                        isActive={status === TranslationStatus.COMPLETED} 
-                        isCompleted={false} 
-                    />
+                    <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
+                    <StepIndicator number={2} title="Configure" isActive={!!file && subtitles.length > 0 && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} />
+                    <StepIndicator number={3} title="Translate" isActive={status === TranslationStatus.TRANSLATING} isCompleted={status === TranslationStatus.COMPLETED} />
+                    <StepIndicator number={4} title="Download" isActive={status === TranslationStatus.COMPLETED} isCompleted={false} />
                 </div>
              </div>
           </div>
 
           <div className="lg:col-span-9 space-y-8">
+            {fileType === 'video' && videoSrc && subtitles.length > 0 && <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} />}
 
             <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-8 md:p-12 hover:bg-neutral-900/30 transition-all duration-300">
                {!file ? (
                  <div 
                    className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
                    onDragOver={(e) => e.preventDefault()}
-                   onDrop={(e) => {
-                     e.preventDefault();
-                     const droppedFile = e.dataTransfer.files[0];
-                     if(droppedFile && droppedFile.name.endsWith('.srt')) {
-                       setFile(droppedFile);
-                       parseFile(droppedFile);
-                     } else {
-                        setError("Only .srt files are supported.");
-                     }
-                   }}
+                   onDrop={handleDrop}
                    onClick={() => fileInputRef.current?.click()}
                  >
-                    <input type="file" ref={fileInputRef} className="hidden" accept=".srt" onChange={handleFileChange} />
+                    <input type="file" ref={fileInputRef} className="hidden" accept={`.srt, ${SUPPORTED_VIDEO_FORMATS.join(',')}`} onChange={handleFileChange} />
                     <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                       <Upload className="text-white w-8 h-8" />
                     </div>
-                    <h2 className="text-xl font-bold text-white mb-2">Drop your SRT file here</h2>
+                    <h2 className="text-xl font-bold text-white mb-2">Drop your SRT or Video file here</h2>
                     <p className="text-neutral-500">or click to browse local files</p>
                  </div>
+               ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
+                 <div className="flex flex-col items-center justify-center text-center min-h-[200px]">
+                    <Loader2 className="w-12 h-12 text-white animate-spin mb-4" />
+                    <h2 className="text-xl font-bold text-white mb-2 uppercase tracking-widest">{videoProcessingStatus.replace('_', ' ')}</h2>
+                    <p className="text-neutral-400">{videoProcessingMessage}</p>
+                 </div>
+               ) : (fileType === 'video' && videoProcessingStatus === VideoProcessingStatus.IDLE && subtitles.length === 0) ? (
+                 <TrackSelector tracks={extractedTracks} onSelectTrack={handleTrackSelection} onGenerate={handleGenerateSubtitles} />
                ) : (
                  <div className="flex flex-col gap-4">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
                           <div className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center">
-                            <FileText className="w-6 h-6" />
+                            {fileType === 'srt' ? <FileText className="w-6 h-6" /> : <Clapperboard className="w-6 h-6" />}
                           </div>
                           <div>
                             <h3 className="text-lg font-bold text-white">{file.name}</h3>
-                            <p className="text-neutral-500 text-sm">{subtitles.length} lines parsed</p>
+                            <p className="text-neutral-500 text-sm">{subtitles.length > 0 ? `${subtitles.length} lines loaded` : 'Ready to configure'}</p>
                           </div>
                         </div>
-                        <Button variant="outline" onClick={() => {
-                            setFile(null); 
-                            setSubtitles([]);
-                            setStatus(TranslationStatus.IDLE);
-                            setProgress(0);
-                        }}>
-                          Change File
-                        </Button>
+                        <Button variant="outline" onClick={resetState}>Change File</Button>
                     </div>
-                    <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
-                        <Info className="w-4 h-4 shrink-0" />
-                        <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
-                    </div>
+
+                    {subtitles.length > 0 && 
+                      <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
+                          <Info className="w-4 h-4 shrink-0" />
+                          <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
+                      </div>
+                    }
                  </div>
                )}
             </div>
 
-            {file && (
+            {(subtitles.length > 0) && (
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
                   <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
                     <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Source Language</label>
@@ -389,7 +500,7 @@ const App = () => {
                </div>
             )}
 
-            {file && (
+            {(subtitles.length > 0) && (
               <div className="flex justify-end gap-4 animate-fade-in">
                 {status === TranslationStatus.TRANSLATING ? (
                   <div className="flex-1 p-4 rounded-xl border border-neutral-800 bg-neutral-900/50 flex items-center gap-4">
@@ -429,9 +540,10 @@ const App = () => {
                 <p className="text-neutral-500">Comparing original vs translated output.</p>
               </div>
               {status === TranslationStatus.COMPLETED && (
-                <Button variant="primary" onClick={handleDownload} icon={<Download className="w-5 h-5"/>}>
-                  Download SRT
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {fileType === 'video' && <Button variant="secondary" onClick={handleDownloadVideo} icon={<Film className="w-4 h-4" />}>Download Video</Button>}
+                  <Button variant="primary" onClick={handleDownloadSrt} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>
+                </div>
               )}
             </div>
             <div className="rounded-3xl border border-neutral-800 bg-black/50 backdrop-blur overflow-hidden min-h-[400px]">
@@ -448,7 +560,7 @@ const App = () => {
             </div>
             {status === TranslationStatus.COMPLETED && (
                <div className="mt-8 flex justify-center">
-                  <Button variant="secondary" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} icon={<RefreshCw className="w-4 h-4" />}>
+                  <Button variant="secondary" onClick={resetState} icon={<RefreshCw className="w-4 h-4" />}>
                      Translate Another File
                   </Button>
                </div>
@@ -516,13 +628,7 @@ const App = () => {
                     placeholder="AIzaSy..."
                     value={tempApiKey}
                     onChange={(e) => setTempApiKey(e.target.value)}
-                    className={`
-                      w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors
-                      ${apiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''}
-                      ${apiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''}
-                      ${apiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''}
-                      ${apiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}
-                    `}
+                    className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${apiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${apiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${apiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${apiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`}
                    />
                    <div className="absolute right-3 top-3.5">
                       {apiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
@@ -530,20 +636,11 @@ const App = () => {
                       {apiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
                    </div>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">
-                  Required for heavy usage. Stored locally in your browser.
-                </p>
+                <p className="text-xs text-neutral-500 mt-2">Required for heavy usage. Stored locally in your browser.</p>
               </div>
-
               <div className="flex justify-end gap-3 pt-4">
-                {userApiKey && (
-                  <button onClick={clearApiKey} className="text-sm text-red-500 hover:text-red-400 px-4 py-2">
-                    Clear Key
-                  </button>
-                )}
-                <Button onClick={saveSettings} disabled={apiKeyStatus === 'invalid' || apiKeyStatus === 'validating'}>
-                  Save Settings
-                </Button>
+                {userApiKey && ( <button onClick={clearApiKey} className="text-sm text-red-500 hover:text-red-400 px-4 py-2">Clear Key</button> )}
+                <Button onClick={saveSettings} disabled={apiKeyStatus === 'invalid' || apiKeyStatus === 'validating'}>Save Settings</Button>
               </div>
            </div>
         </div>

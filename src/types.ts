@@ -1,17 +1,15 @@
-
 export interface SubtitleNode {
   id: number;
   startTime: string;
   endTime: string;
   text: string;
-  originalText?: string; // To store the source while 'text' becomes the translation
+  originalText?: string; 
 }
 
-export interface ProcessingStats {
-  totalLines: number;
-  processedLines: number;
-  isProcessing: boolean;
-  startTime?: number;
+export interface ExtractedSubtitleTrack {
+  index: number;
+  language: string;
+  title: string;
 }
 
 export enum TranslationStatus {
@@ -20,6 +18,18 @@ export enum TranslationStatus {
   TRANSLATING = 'TRANSLATING',
   COMPLETED = 'COMPLETED',
   ERROR = 'ERROR'
+}
+
+export enum VideoProcessingStatus {
+  IDLE = 'IDLE',
+  LOADING_FFMPEG = 'LOADING_FFMPEG',
+  ANALYZING = 'ANALYZING',
+  EXTRACTING_AUDIO = 'EXTRACTING_AUDIO',
+  TRANSCRIBING = 'TRANSCRIBING',
+  EXTRACTING_SUBTITLES = 'EXTRACTING_SUBTITLES',
+  MUXING = 'MUXING', // Muxing is combining streams (video + new subtitles)
+  DONE = 'DONE',
+  ERROR = 'ERROR',
 }
 
 export interface LanguageOption {
@@ -84,4 +94,13 @@ export const LANGUAGES: LanguageOption[] = [
   { code: 'tr', name: 'Turkish' },
   { code: 'hi', name: 'Hindi' },
   { code: 'fa', name: 'Persian' },
+];
+
+export const SUPPORTED_VIDEO_FORMATS = [
+  'video/mp4', 
+  'video/x-matroska', // MKV
+  'video/quicktime', // MOV
+  'video/x-ms-wmv', // WMV
+  'video/webm',
+  'video/x-msvideo', // AVI
 ];

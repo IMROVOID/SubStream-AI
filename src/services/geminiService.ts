@@ -1,35 +1,59 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI, Type } from "@google/genai";
 import { SubtitleNode } from "../types";
 
-// Further reduced batch size to prevent 500 Rpc/Xhr errors
 export const BATCH_SIZE = 10; 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-/**
- * Validates a Google Gemini API Key by making a lightweight, non-generative request.
- * @param apiKey The API key to validate.
- * @returns A promise that resolves to true if the key is valid, false otherwise.
- */
 export const validateApiKey = async (apiKey: string): Promise<boolean> => {
-  // Basic check for format and non-empty string
   if (!apiKey || !apiKey.startsWith('AIzaSy')) {
     return false;
   }
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    // This is a lightweight call to check for model accessibility, which confirms API key validity.
-    // We use a fast, common model for this check.
+    const ai = new GoogleGenerativeAI({ apiKey });
     await ai.models.get({ model: 'gemini-2.0-flash' });
-    return true; // If the call succeeds without throwing, the key is valid.
+    return true;
   } catch (error) {
     console.error("API Key validation failed:", error);
-    return false; // Any error (e.g., 400, 403, 401) indicates an invalid or incorrectly configured key.
+    return false;
   }
 };
 
+export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKey: string): Promise<string> {
+    const ai = new GoogleGenerativeAI({ apiKey });
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
+
+    const audioParts = [{
+        inlineData: {
+            data: Buffer.from(await audioBlob.arrayBuffer()).toString('base64'),
+            mimeType: audioBlob.type,
+        }
+    }];
+
+    const prompt = `You are an expert audio transcription service. 
+    Transcribe the following audio which is in ${sourceLang === 'auto' ? 'the auto-detected language' : sourceLang}.
+    Your output MUST be ONLY in the SRT (SubRip) format. 
+    Do not include any other text, explanations, or markdown formatting.
+    Ensure the timestamps are accurate.
+    
+    Example output format:
+    1
+    00:00:01,000 --> 00:00:04,500
+    This is the first line of dialogue.
+    
+    2
+    00:00:05,100 --> 00:00:08,000
+    And this is the second.`;
+
+    const result = await model.generateContent([prompt, ...audioParts]);
+    const response = result.response;
+    const text = response.text();
+    
+    // Clean up potential markdown code blocks from the response
+    return text.replace(/```srt\n|```/g, '').trim();
+}
 
 export const translateBatch = async (
   subtitles: SubtitleNode[],
@@ -39,13 +63,10 @@ export const translateBatch = async (
   modelId: string
 ): Promise<{ id: number; text: string }[]> => {
   
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI({ apiKey });
+  const model = ai.getGenerativeModel({ model: modelId });
 
-  // Construct a prompt that includes the subtitles
-  const contentToTranslate = subtitles.map(s => ({
-    id: s.id,
-    text: s.text
-  }));
+  const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
 
   const systemInstruction = `You are a professional subtitle translator. 
   Your task is to translate subtitles from ${sourceLang === 'auto' ? 'the detected language' : sourceLang} to ${targetLang}.
@@ -60,37 +81,34 @@ export const translateBatch = async (
   `;
 
   let lastError: any;
+  const generationConfig = {
+      responseMimeType: 'application/json',
+  };
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await ai.models.generateContent({
-        model: modelId,
-        contents: JSON.stringify(contentToTranslate),
-        config: {
-          systemInstruction: systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                id: { type: Type.INTEGER },
-                text: { type: Type.STRING }
-              },
-              required: ['id', 'text']
-            }
-          }
-        }
+      const result = await model.generateContent({
+        contents: [{
+          role: "user",
+          parts: [{ text: JSON.stringify(contentToTranslate) }]
+        }],
+        systemInstruction: {
+          role: "system",
+          parts: [{ text: systemInstruction }]
+        },
+        generationConfig,
       });
 
-      if (response.text) {
-        const parsed = JSON.parse(response.text);
+      const response = result.response;
+      const responseText = response.text();
+
+      if (responseText) {
+        const parsed = JSON.parse(responseText);
         if (Array.isArray(parsed)) {
           return parsed;
         }
       }
-      // If response is valid but empty/unexpected format
-      console.warn(`Attempt ${attempt}: Received invalid response format`, response.text);
+      console.warn(`Attempt ${attempt}: Received invalid response format`, responseText);
       throw new Error("Invalid response format received from AI.");
 
     } catch (error: any) {
@@ -98,7 +116,6 @@ export const translateBatch = async (
       lastError = error;
       
       if (attempt < MAX_RETRIES) {
-        // Exponential backoff with jitter
         const backoffTime = RETRY_DELAY_MS * Math.pow(1.5, attempt - 1);
         await delay(backoffTime);
       }
@@ -121,7 +138,7 @@ export const processFullSubtitleFile = async (
   const apiKey = customApiKey || process.env.API_KEY;
   if (!apiKey) throw new Error("API Key missing. Please add your Key in Settings.");
 
-  const results: SubtitleNode[] = [...subtitles]; // Clone to modify
+  const results: SubtitleNode[] = [...subtitles];
   let processedCount = 0;
 
   for (let i = 0; i < subtitles.length; i += BATCH_SIZE) {
@@ -130,27 +147,21 @@ export const processFullSubtitleFile = async (
     try {
       const translatedBatch = await translateBatch(batch, sourceLang, targetLang, apiKey, modelId);
       
-      // Map translations back to the results
       translatedBatch.forEach(t => {
         const index = results.findIndex(r => r.id === t.id);
         if (index !== -1) {
-          results[index] = {
-            ...results[index],
-            text: t.text
-          };
+          results[index] = { ...results[index], text: t.text };
         }
       });
 
       processedCount += batch.length;
       onProgress(Math.min(processedCount, subtitles.length));
-      onBatchComplete([...results]); // Send live update
+      onBatchComplete([...results]);
       
-      // Increased delay to 1000ms to ensure stability and avoid 500/rate-limit errors
       await delay(1000);
       
     } catch (e) {
       console.error(`Batch starting at ${i} failed after retries`, e);
-      // Propagate error to stop processing and alert user
       throw new Error(`Translation failed at subtitle #${batch[0].id}. The server might be busy or the content too complex. Please try again.`);
     }
   }
