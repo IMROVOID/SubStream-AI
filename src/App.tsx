@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, FileText, ArrowRight, Download, Play, RefreshCw, Languages, Zap, AlertCircle, Settings, Key, BarChart3, Info, Cpu, CheckCircle2 } from 'lucide-react';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, AIModel } from './types';
@@ -388,8 +387,7 @@ const App = () => {
                   </div>
                 ) : (
                   <Button 
-                    onClick={handleTranslate} 
-                    disabled={status === TranslationStatus.TRANSLATING}
+                    onClick={handleTranslate}
                     className="w-full md:w-auto text-lg"
                     icon={<Zap className="w-5 h-5" />}
                   >
@@ -543,7 +541,7 @@ const App = () => {
 
       <Modal isOpen={activeModal === 'PRIVACY'} onClose={() => setActiveModal('NONE')} title="Privacy Policy">
          <div className="space-y-4 text-sm text-neutral-300">
-            <p>Last Updated: February 2025</p>
+            <p>Last Updated: November 2025</p>
             <h3 className="text-white font-bold text-lg">1. Data Collection</h3>
             <p>We do not store your subtitle files. All processing is done in-memory and via the Gemini API. Once your session ends, your data is cleared from our interface.</p>
             <h3 className="text-white font-bold text-lg">2. Third-Party Services</h3>
@@ -555,7 +553,7 @@ const App = () => {
 
       <Modal isOpen={activeModal === 'TOS'} onClose={() => setActiveModal('NONE')} title="Terms of Service">
          <div className="space-y-4 text-sm text-neutral-300">
-            <p>Last Updated: February 2025</p>
+            <p>Last Updated: November 2025</p>
             <h3 className="text-white font-bold text-lg">1. Usage</h3>
             <p>SubStream AI is provided "as is" for subtitle translation purposes. Do not use for illegal content.</p>
             <h3 className="text-white font-bold text-lg">2. Limitations</h3>

@@ -407,7 +407,7 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
               </div>
 
               <div className="mt-16 pt-8 border-t border-neutral-800 flex items-center justify-between text-sm text-neutral-500">
-                <span>Last updated: Feb 2025</span>
+                <span>Last updated: November 2025</span>
                 <div className="flex gap-4">
                    <button className="flex items-center gap-2 hover:text-white transition-colors">
                       <FileText className="w-4 h-4" /> Suggest Edit
