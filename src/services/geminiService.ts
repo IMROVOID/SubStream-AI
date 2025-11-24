@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, Type } from "@google/genai";
+import { GoogleGenAI, GenerationConfig } from "@google/genai";
 import { SubtitleNode } from "../types";
 
 export const BATCH_SIZE = 10; 
@@ -12,18 +12,21 @@ export const validateApiKey = async (apiKey: string): Promise<boolean> => {
     return false;
   }
   try {
-    const ai = new GoogleGenerativeAI({ apiKey });
-    await ai.models.get({ model: 'gemini-2.0-flash' });
-    return true;
+    const ai = new GoogleGenAI({ apiKey });
+    // This is a lightweight call to check for model accessibility, which confirms API key validity.
+    await ai.models.countTokens({
+      model: "gemini-pro",
+      contents: [{ role: "user", parts: [{ text: "test" }] }]
+    });
+    return true; // If the call succeeds without throwing, the key is valid.
   } catch (error) {
     console.error("API Key validation failed:", error);
-    return false;
+    return false; // Any error (e.g., 400, 403, 401) indicates an invalid or incorrectly configured key.
   }
 };
 
 export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKey: string): Promise<string> {
-    const ai = new GoogleGenerativeAI({ apiKey });
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
+    const ai = new GoogleGenAI({ apiKey });
 
     const audioParts = [{
         inlineData: {
@@ -47,9 +50,12 @@ export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKe
     00:00:05,100 --> 00:00:08,000
     And this is the second.`;
 
-    const result = await model.generateContent([prompt, ...audioParts]);
-    const response = result.response;
-    const text = response.text();
+    const result = await ai.models.generateContent({
+        model: "gemini-1.5-pro-latest",
+        contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }]
+    });
+
+    const text = result.text;
     
     // Clean up potential markdown code blocks from the response
     return text.replace(/```srt\n|```/g, '').trim();
@@ -63,8 +69,7 @@ export const translateBatch = async (
   modelId: string
 ): Promise<{ id: number; text: string }[]> => {
   
-  const ai = new GoogleGenerativeAI({ apiKey });
-  const model = ai.getGenerativeModel({ model: modelId });
+  const ai = new GoogleGenAI({ apiKey });
 
   const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
 
@@ -81,26 +86,22 @@ export const translateBatch = async (
   `;
 
   let lastError: any;
-  const generationConfig = {
+  const generationConfig: GenerationConfig = {
       responseMimeType: 'application/json',
   };
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const result = await model.generateContent({
-        contents: [{
-          role: "user",
-          parts: [{ text: JSON.stringify(contentToTranslate) }]
-        }],
-        systemInstruction: {
-          role: "system",
-          parts: [{ text: systemInstruction }]
-        },
-        generationConfig,
+      const result = await ai.models.generateContent({
+        model: modelId,
+        contents: [
+          { role: "system", parts: [{ text: systemInstruction }] },
+          { role: "user", parts: [{ text: JSON.stringify(contentToTranslate) }] }
+        ],
+        config: generationConfig,
       });
 
-      const response = result.response;
-      const responseText = response.text();
+      const responseText = result.text;
 
       if (responseText) {
         const parsed = JSON.parse(responseText);
