@@ -550,26 +550,38 @@ const App = () => {
       </Modal>
 
       <Modal isOpen={activeModal === 'PRIVACY'} onClose={() => setActiveModal('NONE')} title="Privacy Policy">
-         <div className="prose prose-invert prose-neutral max-w-none text-sm text-neutral-300">
-            <p>Last Updated: November 2025</p>
-            <h3>1. Data Collection</h3>
-            <p>We do not store your subtitle files. All processing is done in-memory and via the Gemini API. Once your session ends, your data is cleared from our interface.</p>
-            <h3>2. Third-Party Services</h3>
-            <p>We use Google's Gemini API for processing translations. Data sent to Google is subject to their data processing terms.</p>
-            <h3>3. User Rights</h3>
-            <p>You retain full ownership of your uploaded content.</p>
+         <div className="space-y-5 text-sm text-neutral-300">
+            <p className="text-neutral-500">Last Updated: November 2025</p>
+            <div>
+              <h3 className="text-white font-bold mb-2">1. Data Collection</h3>
+              <p>We do not store your subtitle files. All processing is done in-memory and via the Gemini API. Once your session ends, your data is cleared from our interface.</p>
+            </div>
+            <div>
+              <h3 className="text-white font-bold mb-2">2. Third-Party Services</h3>
+              <p>We use Google's Gemini API for processing translations. Data sent to Google is subject to their data processing terms.</p>
+            </div>
+            <div>
+              <h3 className="text-white font-bold mb-2">3. User Rights</h3>
+              <p>You retain full ownership of your uploaded content.</p>
+            </div>
          </div>
       </Modal>
 
       <Modal isOpen={activeModal === 'TOS'} onClose={() => setActiveModal('NONE')} title="Terms of Service">
-         <div className="prose prose-invert prose-neutral max-w-none text-sm text-neutral-300">
-            <p>Last Updated: November 2025</p>
-            <h3>1. Usage</h3>
-            <p>SubStream AI is provided "as is" for subtitle translation purposes. Do not use for illegal content.</p>
-            <h3>2. Limitations</h3>
-            <p>We do not guarantee 100% accuracy in translations. AI models can hallucinate or misinterpret context.</p>
-            <h3>3. Liability</h3>
-            <p>We are not liable for any damages arising from the use of this tool.</p>
+         <div className="space-y-5 text-sm text-neutral-300">
+            <p className="text-neutral-500">Last Updated: November 2025</p>
+            <div>
+              <h3 className="text-white font-bold mb-2">1. Usage</h3>
+              <p>SubStream AI is provided "as is" for subtitle translation purposes. Do not use for illegal content.</p>
+            </div>
+            <div>
+              <h3 className="text-white font-bold mb-2">2. Limitations</h3>
+              <p>We do not guarantee 100% accuracy in translations. AI models can hallucinate or misinterpret context.</p>
+            </div>
+            <div>
+               <h3 className="text-white font-bold mb-2">3. Liability</h3>
+               <p>We are not liable for any damages arising from the use of this tool.</p>
+            </div>
          </div>
       </Modal>
 
