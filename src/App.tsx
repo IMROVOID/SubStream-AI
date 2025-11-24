@@ -280,7 +280,7 @@ const App = () => {
                 <div className="
                   h-full
                   flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm
-                  lg:flex-col lg:p-6 lg:justify-start lg:space-y-8
+                  lg:flex-col lg:p-6 lg:justify-between
                 ">
                     <StepIndicator 
                         number={1} 
