@@ -1,6 +1,5 @@
-
 import React, { useState, useMemo } from 'react';
-import { Search, ArrowLeft, ChevronRight, AlertCircle, FileText, Zap, Shield, Cpu, Layers, Key, Gauge } from 'lucide-react';
+import { Search, ArrowLeft, AlertCircle, FileText, Zap, Shield, Cpu, Layers, Key, Gauge } from 'lucide-react';
 
 interface DocItem {
   id: string;
@@ -254,7 +253,7 @@ const DOCS_DATA: DocItem[] = [
         </ul>
         <div className="bg-black p-4 rounded-lg border border-neutral-800 font-mono text-xs text-neutral-400">
           1<br/>
-          00:00:01,000 --> 00:00:04,000<br/>
+          00:00:01,000 --&gt; 00:00:04,000<br/>
           Hello world.
         </div>
         <ul className="list-disc list-inside space-y-2 text-neutral-300 text-sm pt-2">
