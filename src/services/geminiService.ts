@@ -8,6 +8,29 @@ const RETRY_DELAY_MS = 2000;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Validates a Google Gemini API Key by making a lightweight, non-generative request.
+ * @param apiKey The API key to validate.
+ * @returns A promise that resolves to true if the key is valid, false otherwise.
+ */
+export const validateApiKey = async (apiKey: string): Promise<boolean> => {
+  // Basic check for format and non-empty string
+  if (!apiKey || !apiKey.startsWith('AIzaSy')) {
+    return false;
+  }
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    // This is a lightweight call to check for model accessibility, which confirms API key validity.
+    // We use a fast, common model for this check.
+    await ai.models.get({ model: 'gemini-2.0-flash' });
+    return true; // If the call succeeds without throwing, the key is valid.
+  } catch (error) {
+    console.error("API Key validation failed:", error);
+    return false; // Any error (e.g., 400, 403, 401) indicates an invalid or incorrectly configured key.
+  }
+};
+
+
 export const translateBatch = async (
   subtitles: SubtitleNode[],
   sourceLang: string,
