@@ -7,6 +7,17 @@ const RETRY_DELAY_MS = 2000;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Helper function to convert ArrayBuffer to Base64 in a browser environment
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}
+
 export const validateApiKey = async (apiKey: string): Promise<boolean> => {
   if (!apiKey || !apiKey.startsWith('AIzaSy')) {
     return false;
@@ -28,9 +39,12 @@ export const validateApiKey = async (apiKey: string): Promise<boolean> => {
 export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKey: string): Promise<string> {
     const ai = new GoogleGenAI({ apiKey });
 
+    const audioBuffer = await audioBlob.arrayBuffer();
+    const base64Audio = arrayBufferToBase64(audioBuffer);
+
     const audioParts = [{
         inlineData: {
-            data: Buffer.from(await audioBlob.arrayBuffer()).toString('base64'),
+            data: base64Audio,
             mimeType: audioBlob.type,
         }
     }];
