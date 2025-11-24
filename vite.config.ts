@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
       },
       resolve: {
         alias: {
-          '@': path.resolve('.'),
+          '@': path.resolve(__dirname, './src'),
         }
       }
     };
