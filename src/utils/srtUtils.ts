@@ -1,34 +1,35 @@
 import { SubtitleNode } from '../types';
 
 export const parseSRT = (data: string): SubtitleNode[] => {
-  const normalizedData = data.replace(/\r\n/g, '\n');
-  const blocks = normalizedData.split(/\n\n+/);
+  // Normalize line endings and trim whitespace, then split by one or more blank lines.
+  const blocks = data.replace(/\r\n/g, '\n').trim().split(/\n\n+/);
   
   const subtitles: SubtitleNode[] = [];
 
   blocks.forEach((block) => {
+    // A valid block needs at least 3 lines: ID, timestamp, and text.
     const lines = block.split('\n');
     if (lines.length >= 3) {
-      // Handle ID
       const idStr = lines[0].trim();
       const id = parseInt(idStr, 10);
-
-      // Handle Timestamp
       const timeLine = lines[1];
       const times = timeLine.split(' --> ');
       
-      if (times.length === 2 && !isNaN(id)) {
-        // Handle Text (could be multiple lines)
+      // Ensure the ID is a number and the timestamp format is correct.
+      if (!isNaN(id) && times.length === 2) {
         const textLines = lines.slice(2);
-        const text = textLines.join('\n');
+        const text = textLines.join('\n').trim();
 
-        subtitles.push({
-          id,
-          startTime: times[0].trim(),
-          endTime: times[1].trim(),
-          text: text,
-          originalText: text
-        });
+        // Only push if there is actual text content.
+        if (text) {
+            subtitles.push({
+                id,
+                startTime: times[0].trim(),
+                endTime: times[1].trim(),
+                text: text,
+                originalText: text
+            });
+        }
       }
     }
   });

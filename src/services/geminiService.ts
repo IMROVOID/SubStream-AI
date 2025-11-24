@@ -65,7 +65,7 @@ export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKe
     And this is the second.`;
 
     const result = await ai.models.generateContent({
-        model: modelId, // Use the dynamically passed modelId
+        model: modelId,
         contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }]
     });
 
@@ -97,6 +97,9 @@ export const translateBatch = async (
   4. Return ONLY a JSON array containing objects with 'id' and 'text' (the translated text).
   5. The 'id' must match the input 'id' exactly.
   6. Do not include timestamps in the output, only the ID and the translated text.
+  
+  The JSON to translate is below:
+  ${JSON.stringify(contentToTranslate)}
   `;
 
   let lastError: any;
@@ -108,10 +111,7 @@ export const translateBatch = async (
     try {
       const result = await ai.models.generateContent({
         model: modelId,
-        contents: [
-          { role: "system", parts: [{ text: systemInstruction }] },
-          { role: "user", parts: [{ text: JSON.stringify(contentToTranslate) }] }
-        ],
+        contents: [{ role: "user", parts: [{ text: systemInstruction }] }],
         config: generationConfig,
       });
 
