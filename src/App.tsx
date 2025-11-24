@@ -39,6 +39,7 @@ const App = () => {
   // Video-specific State
   const [videoProcessingStatus, setVideoProcessingStatus] = useState<VideoProcessingStatus>(VideoProcessingStatus.IDLE);
   const [videoProcessingMessage, setVideoProcessingMessage] = useState('');
+  const [ffmpegProgress, setFfmpegProgress] = useState<number>(0);
   const [extractedTracks, setExtractedTracks] = useState<ExtractedSubtitleTrack[]>([]);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   
@@ -127,6 +128,7 @@ const App = () => {
     setError(null);
     setVideoProcessingStatus(VideoProcessingStatus.IDLE);
     setVideoProcessingMessage('');
+    setFfmpegProgress(0);
     setExtractedTracks([]);
     if (videoSrc) {
         URL.revokeObjectURL(videoSrc);
@@ -214,6 +216,9 @@ const App = () => {
       setVideoProcessingStatus(VideoProcessingStatus.LOADING_FFMPEG);
       const ffmpeg = await loadFFmpeg((message) => setVideoProcessingMessage(message));
       ffmpegRef.current = ffmpeg;
+      ffmpeg.on('progress', ({ progress }) => {
+        setFfmpegProgress(progress * 100);
+      });
       console.log("handleVideoUpload: FFmpeg loaded successfully.");
       
       setVideoProcessingStatus(VideoProcessingStatus.ANALYZING);
@@ -223,13 +228,13 @@ const App = () => {
       console.log("handleVideoUpload: Video analysis complete.");
       
       setVideoSrc(URL.createObjectURL(videoFile));
-      setVideoProcessingStatus(VideoProcessingStatus.IDLE); // Now wait for user choice
 
       if (tracks.length === 0) {
         console.log("handleVideoUpload: No tracks found, proceeding to generate subtitles.");
         await handleGenerateSubtitles();
       } else {
-        console.log(`handleVideoUpload: ${tracks.length} tracks found, waiting for user selection.`);
+        console.log(`handleVideoUpload: ${tracks.length} tracks found, setting status to IDLE for user selection.`);
+        setVideoProcessingStatus(VideoProcessingStatus.IDLE);
       }
     } catch (e: any) {
       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -242,6 +247,7 @@ const App = () => {
   const handleTrackSelection = async (trackIndex: number) => {
     if (!ffmpegRef.current) return;
     try {
+        setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
         setVideoProcessingMessage('Extracting selected subtitle track...');
         const srtContent = await extractSrt(ffmpegRef.current, trackIndex);
@@ -260,13 +266,14 @@ const App = () => {
     if (!ffmpegRef.current || (!userApiKey && !process.env.API_KEY)) {
         setActiveModal('CONFIG');
         setError("Please provide an API Key to generate subtitles.");
-        setVideoProcessingStatus(VideoProcessingStatus.IDLE); // Go back to choice state
+        setVideoProcessingStatus(VideoProcessingStatus.IDLE);
         return;
     }
     const key = userApiKey || process.env.API_KEY;
     if (!key) return;
 
     try {
+        setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_AUDIO);
         setVideoProcessingMessage('Extracting audio from video...');
         const audioBlob = await extractAudio(ffmpegRef.current);
@@ -334,6 +341,7 @@ const App = () => {
   const handleDownloadVideo = async () => {
     if (!file || !ffmpegRef.current || status !== TranslationStatus.COMPLETED) return;
     try {
+        setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.MUXING);
         setVideoProcessingMessage('Packaging your new video file... This will not re-encode the video.');
         const finalSrt = stringifySRT(subtitles);
@@ -361,6 +369,13 @@ const App = () => {
       model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())
     );
   }, [modelSearchQuery]);
+  
+  const showProgressBar = [
+    VideoProcessingStatus.EXTRACTING_AUDIO, 
+    VideoProcessingStatus.TRANSCRIBING, 
+    VideoProcessingStatus.MUXING,
+    VideoProcessingStatus.EXTRACTING_SUBTITLES
+  ].includes(videoProcessingStatus);
 
   // --- Render Logic ---
   if (currentPage === 'DOCS') {
@@ -457,11 +472,21 @@ const App = () => {
                     <h2 className="text-xl font-bold text-white mb-2">Drop your SRT or Video file here</h2>
                     <p className="text-neutral-500">or click to browse local files</p>
                  </div>
-               ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
-                 <div className="flex flex-col items-center justify-center text-center min-h-[200px]">
-                    <Loader2 className="w-12 h-12 text-white animate-spin mb-4" />
-                    <h2 className="text-xl font-bold text-white mb-2 uppercase tracking-widest">{videoProcessingStatus.replace('_', ' ')}</h2>
-                    <p className="text-neutral-400">{videoProcessingMessage}</p>
+               ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
+                 <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
+                    <Loader2 className="w-12 h-12 text-white animate-spin" />
+                    <div>
+                      <h2 className="text-xl font-bold text-white mb-1 uppercase tracking-widest">{videoProcessingStatus.replace('_', ' ')}</h2>
+                      <p className="text-neutral-400">{videoProcessingMessage}</p>
+                    </div>
+                    {showProgressBar &&
+                      <div className="w-full max-w-sm">
+                        <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-white transition-all duration-300" style={{width: `${ffmpegProgress}%`}}></div>
+                        </div>
+                        <p className="text-xs text-neutral-500 mt-1 text-right">{Math.round(ffmpegProgress)}%</p>
+                      </div>
+                    }
                  </div>
                ) : (fileType === 'video' && videoProcessingStatus === VideoProcessingStatus.IDLE && subtitles.length === 0) ? (
                  <TrackSelector tracks={extractedTracks} onSelectTrack={handleTrackSelection} onGenerate={handleGenerateSubtitles} />

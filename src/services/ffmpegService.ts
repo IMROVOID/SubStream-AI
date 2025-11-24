@@ -23,13 +23,12 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
 
     onProgress('Loading core video engine...');
     
-    // This is the definitive fix. We use an absolute path from the server root.
-    // In dev, this resolves to `http://localhost:3000/ffmpeg/...`.
-    // In production, Vite's `base` config will automatically prepend `/SubStream-AI/`.
-    const baseURL = "/ffmpeg";
-
+    // This is the definitive fix. We revert to loading from the CDN.
+    // This works now because the necessary headers in vite.config.ts are present.
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+    
     try {
-        console.log(`loadFFmpeg: Attempting to load core from baseURL: ${baseURL}`);
+        console.log(`loadFFmpeg: Attempting to load core from CDN: ${baseURL}`);
         // We still dynamically import toBlobURL to avoid bundler issues.
         const { toBlobURL } = await import('@ffmpeg/util');
         console.log("loadFFmpeg: Dynamic import of toBlobURL successful.");
