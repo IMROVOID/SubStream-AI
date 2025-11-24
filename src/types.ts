@@ -42,6 +42,8 @@ export interface AIModel {
   name: string;
   description: string;
   tags: string[];
+  provider: 'google' | 'openai';
+  transcriptionModel?: string; // Specific model for transcription, e.g., 'whisper-1'
 }
 
 export const AVAILABLE_MODELS: AIModel[] = [
@@ -49,33 +51,72 @@ export const AVAILABLE_MODELS: AIModel[] = [
     id: 'gemini-3-pro-preview',
     name: 'Gemini 3 Pro',
     description: 'Highest reasoning capability. Best for complex dialogue, cultural nuances, and context retention.',
-    tags: ['Best Quality', 'Slower']
+    tags: ['Best Quality', 'Slower'],
+    provider: 'google',
   },
   {
     id: 'gemini-2.5-pro-preview',
     name: 'Gemini 2.5 Pro',
     description: 'Balanced performance with advanced reasoning capabilities. Great for most subtitles.',
-    tags: ['Balanced', 'High Quality']
+    tags: ['Balanced', 'High Quality'],
+    provider: 'google',
   },
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
     description: 'Next-generation high-speed model. Ideal for large files and quick turnaround.',
-    tags: ['Ultra Fast', 'New']
+    tags: ['Ultra Fast', 'New'],
+    provider: 'google',
   },
   {
     id: 'gemini-2.0-pro-exp-02-05',
     name: 'Gemini 2.0 Pro',
     description: 'Previous generation high-intelligence model. Reliable for standard translation tasks.',
-    tags: ['Reliable', 'Smart']
+    tags: ['Reliable', 'Smart'],
+    provider: 'google',
   },
   {
     id: 'gemini-2.0-flash',
     name: 'Gemini 2.0 Flash',
     description: 'Optimized for speed and efficiency. Good for straightforward content and quick results.',
-    tags: ['Fast', 'Efficient']
-  }
+    tags: ['Fast', 'Efficient'],
+    provider: 'google',
+  },
+  // OpenAI Models
+  {
+    id: 'gpt-4o',
+    name: 'GPT-4o',
+    description: "OpenAI's flagship, most intelligent model. Excellent for nuanced understanding and generation.",
+    tags: ['Flagship', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-4o-mini',
+    name: 'GPT-4o Mini',
+    description: 'A smaller, faster, and more affordable version of GPT-4o with strong performance.',
+    tags: ['Fast', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-4.1-turbo',
+    name: 'GPT-4.1 Turbo',
+    description: 'A hypothetical faster and more capable version of GPT-4. (Not yet released)',
+    tags: ['Hypothetical', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-5-pro',
+    name: 'GPT-5 Pro',
+    description: 'A hypothetical next-gen model for unparalleled performance. (Not yet released)',
+    tags: ['Experimental', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
 ];
+
 
 export const LANGUAGES: LanguageOption[] = [
   { code: 'en', name: 'English' },

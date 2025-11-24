@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown } from 'lucide-react';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
-import { processFullSubtitleFile, BATCH_SIZE, validateApiKey, transcribeAudio } from './services/geminiService';
+import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
@@ -44,9 +44,14 @@ const App = () => {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   
   // API Key & Model Config State
-  const [userApiKey, setUserApiKey] = useState<string>('');
-  const [tempApiKey, setTempApiKey] = useState<string>('');
-  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>('idle');
+  const [userGoogleApiKey, setUserGoogleApiKey] = useState<string>('');
+  const [tempGoogleApiKey, setTempGoogleApiKey] = useState<string>('');
+  const [googleApiKeyStatus, setGoogleApiKeyStatus] = useState<ApiKeyStatus>('idle');
+  
+  const [userOpenAIApiKey, setUserOpenAIApiKey] = useState<string>('');
+  const [tempOpenAIApiKey, setTempOpenAIApiKey] = useState<string>('');
+  const [openAIApiKeyStatus, setOpenAIApiKeyStatus] = useState<ApiKeyStatus>('idle');
+  
   const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[0].id);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
@@ -54,54 +59,74 @@ const App = () => {
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
-  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const debounceGoogleKeyTimer = useRef<NodeJS.Timeout | null>(null);
+  const debounceOpenAIKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
 
   // --- Effects ---
 
-  // API Key validation effect with debounce
+  // Google API Key validation effect
   useEffect(() => {
-    if (tempApiKey === '') {
-      setApiKeyStatus('idle');
+    if (tempGoogleApiKey === '') {
+      setGoogleApiKeyStatus('idle');
       return;
     }
-    
-    if (tempApiKey === userApiKey) {
-        setApiKeyStatus('valid');
+    if (tempGoogleApiKey === userGoogleApiKey) {
+        setGoogleApiKeyStatus('valid');
         return;
     }
+    setGoogleApiKeyStatus('validating');
+    if (debounceGoogleKeyTimer.current) clearTimeout(debounceGoogleKeyTimer.current);
 
-    setApiKeyStatus('validating');
-
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
-    }
-
-    debounceTimer.current = setTimeout(() => {
-      validateApiKey(tempApiKey).then(isValid => {
-        setApiKeyStatus(isValid ? 'valid' : 'invalid');
+    debounceGoogleKeyTimer.current = setTimeout(() => {
+      validateGoogleApiKey(tempGoogleApiKey).then(isValid => {
+        setGoogleApiKeyStatus(isValid ? 'valid' : 'invalid');
       });
     }, 800);
 
-    return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
-    };
-  }, [tempApiKey, userApiKey]);
+    return () => { if (debounceGoogleKeyTimer.current) clearTimeout(debounceGoogleKeyTimer.current); };
+  }, [tempGoogleApiKey, userGoogleApiKey]);
+  
+  // OpenAI API Key validation effect
+  useEffect(() => {
+    if (tempOpenAIApiKey === '') {
+      setOpenAIApiKeyStatus('idle');
+      return;
+    }
+    if (tempOpenAIApiKey === userOpenAIApiKey) {
+        setOpenAIApiKeyStatus('valid');
+        return;
+    }
+    setOpenAIApiKeyStatus('validating');
+    if (debounceOpenAIKeyTimer.current) clearTimeout(debounceOpenAIKeyTimer.current);
+
+    debounceOpenAIKeyTimer.current = setTimeout(() => {
+      validateOpenAIApiKey(tempOpenAIApiKey).then(isValid => {
+        setOpenAIApiKeyStatus(isValid ? 'valid' : 'invalid');
+      });
+    }, 800);
+
+    return () => { if (debounceOpenAIKeyTimer.current) clearTimeout(debounceOpenAIKeyTimer.current); };
+  }, [tempOpenAIApiKey, userOpenAIApiKey]);
 
   // Load persisted settings
   useEffect(() => {
-    const storedKey = localStorage.getItem('substream_api_key');
+    const storedGoogleKey = localStorage.getItem('substream_google_api_key');
+    const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
     const storedModel = localStorage.getItem('substream_model_id');
     const storedUsage = localStorage.getItem('substream_daily_usage');
     const lastUsageDate = localStorage.getItem('substream_usage_date');
     const today = new Date().toDateString();
 
-    if (storedKey) {
-      setUserApiKey(storedKey);
-      setTempApiKey(storedKey);
-      setApiKeyStatus('valid');
+    if (storedGoogleKey) {
+      setUserGoogleApiKey(storedGoogleKey);
+      setTempGoogleApiKey(storedGoogleKey);
+      setGoogleApiKeyStatus('valid');
+    }
+    if (storedOpenAIKey) {
+      setUserOpenAIApiKey(storedOpenAIKey);
+      setTempOpenAIApiKey(storedOpenAIKey);
+      setOpenAIApiKeyStatus('valid');
     }
 
     if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
@@ -137,19 +162,30 @@ const App = () => {
   };
 
   const saveSettings = () => {
-    if (apiKeyStatus === 'valid') {
-        localStorage.setItem('substream_api_key', tempApiKey);
-        setUserApiKey(tempApiKey);
+    if (googleApiKeyStatus === 'valid') {
+        localStorage.setItem('substream_google_api_key', tempGoogleApiKey);
+        setUserGoogleApiKey(tempGoogleApiKey);
+    }
+    if (openAIApiKeyStatus === 'valid') {
+        localStorage.setItem('substream_openai_api_key', tempOpenAIApiKey);
+        setUserOpenAIApiKey(tempOpenAIApiKey);
     }
     localStorage.setItem('substream_model_id', selectedModelId);
     setActiveModal('NONE');
   };
 
-  const clearApiKey = () => {
-    localStorage.removeItem('substream_api_key');
-    setUserApiKey('');
-    setTempApiKey('');
-    setApiKeyStatus('idle');
+  const clearGoogleApiKey = () => {
+    localStorage.removeItem('substream_google_api_key');
+    setUserGoogleApiKey('');
+    setTempGoogleApiKey('');
+    setGoogleApiKeyStatus('idle');
+  };
+  
+  const clearOpenAIApiKey = () => {
+    localStorage.removeItem('substream_openai_api_key');
+    setUserOpenAIApiKey('');
+    setTempOpenAIApiKey('');
+    setOpenAIApiKeyStatus('idle');
   };
 
   const updateUsage = (newRequests: number) => {
@@ -263,14 +299,18 @@ const App = () => {
   };
 
   const handleGenerateSubtitles = async () => {
-    if (!ffmpegRef.current || (!userApiKey && !process.env.API_KEY)) {
+    const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
+    const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
+
+    if (!ffmpegRef.current || (!apiKey && !hasDefaultKey)) {
         setActiveModal('CONFIG');
-        setError("Please provide an API Key to generate subtitles.");
+        setError(`Please provide an API Key for ${activeModel.provider} to generate subtitles.`);
         setVideoProcessingStatus(VideoProcessingStatus.IDLE);
         return;
     }
-    const key = userApiKey || process.env.API_KEY;
-    if (!key) return;
+    const keyToUse = apiKey || (hasDefaultKey ? process.env.GEMINI_API_KEY as string : '');
+    if (!keyToUse) return;
 
     try {
         setFfmpegProgress(0);
@@ -279,8 +319,8 @@ const App = () => {
         const audioBlob = await extractAudio(ffmpegRef.current);
 
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
-        setVideoProcessingMessage('Generating subtitles with AI, this may take a moment...');
-        const srtContent = await transcribeAudio(audioBlob, sourceLang, key, selectedModelId);
+        setVideoProcessingMessage(`Generating subtitles with ${activeModel.name}, this may take a moment...`);
+        const srtContent = await transcribeAudio(audioBlob, sourceLang, keyToUse, activeModel);
 
         const parsed = parseSRT(srtContent);
         setSubtitles(parsed);
@@ -296,11 +336,16 @@ const App = () => {
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
     
-    if (!userApiKey && !process.env.API_KEY) {
+    const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
+    const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
+
+    if (!apiKey && !hasDefaultKey) {
       setActiveModal('CONFIG');
-      setError("Please Provide an API Key to continue.");
+      setError(`Please Provide an API Key for ${activeModel.provider} to continue.`);
       return;
     }
+    const keyToUse = apiKey || (hasDefaultKey ? process.env.GEMINI_API_KEY as string : '');
 
     setStatus(TranslationStatus.TRANSLATING);
     setProgress(0);
@@ -315,8 +360,8 @@ const App = () => {
         subtitles,
         sourceLang,
         targetLang,
-        userApiKey || null,
-        selectedModelId,
+        keyToUse,
+        activeModel,
         (count) => setProgress(Math.round((count / subtitles.length) * 100)),
         (updatedSubtitles) => setSubtitles(updatedSubtitles)
       );
@@ -362,11 +407,27 @@ const App = () => {
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
   const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
+  const hasProAccess = userGoogleApiKey || userOpenAIApiKey;
 
-  const filteredModels = useMemo(() => {
+  const filteredGoogleModels = useMemo(() => {
     return AVAILABLE_MODELS.filter(model =>
-      model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-      model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())
+      model.provider === 'google' &&
+      (
+        model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        model.description.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        model.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())
+      )
+    );
+  }, [modelSearchQuery]);
+
+  const filteredOpenAIModels = useMemo(() => {
+    return AVAILABLE_MODELS.filter(model =>
+      model.provider === 'openai' &&
+      (
+        model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        model.description.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        model.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())
+      )
     );
   }, [modelSearchQuery]);
   
@@ -405,19 +466,19 @@ const App = () => {
 
              <button 
                 onClick={() => setActiveModal('CONFIG')}
-                className={`flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-xl border transition-all group ${userApiKey ? 'bg-neutral-900/50 border-neutral-800 hover:border-white/30' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'}`}
+                className={`flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-xl border transition-all group ${hasProAccess ? 'bg-neutral-900/50 border-neutral-800 hover:border-white/30' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'}`}
              >
                 <div className="text-xs text-right">
                    <div className="font-bold text-white">
                        {activeModelData.name}
                    </div>
-                   <div className={`text-[10px] uppercase ${userApiKey ? 'text-green-400' : 'text-neutral-500'}`}>
-                       {userApiKey ? 'Pro Access' : `${remainingQuota} Credits`}
+                   <div className={`text-[10px] uppercase ${hasProAccess ? 'text-green-400' : 'text-neutral-500'}`}>
+                       {hasProAccess ? 'Pro Access' : `${remainingQuota} Credits`}
                    </div>
                 </div>
                 
-                <div className={`w-8 h-8 rounded-full border relative flex items-center justify-center ${userApiKey ? 'border-green-900/50 bg-green-900/20' : 'border-neutral-700 bg-neutral-800/50'}`}>
-                   <Cpu className={`w-4 h-4 ${userApiKey ? 'text-green-400' : 'text-neutral-400 group-hover:text-white'}`} />
+                <div className={`w-8 h-8 rounded-full border relative flex items-center justify-center ${hasProAccess ? 'border-green-900/50 bg-green-900/20' : 'border-neutral-700 bg-neutral-800/50'}`}>
+                   <Cpu className={`w-4 h-4 ${hasProAccess ? 'text-green-400' : 'text-neutral-400 group-hover:text-white'}`} />
                 </div>
              </button>
           </div>
@@ -635,51 +696,115 @@ const App = () => {
                   className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors"
                 />
               </div>
-              <div className="space-y-3 pr-2 overflow-y-auto max-h-[300px] md:max-h-[350px] custom-scrollbar">
-                {filteredModels.map((model) => (
-                  <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="font-bold text-white mb-1">{model.name}</h4>
-                        <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
-                      </div>
-                      {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+              <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[350px] custom-scrollbar">
+                {/* Google Models Section */}
+                {filteredGoogleModels.length > 0 && (
+                  <details open className="group/google">
+                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
+                      <span className="font-bold text-neutral-300">Google Gemini Models</span>
+                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/google:rotate-180" />
+                    </summary>
+                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
+                      {filteredGoogleModels.map((model) => (
+                        <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                            </div>
+                            {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="flex gap-2 mt-3">
-                      {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                  </details>
+                )}
+
+                {/* OpenAI Models Section */}
+                {filteredOpenAIModels.length > 0 && (
+                   <details open className="group/openai">
+                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
+                      <span className="font-bold text-neutral-300">OpenAI Models</span>
+                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/openai:rotate-180" />
+                    </summary>
+                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
+                      {filteredOpenAIModels.map((model) => (
+                        <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                            </div>
+                            {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
-                {filteredModels.length === 0 && (
-                  <div className="text-center py-8 text-neutral-500 text-sm">No models found.</div>
+                  </details>
+                )}
+                
+                {/* No results message */}
+                {filteredGoogleModels.length === 0 && filteredOpenAIModels.length === 0 && (
+                  <div className="text-center py-8 text-neutral-500 text-sm">No models found for your search.</div>
                 )}
               </div>
            </div>
 
-           <div className="space-y-4">
-              <div>
+           <div className="space-y-6">
+              {/* Google API Key */}
+              <div className="space-y-2">
                 <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
-                  <Key className="w-4 h-4" /> Custom API Key
+                  <Key className="w-4 h-4" /> Google AI API Key
                 </label>
                 <div className="relative">
                    <input 
                     type="password"
                     placeholder="AIzaSy..."
-                    value={tempApiKey}
-                    onChange={(e) => setTempApiKey(e.target.value)}
-                    className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${apiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${apiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${apiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${apiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`}
+                    value={tempGoogleApiKey}
+                    onChange={(e) => setTempGoogleApiKey(e.target.value)}
+                    className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`}
                    />
                    <div className="absolute right-3 top-3.5">
-                      {apiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                      {apiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
-                      {apiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                      {googleApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                      {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                      {googleApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
                    </div>
                 </div>
-                <p className="text-xs text-neutral-500 mt-2">Required for heavy usage. Stored locally in your browser.</p>
+                <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
+                {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400 px-1 py-1">Clear Key</button> )}
               </div>
+              
+              {/* OpenAI API Key */}
+              <div className="space-y-2">
+                <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <Key className="w-4 h-4" /> OpenAI API Key
+                </label>
+                <div className="relative">
+                   <input 
+                    type="password"
+                    placeholder="sk-..."
+                    value={tempOpenAIApiKey}
+                    onChange={(e) => setTempOpenAIApiKey(e.target.value)}
+                    className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`}
+                   />
+                   <div className="absolute right-3 top-3.5">
+                      {openAIApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                      {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                      {openAIApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                   </div>
+                </div>
+                <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
+                {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400 px-1 py-1">Clear Key</button> )}
+              </div>
+              
               <div className="flex justify-end gap-3 pt-4">
-                {userApiKey && ( <button onClick={clearApiKey} className="text-sm text-red-500 hover:text-red-400 px-4 py-2">Clear Key</button> )}
-                <Button onClick={saveSettings} disabled={apiKeyStatus === 'invalid' || apiKeyStatus === 'validating'}>Save Settings</Button>
+                <Button onClick={saveSettings} disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating'}>Save Settings</Button>
               </div>
            </div>
         </div>
