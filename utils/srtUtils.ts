@@ -1,3 +1,4 @@
+
 import { SubtitleNode } from '../types';
 
 export const parseSRT = (data: string): SubtitleNode[] => {
