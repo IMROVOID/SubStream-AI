@@ -1,0 +1,6 @@
+# Allow all search engines to crawl the entire site.
+User-agent: *
+Disallow:
+
+# Point crawlers to the sitemap.
+Sitemap: https://imrovoid.github.io/SubStream-AI/sitemap.xml

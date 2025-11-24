@@ -299,7 +299,7 @@ const App = () => {
                     <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                       <Upload className="text-white w-8 h-8" />
                     </div>
-                    <h3 className="text-xl font-bold text-white mb-2">Drop your SRT file here</h3>
+                    <h2 className="text-xl font-bold text-white mb-2">Drop your SRT file here</h2>
                     <p className="text-neutral-500">or click to browse local files</p>
                  </div>
                ) : (
