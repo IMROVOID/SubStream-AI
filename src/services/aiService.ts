@@ -23,15 +23,38 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
 
 export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => {
     if (!apiKey || !apiKey.startsWith('AIzaSy')) return false;
-    try {
-        const ai = new GoogleGenAI({ apiKey });
-        await ai.models.countTokens({ model: "gemini-pro", contents: [{ role: "user", parts: [{ text: "test" }] }] });
-        return true;
-    } catch (error) {
-        console.error("Google API Key validation failed:", error);
-        return false;
+
+    // A list of stable models to try for validation in sequence.
+    const modelsToTry = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+    const ai = new GoogleGenAI({ apiKey });
+
+    for (const model of modelsToTry) {
+        try {
+            // Attempt a lightweight call to check for model accessibility.
+            await ai.models.countTokens({ model, contents: [{ role: "user", parts: [{ text: "test" }] }] });
+            // If the call succeeds, the key is valid.
+            return true;
+        } catch (error: any) {
+            // Check if it's specifically a 'NOT_FOUND' error for the model.
+            // The error object from the SDK might not have a clean 'status' property, so we check the message too.
+            const isNotFoundError = error?.status === 'NOT_FOUND' || (error?.message && error.message.includes('NOT_FOUND'));
+            
+            if (isNotFoundError) {
+                console.warn(`Validation with model "${model}" failed (Not Found). Trying next model...`);
+                // This error is expected if the model is unavailable; we continue to the next one.
+            } else {
+                // If it's a different error (e.g., authentication, invalid format), the key is definitely invalid.
+                console.error("Google API Key validation failed with a critical error:", error);
+                return false;
+            }
+        }
     }
+
+    // If the loop completes without returning true, it means all fallback models failed.
+    console.error("All fallback models for Google API Key validation failed. The key is likely invalid or there's a network issue.");
+    return false;
 };
+
 
 export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => {
     if (!apiKey || !apiKey.startsWith('sk-')) return false;
