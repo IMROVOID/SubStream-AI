@@ -280,7 +280,7 @@ const App = () => {
 
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
         setVideoProcessingMessage('Generating subtitles with AI, this may take a moment...');
-        const srtContent = await transcribeAudio(audioBlob, sourceLang, key);
+        const srtContent = await transcribeAudio(audioBlob, sourceLang, key, selectedModelId);
 
         const parsed = parseSRT(srtContent);
         setSubtitles(parsed);

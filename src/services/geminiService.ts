@@ -36,7 +36,7 @@ export const validateApiKey = async (apiKey: string): Promise<boolean> => {
   }
 };
 
-export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKey: string): Promise<string> {
+export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKey: string, modelId: string): Promise<string> {
     const ai = new GoogleGenAI({ apiKey });
 
     const audioBuffer = await audioBlob.arrayBuffer();
@@ -65,7 +65,7 @@ export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKe
     And this is the second.`;
 
     const result = await ai.models.generateContent({
-        model: "gemini-1.5-pro-latest",
+        model: modelId, // Use the dynamically passed modelId
         contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }]
     });
 
