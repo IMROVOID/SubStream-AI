@@ -14,10 +14,14 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
     ffmpeg.on('log', ({ message }) => {
         console.log(message);
     });
+    
+    ffmpeg.on('progress', ({ progress, time }) => {
+      // time is the current timestamp of the video in seconds
+      console.log(`FFmpeg Progress: ${(progress * 100).toFixed(2)}%`);
+    });
 
     onProgress('Loading core video engine...');
-    // Use Vite's env variable for a dynamic base path. This is the key fix.
-    // It resolves to "/" in dev and "/SubStream-AI/" in production.
+    // Use Vite's env variable for a dynamic base path.
     const baseURL = `${import.meta.env.BASE_URL}ffmpeg`;
 
     await ffmpeg.load({
@@ -32,17 +36,16 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
 export async function analyzeVideoFile(ffmpeg: FFmpeg, file: File): Promise<ExtractedSubtitleTrack[]> {
     await ffmpeg.writeFile('input.video', await fetchFile(file));
     
-    const command = ['-i', 'input.video', '-hide_banner'];
+    // This command now includes `-f null -` which tells FFmpeg to process the input
+    // but discard the output, forcing it to exit with a success code (0).
+    const command = ['-i', 'input.video', '-hide_banner', '-f', 'null', '-'];
     let output = '';
     
     const listener = ({ message }: { message: string }) => { output += message + "\n"; };
     ffmpeg.on('log', listener);
     
-    try {
-        await ffmpeg.exec(command);
-    } catch (e) {
-        // FFmpeg throws an error when exec is used for probing, this is expected.
-    }
+    // The try...catch block is no longer necessary as this command will not throw an error.
+    await ffmpeg.exec(command);
     
     ffmpeg.off('log', listener);
     

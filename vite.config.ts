@@ -14,6 +14,9 @@ export default defineConfig(({ mode }) => {
           'Cross-Origin-Embedder-Policy': 'require-corp',
         },
       },
+      optimizeDeps: {
+        exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+      },
       plugins: [react()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
