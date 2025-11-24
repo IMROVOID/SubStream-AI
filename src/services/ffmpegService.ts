@@ -36,18 +36,26 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
 export async function analyzeVideoFile(ffmpeg: FFmpeg, file: File): Promise<ExtractedSubtitleTrack[]> {
     await ffmpeg.writeFile('input.video', await fetchFile(file));
     
-    // This command now includes `-f null -` which tells FFmpeg to process the input
-    // but discard the output, forcing it to exit with a success code (0).
-    const command = ['-i', 'input.video', '-hide_banner', '-f', 'null', '-'];
+    const command = ['-i', 'input.video', '-hide_banner'];
     let output = '';
     
     const listener = ({ message }: { message: string }) => { output += message + "\n"; };
     ffmpeg.on('log', listener);
     
-    // The try...catch block is no longer necessary as this command will not throw an error.
-    await ffmpeg.exec(command);
+    try {
+        // This command is expected to throw an error because it doesn't produce an output file.
+        // We catch it and continue, as the metadata is printed to the log before the error occurs.
+        await ffmpeg.exec(command);
+    } catch (e) {
+        // This is an expected error, so we can safely ignore it.
+    }
     
     ffmpeg.off('log', listener);
+    
+    // If for some reason the output is still empty, then a real error occurred.
+    if (!output) {
+        throw new Error("Could not analyze video file. FFmpeg returned no data.");
+    }
     
     const subtitleTracks: ExtractedSubtitleTrack[] = [];
     const lines = output.split('\n');
