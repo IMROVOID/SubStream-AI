@@ -1,3 +1,4 @@
+
 # SubStream AI
 
 A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built from the ground up with a modern tech stack including **React, TypeScript, and Vite**, and features a sleek, glassmorphic dark UI with client-side AI processing.
@@ -40,7 +41,7 @@ To get a local copy up and running, follow these simple steps.
     ```sh
     cd SubStream-AI
     ```
-3.  **Install NPM packages:**
+3.  **Install NPM packages (Requires Node.js):**
     ```sh
     npm install
     ```
@@ -77,19 +78,31 @@ This project leverages several modern libraries and tools to achieve its functio
 
 This repository is pre-configured for easy deployment to GitHub Pages.
 
-1.  **Set `homepage` and `base`:**
-    *   In `package.json`, the `"homepage"` field is set to your GitHub Pages URL.
-    *   In `vite.config.ts`, the `base` property is set to your repository name.
+1.  **Update Configuration Files:**
+    *   **`package.json`**: Add the homepage field:
+        ```json
+        "homepage": "https://imrovoid.github.io/SubStream-AI/",
+        ```
+    *   **`vite.config.ts`**: Set the base path:
+        ```ts
+        export default defineConfig({
+          base: '/SubStream-AI/',
+          plugins: [react()],
+        })
+        ```
+
 2.  **Run the deploy script:**
     This single command will build your project and push the `dist` folder to the `gh-pages` branch on your repository.
     ```sh
     npm run deploy
     ```
+    *(Ensure you have the `gh-pages` package installed: `npm install gh-pages --save-dev`)*
+
 3.  **Configure GitHub Settings:**
     *   In your repository settings, navigate to the **Pages** tab.
     *   Set the **Source** to **"Deploy from a branch"**.
     *   Set the **Branch** to **`gh-pages`** with the `/root` folder.
-    *   Save your changes. Your site will be live within a few minutes.
+    *   Save your changes. Your site will be live at `https://imrovoid.github.io/SubStream-AI/` within a few minutes.
 
 ---
 
