@@ -1,0 +1,5 @@
+{
+  "name": "SubStream AI",
+  "description": "A high-performance, dark-themed SRT subtitle translator powered by Gemini 3 Pro Preview.",
+  "requestFramePermissions": []
+}
