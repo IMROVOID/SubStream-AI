@@ -1,22 +1,26 @@
+<<<<<<< HEAD
 
 # SubStream AI
 
 A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built from the ground up with a modern tech stack including **React, TypeScript, and Vite**, and features a sleek, glassmorphic dark UI with client-side AI processing.
+=======
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-### [🚀 View Live Demo 🚀](https://imrovoid.github.io/SubStream-AI/)
+# Run and deploy your AI Studio app
+>>>>>>> parent of 76632ae (feat: Improve README with project details)
 
-![SubStream AI Screenshot](https://raw.githubusercontent.com/IMROVOID/SubStream-AI/main/public/screenshot.png)
+This contains everything you need to run your app locally.
 
-## ✨ Key Features
+View your app in AI Studio: https://ai.studio/apps/drive/1J88hI5CcZG0wqN0d1wEsrILNxFfSrBMb
 
-*   **Context-Aware Translation:** Uses intelligent batching to process subtitles in groups, allowing Gemini 3 Pro to understand context, gender, and tone across lines.
-*   **Multi-Model Support:** Switch between **Gemini 3 Pro** (High Reasoning), **Gemini 2.5 Flash** (High Speed), and other models instantly via the configuration overlay.
-*   **Client-Side Privacy:** Your API keys and files are processed locally in the browser memory and sent directly to Google. No data is stored on our servers.
-*   **Live Preview & Editing:** View original and translated text side-by-side in real-time as the AI processes the file.
-*   **Smart Quota Management:** Real-time estimation of API request usage and local quota tracking to help you stay within limits.
+## Run Locally
 
-## 📁 Project Structure
+**Prerequisites:**  Node.js
 
+
+<<<<<<< HEAD
 The project is organized into a clean and scalable structure to make navigation and modification intuitive.
 
 ```
@@ -133,3 +137,10 @@ If you find this application useful, please consider a donation. As I am based i
 | **USDT** (TRC20) | `THMe6FdXkA2Pw45yKaXBHRnkX3fjyKCzfy` |
 | **Solana** (SOL) | `9QZHMTN4Pu6BCxiN2yABEcR3P4sXtBjkog9GXNxWbav1` |
 | **TON** | `UQCp0OawnofpZTNZk-69wlqIx_wQpzKBgDpxY2JK5iynh3mC` |
+=======
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
+>>>>>>> parent of 76632ae (feat: Improve README with project details)
