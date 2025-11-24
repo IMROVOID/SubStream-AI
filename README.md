@@ -5,7 +5,7 @@ A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 
 
 ### [🚀 View Live Demo 🚀](https://imrovoid.github.io/SubStream-AI/)
 
-![SubStream AI Screenshot](https://raw.githubusercontent.com/IMROVOID/SubStream-AI/main/public/screenshot.png)
+![SubStream AI Screenshot](https://raw.githubusercontent.com/IMROVOID/SubStream-AI/main/public/screenshot.webp)
 
 ## ✨ Key Features
 
