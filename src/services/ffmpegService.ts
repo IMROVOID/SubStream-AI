@@ -16,7 +16,10 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
     });
 
     onProgress('Loading core video engine...');
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+    // Use Vite's env variable for a dynamic base path. This is the key fix.
+    // It resolves to "/" in dev and "/SubStream-AI/" in production.
+    const baseURL = `${import.meta.env.BASE_URL}ffmpeg`;
+
     await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
