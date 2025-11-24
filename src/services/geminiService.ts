@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { SubtitleNode } from "../types";
 
@@ -92,7 +91,8 @@ export const processFullSubtitleFile = async (
   targetLang: string,
   customApiKey: string | null,
   modelId: string,
-  onProgress: (processedCount: number) => void
+  onProgress: (processedCount: number) => void,
+  onBatchComplete: (updatedSubtitles: SubtitleNode[]) => void
 ): Promise<SubtitleNode[]> => {
   
   const apiKey = customApiKey || process.env.API_KEY;
@@ -120,6 +120,7 @@ export const processFullSubtitleFile = async (
 
       processedCount += batch.length;
       onProgress(Math.min(processedCount, subtitles.length));
+      onBatchComplete([...results]); // Send live update
       
       // Increased delay to 1000ms to ensure stability and avoid 500/rate-limit errors
       await delay(1000);

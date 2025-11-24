@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, FileText, ArrowRight, Download, Play, RefreshCw, Languages, Zap, AlertCircle, Settings, Key, BarChart3, Info, Cpu, CheckCircle2 } from 'lucide-react';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, AIModel } from './types';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Settings, Key, Info, Cpu, CheckCircle2, BookText } from 'lucide-react';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE } from './services/geminiService';
 import { Button } from './components/Button';
@@ -12,7 +12,7 @@ import { Documentation } from './components/Documentation';
 type Page = 'HOME' | 'DOCS';
 type ModalType = 'NONE' | 'PRIVACY' | 'TOS' | 'CONFIG';
 
-const ESTIMATED_DAILY_QUOTA = 1500; // Rough estimate for Free Tier
+const ESTIMATED_DAILY_QUOTA = 500; // Rough estimate for Free Tier
 
 const App = () => {
   // Navigation State
@@ -127,7 +127,6 @@ const App = () => {
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
     
-    // Check if user has enough "quota" locally or if they need a key
     if (!userApiKey && !process.env.API_KEY) {
       setActiveModal('CONFIG');
       setError("Please Provide an API Key to continue.");
@@ -138,7 +137,6 @@ const App = () => {
     setProgress(0);
     setError(null);
 
-    // Scroll to results
     setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
@@ -152,11 +150,14 @@ const App = () => {
         selectedModelId,
         (count) => {
           setProgress(Math.round((count / subtitles.length) * 100));
+        },
+        (updatedSubtitles) => {
+          setSubtitles(updatedSubtitles);
         }
       );
       
-      setSubtitles(result); // Update with final results
-      updateUsage(estimatedRequests); // Update local quota tracker
+      setSubtitles(result);
+      updateUsage(estimatedRequests);
       setStatus(TranslationStatus.COMPLETED);
     } catch (e: any) {
       console.error(e);
@@ -172,33 +173,31 @@ const App = () => {
     downloadFile(filename, content);
   };
 
-  // Render Documentation Page
   if (currentPage === 'DOCS') {
     return <Documentation onBack={() => setCurrentPage('HOME')} />;
   }
 
-  // Render Main App
   return (
     <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black">
       
-      {/* Background Ambience */}
       <div className="fixed inset-0 pointer-events-none z-0">
          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-neutral-900/30 blur-[120px] rounded-full mix-blend-screen" />
          <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-neutral-800/20 blur-[100px] rounded-full mix-blend-screen" />
       </div>
 
-      {/* Navigation - Enhanced Blur */}
       <nav className="relative z-20 border-b border-neutral-900 bg-black/80 backdrop-blur-xl sticky top-0 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.reload()}>
             <div className="w-8 h-8 bg-white text-black flex items-center justify-center font-bold text-xl rounded-lg font-display">S</div>
             <span className="font-display font-bold text-lg tracking-tight">SubStream <span className="text-neutral-600 font-sans font-normal text-sm ml-2">AI</span></span>
           </div>
-          <div className="hidden md:flex items-center gap-6 text-sm font-medium text-neutral-400">
+          <div className="flex items-center gap-2 md:gap-6 text-sm font-medium text-neutral-400">
              
-             <button onClick={() => setCurrentPage('DOCS')} className="hover:text-white transition-colors focus:outline-none">Documentation</button>
-             
-             {/* Unified Model & API Key Selector */}
+             <button onClick={() => setCurrentPage('DOCS')} className="hidden md:block hover:text-white transition-colors focus:outline-none">Documentation</button>
+             <button onClick={() => setCurrentPage('DOCS')} className="p-2 rounded-full hover:bg-neutral-800 transition-colors group md:hidden" aria-label="Documentation">
+                <BookText className="w-5 h-5 text-neutral-400 group-hover:text-white" />
+             </button>
+
              <button 
                 onClick={() => setActiveModal('CONFIG')}
                 className={`flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-xl border transition-all group ${userApiKey ? 'bg-neutral-900/50 border-neutral-800 hover:border-white/30' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'}`}
@@ -220,58 +219,59 @@ const App = () => {
         </div>
       </nav>
 
-      {/* Main Content */}
       <main className="relative z-10 max-w-5xl mx-auto px-6 py-12 md:py-20">
         
-        {/* Header Section */}
-        <section className="mb-20 text-center">
-          <h1 className="text-5xl md:text-7xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
-            Bridge the Language <br/>
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-neutral-400 to-neutral-700">Gap Instantly.</span>
+        <section className="mt-8 md:mt-12 mb-20 text-center">
+          <h1 className="text-5xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up leading-tight">
+            <span className="block">Bridge the Language</span>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-neutral-400 to-neutral-700">
+                Gap <span className="text-6xl md:text-7xl">Instantly.</span>
+            </span>
           </h1>
-          <p className="text-lg text-neutral-400 max-w-2xl mx-auto leading-relaxed animate-slide-up" style={{animationDelay: '0.1s'}}>
+          <p className="text-base md:text-lg text-neutral-400 max-w-2xl mx-auto leading-relaxed animate-slide-up" style={{animationDelay: '0.1s'}}>
             Transform your subtitles with context-aware AI. 
             Powered by Google's {activeModelData.name} for nuance and accuracy across {LANGUAGES.length}+ languages.
           </p>
         </section>
 
-        {/* Workflow Container */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
           
-          {/* Steps Sidebar (Sticky) */}
           <div className="lg:col-span-3">
-             <div className="sticky top-32 space-y-8 p-6 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm">
-               <StepIndicator 
-                 number={1} 
-                 title="Upload" 
-                 isActive={status === TranslationStatus.IDLE && !file} 
-                 isCompleted={!!file} 
-               />
-               <StepIndicator 
-                 number={2} 
-                 title="Configure" 
-                 isActive={!!file && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} 
-                 isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} 
-               />
-               <StepIndicator 
-                 number={3} 
-                 title="Translate" 
-                 isActive={status === TranslationStatus.TRANSLATING} 
-                 isCompleted={status === TranslationStatus.COMPLETED} 
-               />
-               <StepIndicator 
-                 number={4} 
-                 title="Download" 
-                 isActive={status === TranslationStatus.COMPLETED} 
-                 isCompleted={false} 
-               />
+             <div className="lg:sticky lg:top-32">
+                <div className="
+                  flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm
+                  lg:flex-col lg:p-6 lg:space-y-8
+                ">
+                    <StepIndicator 
+                        number={1} 
+                        title="Upload" 
+                        isActive={status === TranslationStatus.IDLE && !file} 
+                        isCompleted={!!file} 
+                    />
+                    <StepIndicator 
+                        number={2} 
+                        title="Configure" 
+                        isActive={!!file && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} 
+                        isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} 
+                    />
+                    <StepIndicator 
+                        number={3} 
+                        title="Translate" 
+                        isActive={status === TranslationStatus.TRANSLATING} 
+                        isCompleted={status === TranslationStatus.COMPLETED} 
+                    />
+                    <StepIndicator 
+                        number={4} 
+                        title="Download" 
+                        isActive={status === TranslationStatus.COMPLETED} 
+                        isCompleted={false} 
+                    />
+                </div>
              </div>
           </div>
 
-          {/* Action Area */}
           <div className="lg:col-span-9 space-y-8">
 
-            {/* Step 1: Upload */}
             <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-8 md:p-12 hover:bg-neutral-900/30 transition-all duration-300">
                {!file ? (
                  <div 
@@ -324,7 +324,6 @@ const App = () => {
                         </Button>
                     </div>
 
-                    {/* Cost Estimation Banner */}
                     <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
                         <Info className="w-4 h-4 shrink-0" />
                         <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
@@ -333,7 +332,6 @@ const App = () => {
                )}
             </div>
 
-            {/* Step 2: Controls */}
             {file && (
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
                   <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
@@ -369,7 +367,6 @@ const App = () => {
                </div>
             )}
 
-            {/* Action Buttons */}
             {file && (
               <div className="flex justify-end gap-4 animate-fade-in">
                 {status === TranslationStatus.TRANSLATING ? (
@@ -397,7 +394,6 @@ const App = () => {
               </div>
             )}
             
-            {/* Error Message */}
             {error && (
               <div className="p-4 rounded-xl bg-red-900/10 border border-red-900/40 text-red-200 text-sm flex items-center gap-3 animate-fade-in">
                 <AlertCircle className="w-5 h-5 text-red-500" />
@@ -408,7 +404,6 @@ const App = () => {
           </div>
         </div>
 
-        {/* Step 3 & 4: Results Section */}
         {subtitles.length > 0 && (status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED) && (
           <section ref={resultsRef} className="mt-24 border-t border-neutral-900 pt-12 animate-slide-up">
             <div className="flex items-center justify-between mb-8">
@@ -455,7 +450,6 @@ const App = () => {
 
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-neutral-900 py-12 bg-black mt-20 relative z-10">
          <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="text-neutral-500 text-sm">
@@ -468,11 +462,9 @@ const App = () => {
          </div>
       </footer>
 
-      {/* OVERLAYS / MODALS */}
       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
         <div className="space-y-8">
            
-           {/* Model Selection Section */}
            <div>
               <label className="block text-sm font-bold text-white mb-4 flex items-center gap-2">
                 <Cpu className="w-4 h-4" /> Select AI Model
@@ -505,7 +497,6 @@ const App = () => {
 
            <div className="h-px bg-neutral-800 w-full"></div>
 
-           {/* API Key Section */}
            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
