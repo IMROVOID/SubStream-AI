@@ -451,6 +451,8 @@ const App = () => {
     VideoProcessingStatus.MUXING,
     VideoProcessingStatus.EXTRACTING_SUBTITLES
   ].includes(videoProcessingStatus);
+  
+  const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
 
   // --- Render Logic ---
   if (currentPage === 'DOCS') {
@@ -710,7 +712,7 @@ const App = () => {
                   className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors"
                 />
               </div>
-              <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[350px] custom-scrollbar">
+              <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[450px] custom-scrollbar">
                 {/* Google Models Section */}
                 {filteredGoogleModels.length > 0 && (
                   <details open className="group/google">
@@ -815,6 +817,38 @@ const App = () => {
                 </div>
                 <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
                 {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400 px-1 py-1">Clear Key</button> )}
+              </div>
+
+               {/* Rate Limit Settings */}
+              <div className="space-y-2 pt-2">
+                  <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
+                      <Gauge className="w-4 h-4" /> Rate Limit
+                  </label>
+                  <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
+                      <div
+                          className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out"
+                          style={{ transform: `translateX(${selectedRpmIndex * 100}%)` }}
+                      />
+                      {RPM_OPTIONS.map((option) => (
+                          <button
+                              key={option.value}
+                              onClick={() => setSelectedRPM(option.value)}
+                              className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${
+                                  selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'
+                              }`}
+                          >
+                              {option.label.split(' ')[0]}
+                          </button>
+                      ))}
+                  </div>
+                   <div className="text-center mt-2">
+                      <p className="font-medium text-white">
+                          {selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}
+                      </p>
+                      <p className="text-xs text-neutral-500">
+                          {RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}
+                      </p>
+                  </div>
               </div>
               
               <div className="flex justify-end gap-3 pt-4">
