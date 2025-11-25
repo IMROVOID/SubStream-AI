@@ -59,12 +59,12 @@ export interface YouTubeVideoMetadata {
   thumbnailUrl: string;
   channelTitle: string;
   duration?: string;
-  // Added captions here so they travel with the metadata
+  videoUrl: string; 
   availableCaptions?: YouTubeCaptionTrack[];
 }
 
 export interface YouTubeCaptionTrack {
-  id: string; // This is the URL for download
+  id: string; // Base64 Encoded Token
   language: string;
   name: string;
   isAutoSynced: boolean;

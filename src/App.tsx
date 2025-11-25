@@ -59,7 +59,7 @@ const App = () => {
   // Language & Translation Settings
   const [sourceLang, setSourceLang] = useState<string>('auto');
   const [targetLang, setTargetLang] = useState<string>('es');
-  const [selectedCaptionUrl, setSelectedCaptionUrl] = useState<string>('');
+  const [selectedCaptionId, setSelectedCaptionId] = useState<string>('');
 
   // Video-specific State
   const [videoProcessingStatus, setVideoProcessingStatus] = useState<VideoProcessingStatus>(VideoProcessingStatus.IDLE);
@@ -199,7 +199,7 @@ const App = () => {
     setFfmpegProgress(0);
     setExtractedTracks([]);
     setYoutubeMeta(null);
-    setSelectedCaptionUrl('');
+    setSelectedCaptionId('');
     if (videoSrc) {
        if (videoSrc.startsWith('blob:')) {
            URL.revokeObjectURL(videoSrc);
@@ -262,7 +262,6 @@ const App = () => {
   // --- Import Handlers ---
 
   const handleImportYouTube = (meta: YouTubeVideoMetadata) => {
-      // Manually reset specific fields to avoid async state issues with 'resetState'
       setFile(null);
       setSubtitles([]);
       setStatus(TranslationStatus.IDLE);
@@ -272,26 +271,22 @@ const App = () => {
       setVideoProcessingMessage('');
       setFfmpegProgress(0);
       setExtractedTracks([]);
-      setSelectedCaptionUrl('');
+      setSelectedCaptionId('');
       
       if (videoSrc && videoSrc.startsWith('blob:')) {
            URL.revokeObjectURL(videoSrc);
       }
 
-      // Set New Data
       setFileType('youtube');
       setYoutubeMeta(meta);
-      // Use Embed URL for preview
       setVideoSrc(`https://www.youtube.com/embed/${meta.id}`);
       
-      // Mock file for UI
       const mockFile = new File([""], meta.title, { type: 'video/youtube' });
       setFile(mockFile);
   };
 
-  // Handles downloading the selected caption track from the dropdown
   const handleYouTubeDownload = async () => {
-      if (!selectedCaptionUrl) {
+      if (!selectedCaptionId || !youtubeMeta?.videoUrl) {
           setError("Please select a caption track first.");
           return;
       }
@@ -301,18 +296,23 @@ const App = () => {
       setVideoProcessingMessage('Downloading caption track...');
       
       try {
-          const captionText = await downloadCaptionTrack(selectedCaptionUrl);
+          const captionText = await downloadCaptionTrack(youtubeMeta.videoUrl, selectedCaptionId);
           const parsed = parseSRT(captionText);
           if (parsed.length === 0) throw new Error("Parsed subtitle file is empty.");
           setSubtitles(parsed);
           setVideoProcessingStatus(VideoProcessingStatus.DONE);
       } catch (e: any) {
-          setError("Failed to download captions: " + e.message);
+          // Check for stale token error
+          if (e.message.includes("Stale data")) {
+              setError(e.message);
+              // Could also auto-trigger a re-import logic here if desired
+          } else {
+              setError("Failed to download captions: " + e.message);
+          }
           setVideoProcessingStatus(VideoProcessingStatus.ERROR);
       }
   };
 
-  // ... (Existing file handlers remain unchanged)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) processFile(selectedFile);
@@ -339,7 +339,6 @@ const App = () => {
       }
   };
 
-  // Called when URL Import Modal finishes processing a URL
   const handleImportFile = (importedFile: File) => {
       processFile(importedFile);
   };
@@ -403,7 +402,7 @@ const App = () => {
     const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
 
     if (fileType === 'youtube') {
-         setError("AI Audio transcription for YouTube links is currently limited. Please select a caption track from the list.");
+         setError("AI Audio transcription for YouTube links is currently limited. Please select a caption track.");
          return;
     }
 
@@ -532,7 +531,6 @@ const App = () => {
     }
   };
 
-  // --- Derived Calculations ---
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
   const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
@@ -617,7 +615,6 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-9 space-y-8">
-                {/* REPLACED VideoPlayer with Thumbnail for YouTube */}
                 {(fileType === 'video' || fileType === 'youtube') && videoSrc && (
                     fileType === 'youtube' && youtubeMeta ? (
                         <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
@@ -723,8 +720,8 @@ const App = () => {
                                 <div className="relative">
                                     <select 
                                         className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors"
-                                        onChange={(e) => setSelectedCaptionUrl(e.target.value)}
-                                        value={selectedCaptionUrl}
+                                        onChange={(e) => setSelectedCaptionId(e.target.value)}
+                                        value={selectedCaptionId}
                                         disabled={videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
                                     >
                                         <option value="">-- Select Caption to Import --</option>
@@ -758,7 +755,7 @@ const App = () => {
                                 <Button 
                                     className="w-full py-3.5 text-base" 
                                     onClick={handleYouTubeDownload}
-                                    disabled={!selectedCaptionUrl || videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
+                                    disabled={!selectedCaptionId || videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
                                     icon={videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
                                 >
                                     {videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES ? 'Downloading...' : 'Download & Process'}

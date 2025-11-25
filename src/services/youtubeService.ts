@@ -26,7 +26,6 @@ export function extractYouTubeId(url: string): string | null {
  */
 export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTubeVideoMetadata, captions: YouTubeCaptionTrack[] }> {
     try {
-        // Pass the full URL to the backend
         const response = await fetch(`${BACKEND_URL}/info?url=${encodeURIComponent(videoUrl)}`);
         
         if (!response.ok) {
@@ -35,6 +34,8 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
         }
         
         const data = await response.json();
+        data.meta.videoUrl = data.meta.videoUrl || videoUrl;
+        
         return { meta: data.meta, captions: data.captions };
 
     } catch (e: any) {
@@ -47,24 +48,39 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 }
 
 /**
- * Downloads the subtitle content via Backend Proxy (yt-dlp)
- * @param trackId - The base64 encoded track ID from the info response
+ * Downloads the subtitle content via Backend Proxy
+ * @param videoUrl - The main YouTube video URL
+ * @param trackToken - The Base64 token ID from the info response
  */
-export async function downloadCaptionTrack(trackId: string): Promise<string> {
+export async function downloadCaptionTrack(videoUrl: string, trackToken: string): Promise<string> {
+    // Guard against legacy URLs
+    if (trackToken.startsWith('http')) {
+         // Fallback attempt for legacy behavior, or throw error
+         // We'll let the backend handle the hybrid check, but strictly speaking this shouldn't happen with fresh data.
+    }
+
     try {
-        const response = await fetch(`${BACKEND_URL}/caption?trackId=${encodeURIComponent(trackId)}`);
-        if (!response.ok) throw new Error("Failed to download caption track from backend.");
+        const query = new URLSearchParams({
+            url: videoUrl,
+            token: trackToken
+        });
+
+        const response = await fetch(`${BACKEND_URL}/caption?${query.toString()}`);
+        
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || "Failed to download caption track from backend.");
+        }
         return await response.text();
-    } catch (e) {
+    } catch (e: any) {
         console.error("Subtitle download failed:", e);
-        throw new Error("Failed to download subtitles.");
+        throw new Error(e.message || "Failed to download subtitles.");
     }
 }
 
 
 // --- GOOGLE OAUTH (Only for Uploading) ---
 
-// Load the Google API script dynamically.
 function loadGapiScript() {
   return new Promise<void>((resolve, reject) => {
     if (gapiLoaded) return resolve();
@@ -97,9 +113,6 @@ function loadGapiScript() {
   });
 }
 
-/**
- * Uploads a video to YouTube as unlisted.
- */
 export async function uploadVideoToYouTube(accessToken: string, videoFile: File): Promise<string> {
     await loadGapiScript();
     gapi.client.setToken({ access_token: accessToken });
@@ -110,7 +123,7 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File)
             description: 'Temporary video uploaded for transcription by SubStream AI.',
         },
         status: {
-            privacyStatus: 'unlisted', // CRITICAL: Use 'unlisted' to protect user privacy.
+            privacyStatus: 'unlisted',
         },
     };
 
@@ -135,9 +148,6 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File)
     });
 }
 
-/**
- * Polls the YouTube API to check for the availability of automatic captions.
- */
 export async function checkYouTubeCaptionStatus(accessToken: string, videoId: string): Promise<string> {
     await loadGapiScript();
     gapi.client.setToken({ access_token: accessToken });
@@ -170,9 +180,6 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
     throw new Error('Failed to retrieve captions from YouTube after 10 minutes.');
 }
 
-/**
- * Downloads the SRT content of a caption track (OAuth version).
- */
 export async function downloadYouTubeCaptionTrackOAuth(accessToken: string, captionId: string): Promise<string> {
     await loadGapiScript();
     gapi.client.setToken({ access_token: accessToken });

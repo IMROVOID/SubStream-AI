@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const YTDlpWrap = require('yt-dlp-wrap').default;
+const ffmpegPath = require('ffmpeg-static'); // Import FFmpeg binary path
+const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
@@ -10,19 +12,29 @@ const PORT = 4000;
 app.use(cors());
 app.use(express.json());
 
-// Setup yt-dlp binary path
-const ytDlpBinaryPath = path.join(__dirname, 'yt-dlp' + (process.platform === 'win32' ? '.exe' : ''));
-const ytDlpWrap = new YTDlpWrap(ytDlpBinaryPath);
+// --- CONFIGURATION ---
+const TEMP_DIR = path.join(__dirname, 'temp');
+const YT_DLP_BINARY_PATH = path.join(__dirname, 'yt-dlp' + (process.platform === 'win32' ? '.exe' : ''));
 
-// Helper: Download binary if missing
+// Ensure temp directory exists
+if (!fs.existsSync(TEMP_DIR)) {
+    fs.mkdirSync(TEMP_DIR);
+}
+
+// Initialize yt-dlp wrapper
+const ytDlpWrap = new YTDlpWrap(YT_DLP_BINARY_PATH);
+
+// --- HELPERS ---
+
+// Download binary if missing
 const ensureBinary = async () => {
-    if (!fs.existsSync(ytDlpBinaryPath)) {
+    if (!fs.existsSync(YT_DLP_BINARY_PATH)) {
         console.log('Downloading yt-dlp binary... This may take a minute.');
         try {
-            await YTDlpWrap.downloadFromGithub(ytDlpBinaryPath);
+            await YTDlpWrap.downloadFromGithub(YT_DLP_BINARY_PATH);
             console.log('yt-dlp binary downloaded successfully.');
             if (process.platform !== 'win32') {
-                fs.chmodSync(ytDlpBinaryPath, '755');
+                fs.chmodSync(YT_DLP_BINARY_PATH, '755');
             }
         } catch (err) {
             console.error('Failed to download yt-dlp:', err);
@@ -30,7 +42,10 @@ const ensureBinary = async () => {
     }
 };
 
+// Run on startup
 ensureBinary();
+
+// --- ENDPOINTS ---
 
 app.get('/api/info', async (req, res) => {
     const url = req.query.url;
@@ -57,20 +72,22 @@ app.get('/api/info', async (req, res) => {
             Object.keys(tracksObj).forEach(lang => {
                 const formats = tracksObj[lang];
                 const name = (formats[0] && formats[0].name) || lang;
+                
                 const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
                 
                 if (!seenKeys.has(uniqueKey)) {
                     seenKeys.add(uniqueKey);
                     
-                    // Instead of passing a URL that expires/blocks, we pass a token describing the track
-                    const trackId = JSON.stringify({
-                        videoUrl: videoUrl,
+                    // Create a config object
+                    const trackConfig = {
                         lang: lang,
                         isAuto: isAuto
-                    });
+                    };
+                    // Encode as Base64
+                    const token = Buffer.from(JSON.stringify(trackConfig)).toString('base64');
 
                     captions.push({
-                        id: Buffer.from(trackId).toString('base64'), // Encode as safe ID string
+                        id: token, 
                         language: lang,
                         name: name + (isAuto ? ' (Auto)' : ''),
                         isAutoSynced: isAuto
@@ -83,8 +100,6 @@ app.get('/api/info', async (req, res) => {
         processTracks(info.automatic_captions, true);
 
         const thumbnail = info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : '');
-        
-        // Format duration
         const durationSeconds = info.duration || 0;
         const date = new Date(durationSeconds * 1000);
         const timeStr = durationSeconds < 3600 
@@ -98,39 +113,68 @@ app.get('/api/info', async (req, res) => {
                 description: info.description,
                 thumbnailUrl: thumbnail,
                 channelTitle: info.uploader,
-                duration: timeStr
+                duration: timeStr,
+                videoUrl: videoUrl
             },
             captions: captions
         });
 
     } catch (error) {
-        console.error("yt-dlp execution error:", error.message);
+        console.error("yt-dlp info error:", error.message);
         res.status(500).json({ error: 'Failed to fetch video details.' });
     }
 });
 
 app.get('/api/caption', async (req, res) => {
-    const trackIdBase64 = req.query.trackId;
-    if (!trackIdBase64) return res.status(400).send("Track ID required");
+    // Support both parameter names for compatibility
+    const rawToken = req.query.token || req.query.trackId;
+    const url = req.query.url;
 
-    let trackData;
-    try {
-        const jsonStr = Buffer.from(trackIdBase64, 'base64').toString('utf-8');
-        trackData = JSON.parse(jsonStr);
-    } catch (e) {
-        return res.status(400).send("Invalid Track ID");
+    if (!url || !rawToken) {
+        return res.status(400).send("Missing required parameters (url, token)");
     }
 
-    const { videoUrl, lang, isAuto } = trackData;
-    const tempFileName = `temp_${Date.now()}`;
+    // 1. LEGACY HANDLER: If rawToken looks like a URL (starts with http), try Axios proxy
+    if (rawToken.startsWith('http')) {
+        try {
+            const response = await axios.get(rawToken, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                },
+                responseType: 'text'
+            });
+            return res.send(response.data);
+        } catch (e) {
+            console.error("Legacy URL proxy failed:", e.message);
+            // If this fails, we tell the user to re-import because the URL likely expired
+            return res.status(400).send("Caption URL expired. Please re-import the video.");
+        }
+    }
+
+    // 2. NEW TOKEN HANDLER (yt-dlp with FFmpeg)
+    let isAuto = false;
+    let lang = '';
 
     try {
-        // Construct yt-dlp arguments to download only the subtitle
+        const jsonStr = Buffer.from(rawToken, 'base64').toString('utf-8');
+        const decoded = JSON.parse(jsonStr);
+        isAuto = decoded.isAuto;
+        lang = decoded.lang;
+    } catch (e) {
+        return res.status(400).send("Invalid Caption Token. Please re-import video.");
+    }
+
+    const tempId = `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    // Explicitly use temp dir
+    const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
+
+    try {
         let args = [
-            videoUrl,
+            url,
             '--skip-download',
-            '--convert-subs', 'srt', // Ensure SRT format
-            '--output', tempFileName // Base filename
+            '--convert-subs', 'srt',
+            '--output', outputTemplate,
+            '--ffmpeg-location', ffmpegPath // CRITICAL FIX: Point to ffmpeg-static binary
         ];
 
         if (isAuto) {
@@ -143,25 +187,32 @@ app.get('/api/caption', async (req, res) => {
 
         await ytDlpWrap.execPromise(args);
 
-        // Find the generated file (yt-dlp appends lang code, e.g., temp_123.en.srt)
-        const dir = process.cwd();
-        const files = fs.readdirSync(dir);
-        const generatedFile = files.find(f => f.startsWith(tempFileName) && f.endsWith('.srt'));
+        const files = fs.readdirSync(TEMP_DIR);
+        // Look for the specific file created
+        const generatedFile = files.find(f => f.startsWith(tempId));
 
         if (!generatedFile) {
-            throw new Error("Subtitle file was not generated by yt-dlp.");
+            throw new Error(`Subtitle file not generated. Check if ffmpeg is working.`);
         }
 
-        const content = fs.readFileSync(path.join(dir, generatedFile), 'utf-8');
+        const filePath = path.join(TEMP_DIR, generatedFile);
+        const content = fs.readFileSync(filePath, 'utf-8');
         
-        // Cleanup temp file
-        fs.unlinkSync(path.join(dir, generatedFile));
+        // Cleanup
+        fs.unlinkSync(filePath);
 
         res.send(content);
 
     } catch (error) {
         console.error("Caption download error:", error.message);
-        res.status(500).send("Failed to download caption track.");
+        // Cleanup temp files on error
+        try {
+            const files = fs.readdirSync(TEMP_DIR);
+            files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
+        } catch (e) {}
+        
+        // Send clean error message
+        res.status(500).send(`Download failed: ${error.message.split('\n')[0]}`);
     }
 });
 
