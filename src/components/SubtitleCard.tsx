@@ -1,13 +1,13 @@
-
 import React from 'react';
-import { SubtitleNode } from '../../types';
+import { SubtitleNode } from '../types';
 
 interface SubtitleCardProps {
   subtitle: SubtitleNode;
   isActive?: boolean;
+  isSingleColumn?: boolean;
 }
 
-export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive }) => {
+export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive, isSingleColumn }) => {
   return (
     <div className={`group relative p-6 transition-all duration-300 border-b border-neutral-900 hover:bg-neutral-900/50 ${isActive ? 'bg-neutral-900' : ''}`}>
       <div className="flex items-start gap-4">
@@ -20,20 +20,22 @@ export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive }
         </div>
 
         {/* Content Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+        <div className={`w-full ${isSingleColumn ? 'block' : 'grid grid-cols-1 md:grid-cols-2 gap-6'}`}>
           {/* Original */}
           <div className="relative">
-            <p className="text-sm font-medium text-neutral-400 font-sans leading-relaxed">
+            <p className={`font-medium leading-relaxed ${isSingleColumn ? 'text-white text-lg' : 'text-sm text-neutral-400 font-sans'}`}>
               {subtitle.originalText}
             </p>
           </div>
 
-          {/* Translated */}
-          <div className="relative">
-            <p className={`text-base font-medium font-display leading-relaxed transition-colors duration-500 ${subtitle.text === subtitle.originalText ? 'text-neutral-600 italic' : 'text-white'}`}>
-              {subtitle.text === subtitle.originalText ? '(Pending...)' : subtitle.text}
-            </p>
-          </div>
+          {/* Translated (Only show if not single column mode) */}
+          {!isSingleColumn && (
+              <div className="relative">
+                <p className={`text-base font-medium font-display leading-relaxed transition-colors duration-500 ${subtitle.text === subtitle.originalText ? 'text-neutral-600 italic' : 'text-white'}`}>
+                  {subtitle.text === subtitle.originalText ? '(Pending...)' : subtitle.text}
+                </p>
+              </div>
+          )}
         </div>
       </div>
     </div>

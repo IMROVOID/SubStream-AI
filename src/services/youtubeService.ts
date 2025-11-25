@@ -3,7 +3,7 @@ import { YouTubeVideoMetadata, YouTubeCaptionTrack } from "../types";
 // Backend URL (Local Node Server)
 const BACKEND_URL = "http://localhost:4000/api";
 
-// Declare gapi explicitly for upload functionality
+// Declare gapi explicitly for legacy upload functionality
 declare var gapi: any;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -12,18 +12,12 @@ const GAPI_URL = "https://apis.google.com/js/api.js";
 let gapiLoaded = false;
 let gapiLoading = false;
 
-/**
- * Extracts Video ID from various YouTube URL formats
- */
 export function extractYouTubeId(url: string): string | null {
     const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[7].length === 11) ? match[7] : null;
 }
 
-/**
- * Fetches Video Metadata + Captions using Local Node Backend (yt-dlp)
- */
 export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTubeVideoMetadata, captions: YouTubeCaptionTrack[] }> {
     try {
         const response = await fetch(`${BACKEND_URL}/info?url=${encodeURIComponent(videoUrl)}`);
@@ -47,18 +41,7 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
     }
 }
 
-/**
- * Downloads the subtitle content via Backend Proxy
- * @param videoUrl - The main YouTube video URL
- * @param trackToken - The Base64 token ID from the info response
- */
 export async function downloadCaptionTrack(videoUrl: string, trackToken: string): Promise<string> {
-    // Guard against legacy URLs
-    if (trackToken.startsWith('http')) {
-         // Fallback attempt for legacy behavior, or throw error
-         // We'll let the backend handle the hybrid check, but strictly speaking this shouldn't happen with fresh data.
-    }
-
     try {
         const query = new URLSearchParams({
             url: videoUrl,
@@ -78,8 +61,17 @@ export async function downloadCaptionTrack(videoUrl: string, trackToken: string)
     }
 }
 
+export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken: string): Promise<void> {
+    const query = new URLSearchParams({
+        url: videoUrl,
+        token: trackToken
+    });
+    // Trigger download in browser
+    window.location.href = `${BACKEND_URL}/download-video?${query.toString()}`;
+}
 
-// --- GOOGLE OAUTH (Only for Uploading) ---
+
+// --- GOOGLE OAUTH (Legacy) ---
 
 function loadGapiScript() {
   return new Promise<void>((resolve, reject) => {

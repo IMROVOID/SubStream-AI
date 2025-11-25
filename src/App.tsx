@@ -5,7 +5,7 @@ import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
-import { uploadVideoToYouTube, checkYouTubeCaptionStatus, downloadYouTubeCaptionTrackOAuth, downloadCaptionTrack } from './services/youtubeService';
+import { uploadVideoToYouTube, checkYouTubeCaptionStatus, downloadYouTubeCaptionTrackOAuth, downloadCaptionTrack, downloadYouTubeVideoWithSubs } from './services/youtubeService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
 import { StepIndicator } from './components/StepIndicator';
@@ -95,6 +95,15 @@ const App = () => {
   const ffmpegRef = useRef<FFmpeg | null>(null);
 
   // --- Effects ---
+  useEffect(() => {
+    if (subtitles.length > 0 && (status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED || fileType === 'youtube')) {
+        // Smooth scroll to results when subtitles appear
+        setTimeout(() => {
+            resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+    }
+  }, [subtitles.length, status, fileType]);
+
   useEffect(() => {
     if (tempGoogleApiKey === '') {
       setGoogleApiKeyStatus('idle');
@@ -262,6 +271,7 @@ const App = () => {
   // --- Import Handlers ---
 
   const handleImportYouTube = (meta: YouTubeVideoMetadata) => {
+      // Manually reset specific fields to avoid async state issues with 'resetState'
       setFile(null);
       setSubtitles([]);
       setStatus(TranslationStatus.IDLE);
@@ -277,14 +287,18 @@ const App = () => {
            URL.revokeObjectURL(videoSrc);
       }
 
+      // Set New Data
       setFileType('youtube');
       setYoutubeMeta(meta);
+      // Use Embed URL for preview
       setVideoSrc(`https://www.youtube.com/embed/${meta.id}`);
       
+      // Mock file for UI
       const mockFile = new File([""], meta.title, { type: 'video/youtube' });
       setFile(mockFile);
   };
 
+  // Handles downloading the selected caption track from the dropdown
   const handleYouTubeDownload = async () => {
       if (!selectedCaptionId || !youtubeMeta?.videoUrl) {
           setError("Please select a caption track first.");
@@ -300,19 +314,16 @@ const App = () => {
           const parsed = parseSRT(captionText);
           if (parsed.length === 0) throw new Error("Parsed subtitle file is empty.");
           setSubtitles(parsed);
+          // YouTube files are considered "Completed" for UI purposes once captions are loaded
+          setStatus(TranslationStatus.COMPLETED); 
           setVideoProcessingStatus(VideoProcessingStatus.DONE);
       } catch (e: any) {
-          // Check for stale token error
-          if (e.message.includes("Stale data")) {
-              setError(e.message);
-              // Could also auto-trigger a re-import logic here if desired
-          } else {
-              setError("Failed to download captions: " + e.message);
-          }
+          setError("Failed to download captions: " + e.message);
           setVideoProcessingStatus(VideoProcessingStatus.ERROR);
       }
   };
 
+  // ... (Existing file handlers remain unchanged)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) processFile(selectedFile);
@@ -339,6 +350,7 @@ const App = () => {
       }
   };
 
+  // Called when URL Import Modal finishes processing a URL
   const handleImportFile = (importedFile: File) => {
       processFile(importedFile);
   };
@@ -435,28 +447,7 @@ const App = () => {
   };
 
   const handleGenerateWithYouTube = async () => {
-      if (!file || !googleAccessToken) {
-          setError("Please sign in with Google to use the YouTube transcription feature.");
-          return;
-      }
-      try {
-          setVideoProcessingStatus(VideoProcessingStatus.UPLOADING_TO_YOUTUBE);
-          setVideoProcessingMessage('Uploading video to your YouTube channel as "unlisted"...');
-          const videoId = await uploadVideoToYouTube(googleAccessToken, file);
-
-          setVideoProcessingStatus(VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS);
-          setVideoProcessingMessage('Video uploaded. Waiting for YouTube to auto-generate captions. This can take several minutes...');
-          const captionId = await checkYouTubeCaptionStatus(googleAccessToken, videoId);
-          
-          const srtContent = await downloadYouTubeCaptionTrackOAuth(googleAccessToken, captionId);
-          const parsed = parseSRT(srtContent);
-          setSubtitles(parsed);
-          setVideoProcessingStatus(VideoProcessingStatus.DONE);
-
-      } catch (e: any) {
-          setError(`Failed: ${e.message}`);
-          setVideoProcessingStatus(VideoProcessingStatus.ERROR);
-      }
+      // Legacy - Unused
   };
   
   const handleTranslate = async () => {
@@ -476,10 +467,6 @@ const App = () => {
     setStatus(TranslationStatus.TRANSLATING);
     setProgress(0);
     setError(null);
-
-    setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
 
     try {
       const result = await processFullSubtitleFile(
@@ -511,9 +498,12 @@ const App = () => {
 
   const handleDownloadVideo = async () => {
     if (fileType === 'youtube') {
-        alert("Direct video download and muxing is not supported for YouTube imports due to browser security restrictions. Please download the SRT file.");
+        if (!selectedCaptionId || !youtubeMeta?.videoUrl) return;
+        // Use the server-side download & merge logic
+        downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId);
         return;
     }
+    
     if (!file || !ffmpegRef.current || status !== TranslationStatus.COMPLETED) return;
     try {
         setFfmpegProgress(0);
@@ -531,6 +521,7 @@ const App = () => {
     }
   };
 
+  // --- Derived Calculations ---
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
   const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
@@ -615,6 +606,7 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-9 space-y-8">
+                {/* REPLACED VideoPlayer with Thumbnail for YouTube */}
                 {(fileType === 'video' || fileType === 'youtube') && videoSrc && (
                     fileType === 'youtube' && youtubeMeta ? (
                         <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
@@ -699,12 +691,12 @@ const App = () => {
                             <Button variant="outline" onClick={resetState}>Change File</Button>
                         </div>
 
-                        {subtitles.length > 0 && 
+                        {subtitles.length > 0 && fileType !== 'youtube' && (
                           <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
                               <Info className="w-4 h-4 shrink-0" />
                               <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
                           </div>
-                        }
+                        )}
                      </div>
                    )}
                 </div>
@@ -824,18 +816,18 @@ const App = () => {
               </div>
             </div>
             <div className="rounded-3xl border border-neutral-800 bg-black/50 backdrop-blur overflow-hidden min-h-[400px]">
-              <div className="grid grid-cols-[100px_1fr] border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10">
+              <div className={`grid ${fileType === 'youtube' ? 'grid-cols-[100px_1fr]' : 'grid-cols-[100px_1fr]'} border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
                 <div className="pl-2">Timestamp</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className={`grid ${fileType === 'youtube' ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
                    <span>Original ({sourceLang})</span>
-                   <span className="text-white">Translated ({targetLang})</span>
+                   {fileType !== 'youtube' && <span className="text-white">Translated ({targetLang})</span>}
                 </div>
               </div>
               <div className="max-h-[800px] overflow-y-auto">
-                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} /> ))}
+                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={fileType === 'youtube'} /> ))}
               </div>
             </div>
-            <div className="mt-8 flex justify-center">
+            <div className="mt-8 pb-12 flex justify-center">
                 <Button variant="secondary" onClick={resetState} icon={<RefreshCw className="w-4 h-4" />}>
                     Translate Another File
                 </Button>
@@ -854,6 +846,7 @@ const App = () => {
          </div>
       </footer>
 
+      {/* ... Modals ... */}
       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
            <div className="flex flex-col gap-4">
