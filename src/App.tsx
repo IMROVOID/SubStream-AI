@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
@@ -669,7 +669,7 @@ const App = () => {
                     )
                 )}
 
-                <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-8 md:p-12 hover:bg-neutral-900/30 transition-all duration-300">
+                <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-6 hover:bg-neutral-900/30 transition-all duration-300">
                    {!file ? (
                      <div className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
                        onDragOver={(e) => e.preventDefault()}
@@ -723,19 +723,19 @@ const App = () => {
                       />
                    ) : (
                      <div className="flex flex-col gap-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center overflow-hidden">
-                                {fileType === 'srt' ? <FileText className="w-6 h-6" /> : fileType === 'youtube' && youtubeMeta ? <img src={youtubeMeta.thumbnailUrl} className="w-full h-full object-cover"/> : <Clapperboard className="w-6 h-6" />}
+                        <div className="flex items-center justify-between gap-6">
+                            <div className="flex items-center gap-4 flex-1 min-w-0">
+                              <div className="w-24 aspect-video rounded-xl bg-neutral-800 text-black flex items-center justify-center overflow-hidden shrink-0 border border-neutral-700">
+                                {fileType === 'srt' ? <FileText className="w-6 h-6 text-white" /> : fileType === 'youtube' && youtubeMeta ? <img src={youtubeMeta.thumbnailUrl} className="w-full h-full object-cover"/> : <Clapperboard className="w-6 h-6 text-white" />}
                               </div>
-                              <div>
-                                <h3 className="text-lg font-bold text-white line-clamp-1">{file.name}</h3>
+                              <div className="min-w-0">
+                                <h3 className="text-lg font-bold text-white truncate">{file.name}</h3>
                                 <p className="text-neutral-500 text-sm">
                                     {subtitles.length > 0 ? `${subtitles.length} lines loaded` : fileType === 'youtube' ? 'Select a caption track below' : 'Ready to configure'}
                                 </p>
                               </div>
                             </div>
-                            <Button variant="outline" onClick={resetState}>Change File</Button>
+                            <Button variant="outline" onClick={resetState} className="shrink-0">Change File</Button>
                         </div>
 
                         {subtitles.length > 0 && fileType !== 'youtube' && (
@@ -857,7 +857,7 @@ const App = () => {
               </div>
               <div className="flex items-center gap-4">
                   {(fileType === 'video' || fileType === 'youtube') && (
-                      <div className="min-w-[160px]">
+                      <div className="">
                         <Button 
                             variant="secondary" 
                             onClick={handleDownloadVideo} 
@@ -866,7 +866,7 @@ const App = () => {
                             completed={isDownloadComplete}
                             disabled={downloadProgress !== undefined}
                             icon={<Film className="w-4 h-4" />}
-                            className="w-full"
+                            className=""
                         >
                             Download Video
                         </Button>
@@ -898,20 +898,35 @@ const App = () => {
 
       {/* FOOTER */}
       <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-neutral-800 text-white flex items-center justify-center font-bold text-sm rounded font-display">S</div>
-                <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
+        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8">
+            {/* Top Row */}
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
+                {/* Brand */}
+                <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 bg-neutral-800 text-white flex items-center justify-center font-bold text-sm rounded font-display">S</div>
+                    <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
+                </div>
+
+                {/* Copyright (Middle) */}
+                <div className="text-xs text-neutral-600">
+                    &copy; {new Date().getFullYear()} SubStream AI. Open Source.
+                </div>
+
+                {/* Links (Right) */}
+                <div className="flex items-center gap-6 text-sm text-neutral-500">
+                    <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
+                    <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy</button>
+                    <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
+                </div>
             </div>
-            
-            <div className="flex items-center gap-6 text-sm text-neutral-500">
-                <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
-                <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy</button>
-                <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
-            </div>
-            
-            <div className="text-xs text-neutral-600">
-                &copy; {new Date().getFullYear()} SubStream AI. Open Source.
+
+            {/* Bottom Row - Developer Info */}
+            <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-xs text-neutral-500 w-full">
+                <span>Developed by <a href="https://rovoid.ir" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
+                <span className="hidden md:block w-1 h-1 rounded-full bg-neutral-800"></span>
+                <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
+                    <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
+                </button>
             </div>
         </div>
       </footer>

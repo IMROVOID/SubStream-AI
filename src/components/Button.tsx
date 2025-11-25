@@ -28,14 +28,14 @@ export const Button: React.FC<ButtonProps> = ({
     outline: "bg-transparent text-neutral-300 border border-neutral-800 hover:border-white hover:text-white"
   };
 
-  // If progress is active, override width and styles
+  // If progress is active
   const isProgressActive = progress !== undefined && progress !== null && progress >= 0;
 
   return (
     <button 
       className={`
         ${baseStyles} 
-        ${isProgressActive ? 'bg-neutral-800 border-neutral-700 text-white min-w-[200px] md:min-w-[150%]' : variants[variant]} 
+        ${isProgressActive ? 'bg-neutral-800 border-neutral-700 text-white w-64 md:w-80' : variants[variant]} 
         ${isProgressActive ? 'px-0 py-0' : 'px-6 py-3'}
         ${className}
       `} 
@@ -46,17 +46,17 @@ export const Button: React.FC<ButtonProps> = ({
         <div className="relative w-full h-12 flex items-center justify-center px-4">
            
            {/* Content Layer (Status + Percentage or Done) */}
-           <div className="relative z-10 flex items-center gap-3 animate-fade-in">
+           <div className="relative z-10 flex items-center gap-2 animate-fade-in w-full justify-center">
               {completed ? (
                  <>
                    <Check className="w-5 h-5 text-green-400" />
                    <span className="text-green-400 font-bold">Download Complete</span>
                  </>
               ) : (
-                 <>
-                    {statusText && <span className="text-sm text-neutral-400 font-medium">{statusText}</span>}
-                    <span className="text-lg font-bold text-white">{Math.round(progress || 0)}%</span>
-                 </>
+                 <div className="flex items-center justify-center gap-2 min-w-0">
+                    {statusText && <span className="text-sm text-neutral-400 font-medium truncate">{statusText}</span>}
+                    <span className="text-lg font-bold text-white shrink-0">{Math.round(progress || 0)}%</span>
+                 </div>
               )}
            </div>
 
