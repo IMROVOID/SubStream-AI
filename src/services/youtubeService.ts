@@ -39,7 +39,6 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 
     } catch (e: any) {
         console.error("Backend API Error:", e);
-        // Provide a helpful message if the connection is refused (server not running)
         if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
             throw new Error("Could not connect to local server. Please run 'npm start' in the 'server' folder.");
         }
@@ -48,11 +47,12 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 }
 
 /**
- * Downloads the subtitle content via Backend Proxy
+ * Downloads the subtitle content via Backend Proxy (yt-dlp)
+ * @param trackId - The base64 encoded track ID from the info response
  */
-export async function downloadCaptionTrack(url: string): Promise<string> {
+export async function downloadCaptionTrack(trackId: string): Promise<string> {
     try {
-        const response = await fetch(`${BACKEND_URL}/caption?url=${encodeURIComponent(url)}`);
+        const response = await fetch(`${BACKEND_URL}/caption?trackId=${encodeURIComponent(trackId)}`);
         if (!response.ok) throw new Error("Failed to download caption track from backend.");
         return await response.text();
     } catch (e) {
@@ -69,7 +69,6 @@ function loadGapiScript() {
   return new Promise<void>((resolve, reject) => {
     if (gapiLoaded) return resolve();
     if (gapiLoading) {
-      // If already loading, wait for it to finish.
       const interval = setInterval(() => {
         if (gapiLoaded) {
           clearInterval(interval);
@@ -84,7 +83,7 @@ function loadGapiScript() {
     script.src = GAPI_URL;
     script.onload = () => {
       gapi.load('client', () => {
-        gapi.client.setApiKey(null); // We use OAuth tokens, not an API key for requests.
+        gapi.client.setApiKey(null);
         gapiLoaded = true;
         gapiLoading = false;
         resolve();
@@ -128,10 +127,8 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File)
 
         uploader.execute((response) => {
             if (response.id) {
-                console.log("YouTube Upload successful, video ID:", response.id);
                 resolve(response.id);
             } else {
-                console.error("YouTube Upload failed:", response);
                 reject(new Error(response.message || 'Unknown error during YouTube upload.'));
             }
         });
@@ -145,7 +142,7 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
     await loadGapiScript();
     gapi.client.setToken({ access_token: accessToken });
 
-    const MAX_POLL_ATTEMPTS = 60; // Poll for up to 10 minutes (60 attempts * 10 seconds)
+    const MAX_POLL_ATTEMPTS = 60;
     const POLL_INTERVAL_MS = 10000;
 
     for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
@@ -156,25 +153,21 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
             });
 
             if (response.result.items && response.result.items.length > 0) {
-                // Find the auto-generated caption track.
                 const autoCaptionTrack = response.result.items.find(
                     (item: any) => item.snippet.trackKind === 'ASR'
                 );
 
                 if (autoCaptionTrack && autoCaptionTrack.id) {
-                    console.log("Found ASR caption track:", autoCaptionTrack.id);
                     return autoCaptionTrack.id;
                 }
             }
-            console.log(`Polling for captions... Attempt ${i + 1}/${MAX_POLL_ATTEMPTS}`);
             await delay(POLL_INTERVAL_MS);
         } catch (error) {
-            console.error('Error while polling for captions:', error);
             await delay(POLL_INTERVAL_MS);
         }
     }
 
-    throw new Error('Failed to retrieve captions from YouTube after 10 minutes. The video may be too long or processing failed.');
+    throw new Error('Failed to retrieve captions from YouTube after 10 minutes.');
 }
 
 /**

@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const YTDlpWrap = require('yt-dlp-wrap').default;
-const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
@@ -48,28 +47,34 @@ app.get('/api/info', async (req, res) => {
         ]);
         
         const info = JSON.parse(metadata);
+        const videoUrl = info.webpage_url || url;
         
-        // Process and Deduplicate Captions
         let captions = [];
-        const seenIds = new Set();
+        const seenKeys = new Set();
 
         const processTracks = (tracksObj, isAuto) => {
             if (!tracksObj) return;
             Object.keys(tracksObj).forEach(lang => {
                 const formats = tracksObj[lang];
-                // Prefer VTT
-                const bestFormat = formats.find(f => f.ext === 'vtt') || formats[0];
+                const name = (formats[0] && formats[0].name) || lang;
+                const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
                 
-                if (bestFormat) {
-                    if (!seenIds.has(bestFormat.url)) {
-                        seenIds.add(bestFormat.url);
-                        captions.push({
-                            id: bestFormat.url,
-                            language: lang,
-                            name: (formats[0].name || lang) + (isAuto ? ' (Auto)' : ''),
-                            isAutoSynced: isAuto
-                        });
-                    }
+                if (!seenKeys.has(uniqueKey)) {
+                    seenKeys.add(uniqueKey);
+                    
+                    // Instead of passing a URL that expires/blocks, we pass a token describing the track
+                    const trackId = JSON.stringify({
+                        videoUrl: videoUrl,
+                        lang: lang,
+                        isAuto: isAuto
+                    });
+
+                    captions.push({
+                        id: Buffer.from(trackId).toString('base64'), // Encode as safe ID string
+                        language: lang,
+                        name: name + (isAuto ? ' (Auto)' : ''),
+                        isAutoSynced: isAuto
+                    });
                 }
             });
         };
@@ -78,7 +83,7 @@ app.get('/api/info', async (req, res) => {
         processTracks(info.automatic_captions, true);
 
         const thumbnail = info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : '');
-
+        
         // Format duration
         const durationSeconds = info.duration || 0;
         const date = new Date(durationSeconds * 1000);
@@ -100,28 +105,62 @@ app.get('/api/info', async (req, res) => {
 
     } catch (error) {
         console.error("yt-dlp execution error:", error.message);
-        res.status(500).json({ error: 'Failed to fetch video details. URL might be invalid or restricted.' });
+        res.status(500).json({ error: 'Failed to fetch video details.' });
     }
 });
 
 app.get('/api/caption', async (req, res) => {
-    const url = req.query.url;
-    if (!url) return res.status(400).send("URL required");
+    const trackIdBase64 = req.query.trackId;
+    if (!trackIdBase64) return res.status(400).send("Track ID required");
+
+    let trackData;
+    try {
+        const jsonStr = Buffer.from(trackIdBase64, 'base64').toString('utf-8');
+        trackData = JSON.parse(jsonStr);
+    } catch (e) {
+        return res.status(400).send("Invalid Track ID");
+    }
+
+    const { videoUrl, lang, isAuto } = trackData;
+    const tempFileName = `temp_${Date.now()}`;
 
     try {
-        // Use a real browser User-Agent to prevent YouTube 403/500 errors
-        const response = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.youtube.com/'
-            },
-            responseType: 'text' // Ensure we get text back, not JSON
-        });
-        res.send(response.data);
+        // Construct yt-dlp arguments to download only the subtitle
+        let args = [
+            videoUrl,
+            '--skip-download',
+            '--convert-subs', 'srt', // Ensure SRT format
+            '--output', tempFileName // Base filename
+        ];
+
+        if (isAuto) {
+            args.push('--write-auto-sub');
+            args.push('--sub-lang', lang);
+        } else {
+            args.push('--write-sub');
+            args.push('--sub-lang', lang);
+        }
+
+        await ytDlpWrap.execPromise(args);
+
+        // Find the generated file (yt-dlp appends lang code, e.g., temp_123.en.srt)
+        const dir = process.cwd();
+        const files = fs.readdirSync(dir);
+        const generatedFile = files.find(f => f.startsWith(tempFileName) && f.endsWith('.srt'));
+
+        if (!generatedFile) {
+            throw new Error("Subtitle file was not generated by yt-dlp.");
+        }
+
+        const content = fs.readFileSync(path.join(dir, generatedFile), 'utf-8');
+        
+        // Cleanup temp file
+        fs.unlinkSync(path.join(dir, generatedFile));
+
+        res.send(content);
+
     } catch (error) {
-        console.error("Caption proxy error details:", error.response ? error.response.status : error.message);
+        console.error("Caption download error:", error.message);
         res.status(500).send("Failed to download caption track.");
     }
 });
