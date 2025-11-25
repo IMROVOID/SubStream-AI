@@ -574,7 +574,7 @@ const App = () => {
       </nav>
 
       <main className="relative z-10 max-w-5xl mx-auto px-6 w-full flex-1 flex flex-col">
-        <div className="flex-grow flex flex-col justify-center pt-20">
+        <div className="flex-grow flex flex-col justify-start h-[91vh] pt-8 md:pt-20">
             <section className="mb-14 text-center">
                 <h1 className="text-4xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
                     Bridge the Language<br/>
@@ -763,7 +763,7 @@ const App = () => {
         )}
       </main>
 
-      <footer className="border-t border-neutral-900 py-12 bg-black mt-20 relative z-10">
+      <footer className="border-t border-neutral-900 py-12 bg-black relative z-10">
          <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="text-neutral-500 text-sm">&copy; 2025 SubStream AI. All rights reserved.</div>
             <div className="flex items-center gap-6 text-neutral-500 text-sm">
@@ -865,9 +865,12 @@ const App = () => {
 
               {/* Google API Key */}
               <div className="space-y-2">
-                <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
-                  <Key className="w-4 h-4" /> Google AI API Key
-                </label>
+                 <div className="flex items-center justify-between">
+                    <label className="block text-sm font-bold text-white flex items-center gap-2">
+                      <Key className="w-4 h-4" /> Google AI API Key
+                    </label>
+                    {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
+                 </div>
                 <div className="relative">
                    <input 
                     type="password"
@@ -883,14 +886,16 @@ const App = () => {
                    </div>
                 </div>
                 <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
-                {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400 px-1 py-1">Clear Key</button> )}
               </div>
               
               {/* OpenAI API Key */}
               <div className="space-y-2">
-                <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
-                  <Key className="w-4 h-4" /> OpenAI API Key
-                </label>
+                <div className="flex items-center justify-between">
+                    <label className="block text-sm font-bold text-white flex items-center gap-2">
+                      <Key className="w-4 h-4" /> OpenAI API Key
+                    </label>
+                    {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
+                 </div>
                 <div className="relative">
                    <input 
                     type="password"
@@ -906,14 +911,18 @@ const App = () => {
                    </div>
                 </div>
                 <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
-                {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400 px-1 py-1">Clear Key</button> )}
               </div>
 
                {/* Rate Limit Settings */}
-              <div className="space-y-2 pt-2">
-                  <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
-                      <Gauge className="w-4 h-4" /> Rate Limit
-                  </label>
+              <div className="space-y-2">
+                 <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-bold text-white flex items-center gap-2">
+                        <Gauge className="w-4 h-4" /> Rate Limit
+                    </label>
+                    <p className="font-medium text-white text-sm">
+                        {selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}
+                    </p>
+                 </div>
                   <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
                       <div
                           className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out"
@@ -931,14 +940,9 @@ const App = () => {
                           </button>
                       ))}
                   </div>
-                   <div className="text-center mt-2">
-                      <p className="font-medium text-white">
-                          {selectedRPM === 'unlimited' ? 'Unlimited Requests' : `${selectedRPM} Requests per Minute`}
-                      </p>
-                      <p className="text-xs text-neutral-500">
-                          {RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}
-                      </p>
-                  </div>
+                   <p className="text-xs text-neutral-500 text-center mt-2">
+                        {RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}
+                   </p>
               </div>
               
               <div className="flex justify-end gap-3 pt-4">
