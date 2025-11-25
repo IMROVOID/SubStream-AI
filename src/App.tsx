@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit } from './types';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
-import { uploadVideoToYouTube, checkYouTubeCaptionStatus, downloadYouTubeCaptionTrack } from './services/youtubeService';
+import { uploadVideoToYouTube, checkYouTubeCaptionStatus, downloadYouTubeCaptionTrackOAuth } from './services/youtubeService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
 import { StepIndicator } from './components/StepIndicator';
@@ -14,6 +14,7 @@ import { Documentation } from './components/Documentation';
 import { VideoPlayer } from './components/VideoPlayer';
 import { TrackSelector } from './components/TrackSelector';
 import { YouTubeAuth } from './components/YouTubeAuth';
+import { ImportUrlModal } from './components/ImportUrlModal';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 type Page = 'HOME' | 'DOCS';
@@ -27,7 +28,6 @@ const AppWrapper = () => {
     const googleClientId = process.env.VITE_GOOGLE_CLIENT_ID;
 
     if (!googleClientId) {
-        // You can render a more graceful error message here
         return <div className="bg-black text-white h-screen flex items-center justify-center">Error: Google Client ID is not configured.</div>;
     }
     
@@ -43,10 +43,14 @@ const App = () => {
   // Navigation & Modal State
   const [currentPage, setCurrentPage] = useState<Page>('HOME');
   const [activeModal, setActiveModal] = useState<ModalType>('NONE');
+  
+  // Import Modal State
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importType, setImportType] = useState<'URL' | 'YOUTUBE' | 'GDRIVE' | 'SOCIAL' | null>(null);
 
   // Core App State
   const [file, setFile] = useState<File | null>(null);
-  const [fileType, setFileType] = useState<'srt' | 'video' | null>(null);
+  const [fileType, setFileType] = useState<'srt' | 'video' | 'youtube' | null>(null);
   const [subtitles, setSubtitles] = useState<SubtitleNode[]>([]);
   const [status, setStatus] = useState<TranslationStatus>(TranslationStatus.IDLE);
   const [progress, setProgress] = useState(0);
@@ -62,6 +66,7 @@ const App = () => {
   const [ffmpegProgress, setFfmpegProgress] = useState<number>(0);
   const [extractedTracks, setExtractedTracks] = useState<ExtractedSubtitleTrack[]>([]);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [youtubeMeta, setYoutubeMeta] = useState<YouTubeVideoMetadata | null>(null);
   
   // API Key & Model Config State
   const [userGoogleApiKey, setUserGoogleApiKey] = useState<string>('');
@@ -119,8 +124,6 @@ const App = () => {
 
 
   // --- Effects ---
-
-  // Google API Key validation effect
   useEffect(() => {
     if (tempGoogleApiKey === '') {
       setGoogleApiKeyStatus('idle');
@@ -142,7 +145,6 @@ const App = () => {
     return () => { if (debounceGoogleKeyTimer.current) clearTimeout(debounceGoogleKeyTimer.current); };
   }, [tempGoogleApiKey, userGoogleApiKey]);
   
-  // OpenAI API Key validation effect
   useEffect(() => {
     if (tempOpenAIApiKey === '') {
       setOpenAIApiKeyStatus('idle');
@@ -164,7 +166,6 @@ const App = () => {
     return () => { if (debounceOpenAIKeyTimer.current) clearTimeout(debounceOpenAIKeyTimer.current); };
   }, [tempOpenAIApiKey, userOpenAIApiKey]);
 
-  // Load persisted settings
   useEffect(() => {
     const storedGoogleKey = localStorage.getItem('substream_google_api_key');
     const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
@@ -194,7 +195,7 @@ const App = () => {
         setSelectedRPM(rpm);
         setGlobalRPM(rpm);
     } else {
-        setGlobalRPM(15); // Default
+        setGlobalRPM(15); 
     }
 
     if (lastUsageDate === today && storedUsage) {
@@ -219,8 +220,12 @@ const App = () => {
     setVideoProcessingMessage('');
     setFfmpegProgress(0);
     setExtractedTracks([]);
+    setYoutubeMeta(null);
     if (videoSrc) {
-        URL.revokeObjectURL(videoSrc);
+       // Only revoke if it's a blob url (not a youtube embed link)
+       if (videoSrc.startsWith('blob:')) {
+           URL.revokeObjectURL(videoSrc);
+       }
     }
     setVideoSrc(null);
   };
@@ -265,39 +270,58 @@ const App = () => {
   
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-        resetState();
-        if (selectedFile.name.endsWith('.srt')) {
-            setFileType('srt');
-            setFile(selectedFile);
-            parseSrtFile(selectedFile);
-        } else if (SUPPORTED_VIDEO_FORMATS.includes(selectedFile.type)) {
-            setFileType('video');
-            setFile(selectedFile);
-            handleVideoUpload(selectedFile);
-        } else {
-            setError("Unsupported file type. Please upload an SRT or a supported video file.");
-        }
-    }
+    if (selectedFile) processFile(selectedFile);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-        resetState();
-        if (droppedFile.name.endsWith('.srt')) {
-            setFileType('srt');
-            setFile(droppedFile);
-            parseSrtFile(droppedFile);
-        } else if (SUPPORTED_VIDEO_FORMATS.includes(droppedFile.type)) {
-            setFileType('video');
-            setFile(droppedFile);
-            handleVideoUpload(droppedFile);
-        } else {
-            setError("Unsupported file type. Please upload an SRT or a supported video file.");
-        }
-    }
+    if (droppedFile) processFile(droppedFile);
+  };
+
+  const processFile = (fileToProcess: File) => {
+      resetState();
+      if (fileToProcess.name.endsWith('.srt') || fileToProcess.name.endsWith('.vtt')) {
+          setFileType('srt');
+          setFile(fileToProcess);
+          parseSrtFile(fileToProcess);
+      } else if (SUPPORTED_VIDEO_FORMATS.includes(fileToProcess.type) || fileToProcess.name.match(/\.(mp4|mkv|mov|webm|avi)$/i)) {
+          setFileType('video');
+          setFile(fileToProcess);
+          handleVideoUpload(fileToProcess);
+      } else {
+          setError("Unsupported file type. Please upload an SRT or a supported video file.");
+      }
+  };
+
+  // Called when URL Import Modal finishes processing a URL
+  const handleImportFile = (importedFile: File) => {
+      processFile(importedFile);
+  };
+
+  // Called when YouTube Import finishes
+  const handleImportYouTube = (meta: YouTubeVideoMetadata, captionText: string, videoEmbedUrl: string) => {
+      resetState();
+      setFileType('youtube');
+      setYoutubeMeta(meta);
+      setVideoSrc(videoEmbedUrl);
+      
+      // Simulate a file object for the UI name
+      const mockFile = new File([""], meta.title, { type: 'video/youtube' });
+      setFile(mockFile);
+
+      if (captionText) {
+          try {
+              const parsed = parseSRT(captionText);
+              setSubtitles(parsed);
+              setVideoProcessingStatus(VideoProcessingStatus.DONE);
+          } catch(e) {
+              setError("Failed to parse YouTube captions.");
+          }
+      } else {
+          // No captions selected, let user generate them with AI or use blank
+          setVideoProcessingStatus(VideoProcessingStatus.IDLE);
+      }
   };
 
   const parseSrtFile = async (f: File) => {
@@ -329,20 +353,13 @@ const App = () => {
       setVideoProcessingMessage('Analyzing video for subtitle tracks...');
       const tracks = await analyzeVideoFile(ffmpeg, videoFile);
       setExtractedTracks(tracks);
-      console.log("handleVideoUpload: Video analysis complete.");
       
       setVideoSrc(URL.createObjectURL(videoFile));
 
-      if (tracks.length === 0) {
-        console.log("handleVideoUpload: No tracks found, setting status to IDLE for user selection.");
-        setVideoProcessingStatus(VideoProcessingStatus.IDLE);
-      } else {
-        console.log(`handleVideoUpload: ${tracks.length} tracks found, setting status to IDLE for user selection.`);
-        setVideoProcessingStatus(VideoProcessingStatus.IDLE);
-      }
+      setVideoProcessingStatus(VideoProcessingStatus.IDLE);
     } catch (e: any) {
       const errorMessage = e instanceof Error ? e.message : String(e);
-      console.error("!!!! CRITICAL ERROR in handleVideoUpload !!!!", e);
+      console.error("Critical Error in Video Processing", e);
       setError(`Failed to process video file: ${errorMessage}`);
       setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
@@ -359,9 +376,7 @@ const App = () => {
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        console.error("!!!! CRITICAL ERROR in handleTrackSelection !!!!", e);
-        setError(`Failed to extract subtitle track: ${errorMessage}`);
+        setError(`Failed to extract subtitle track: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -370,6 +385,12 @@ const App = () => {
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
+
+    // Logic difference: if YouTube mode, we can't extract audio via ffmpeg easily.
+    if (fileType === 'youtube') {
+         setError("AI Audio transcription for YouTube links is currently limited. Please select a caption track during import or download the video manually.");
+         return;
+    }
 
     if (!ffmpegRef.current || (!apiKey && !hasDefaultKey)) {
         setActiveModal('CONFIG');
@@ -394,9 +415,7 @@ const App = () => {
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        console.error("!!!! CRITICAL ERROR in handleGenerateSubtitles !!!!", e);
-        setError(`Failed to generate subtitles: ${errorMessage}`);
+        setError(`Failed to generate subtitles: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -416,15 +435,13 @@ const App = () => {
         const captionId = await checkYouTubeCaptionStatus(googleAccessToken, videoId);
 
         setVideoProcessingMessage('Captions found! Downloading and parsing...');
-        const srtContent = await downloadYouTubeCaptionTrack(googleAccessToken, captionId);
+        const srtContent = await downloadYouTubeCaptionTrackOAuth(googleAccessToken, captionId);
 
         const parsed = parseSRT(srtContent);
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch (e: any) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        console.error("!!!! CRITICAL ERROR in YouTube Generation !!!!", e);
-        setError(`Failed to generate subtitles via YouTube: ${errorMessage}`);
+        setError(`Failed to generate subtitles via YouTube: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -480,6 +497,10 @@ const App = () => {
   };
 
   const handleDownloadVideo = async () => {
+    if (fileType === 'youtube') {
+        alert("Direct video download and muxing is not supported for YouTube imports due to browser security restrictions. Please download the SRT file.");
+        return;
+    }
     if (!file || !ffmpegRef.current || status !== TranslationStatus.COMPLETED) return;
     try {
         setFfmpegProgress(0);
@@ -492,9 +513,7 @@ const App = () => {
         downloadFile(`translated_${file.name.split('.')[0]}.mkv`, newVideoBlob);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        console.error("!!!! CRITICAL ERROR in handleDownloadVideo !!!!", e);
-        setError(`Failed to package video file: ${errorMessage}`);
+        setError(`Failed to package video file: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
@@ -506,25 +525,11 @@ const App = () => {
   const hasProAccess = userGoogleApiKey || userOpenAIApiKey;
 
   const filteredGoogleModels = useMemo(() => {
-    return AVAILABLE_MODELS.filter(model =>
-      model.provider === 'google' &&
-      (
-        model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-        model.description.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-        model.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())
-      )
-    );
+    return AVAILABLE_MODELS.filter(model => model.provider === 'google' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
   }, [modelSearchQuery]);
 
   const filteredOpenAIModels = useMemo(() => {
-    return AVAILABLE_MODELS.filter(model =>
-      model.provider === 'openai' &&
-      (
-        model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-        model.description.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
-        model.provider.toLowerCase().includes(modelSearchQuery.toLowerCase())
-      )
-    );
+    return AVAILABLE_MODELS.filter(model => model.provider === 'openai' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
   }, [modelSearchQuery]);
   
   const showProgressBar = [
@@ -569,14 +574,9 @@ const App = () => {
                 className={`flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-xl border transition-all group ${hasProAccess ? 'bg-neutral-900/50 border-neutral-800 hover:border-white/30' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'}`}
              >
                 <div className="text-xs text-right">
-                   <div className="font-bold text-white">
-                       {activeModelData.name}
-                   </div>
-                   <div className={`text-[10px] uppercase ${hasProAccess ? 'text-green-400' : 'text-neutral-500'}`}>
-                       {hasProAccess ? 'Pro Access' : `${remainingQuota} Credits`}
-                   </div>
+                   <div className="font-bold text-white">{activeModelData.name}</div>
+                   <div className={`text-[10px] uppercase ${hasProAccess ? 'text-green-400' : 'text-neutral-500'}`}>{hasProAccess ? 'Pro Access' : `${remainingQuota} Credits`}</div>
                 </div>
-                
                 <div className={`w-8 h-8 rounded-full border relative flex items-center justify-center ${hasProAccess ? 'border-green-900/50 bg-green-900/20' : 'border-neutral-700 bg-neutral-800/50'}`}>
                    <Cpu className={`w-4 h-4 ${hasProAccess ? 'text-green-400' : 'text-neutral-400 group-hover:text-white'}`} />
                 </div>
@@ -601,11 +601,7 @@ const App = () => {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-stretch pb-12">
               <div className="lg:col-span-3">
                  <div className="lg:sticky lg:top-32 h-full">
-                    <div className="
-                      h-full
-                      flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm
-                      lg:flex-col lg:p-6 lg:justify-between
-                    ">
+                    <div className="h-full flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm lg:flex-col lg:p-6 lg:justify-between">
                         <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
                         <StepIndicator number={2} title="Configure" isActive={!!file && subtitles.length > 0 && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} />
                         <StepIndicator number={3} title="Translate" isActive={status === TranslationStatus.TRANSLATING} isCompleted={status === TranslationStatus.COMPLETED} />
@@ -615,22 +611,55 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-9 space-y-8">
-                {fileType === 'video' && videoSrc && subtitles.length > 0 && <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} />}
+                {(fileType === 'video' || fileType === 'youtube') && videoSrc && subtitles.length > 0 && <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} isYouTube={fileType === 'youtube'} />}
 
                 <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-8 md:p-12 hover:bg-neutral-900/30 transition-all duration-300">
                    {!file ? (
-                     <div 
-                       className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
+                     <div className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
                        onDragOver={(e) => e.preventDefault()}
                        onDrop={handleDrop}
-                       onClick={() => fileInputRef.current?.click()}
                      >
                         <input type="file" ref={fileInputRef} className="hidden" accept={`.srt, ${SUPPORTED_VIDEO_FORMATS.join(',')}`} onChange={handleFileChange} />
-                        <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform" onClick={() => fileInputRef.current?.click()}>
                           <Upload className="text-white w-8 h-8" />
                         </div>
-                        <h2 className="text-xl font-bold text-white mb-2">Drop your SRT or Video file here</h2>
-                        <p className="text-neutral-500">or click to browse local files</p>
+                        <h2 className="text-xl font-bold text-white mb-2" onClick={() => fileInputRef.current?.click()}>Drop your SRT or Video file here</h2>
+                        <p className="text-neutral-500 mb-8" onClick={() => fileInputRef.current?.click()}>or click to browse local files</p>
+                        
+                        {/* Import Buttons Row */}
+                        <div className="flex gap-4 z-20">
+                           <button 
+                             onClick={() => { setImportType('URL'); setImportModalOpen(true); }}
+                             className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-neutral-500 transition-all group/btn"
+                             title="Import from URL"
+                           >
+                             <LinkIcon className="w-5 h-5 text-neutral-400 group-hover/btn:text-white" />
+                           </button>
+                           
+                           <button 
+                             onClick={() => { setImportType('YOUTUBE'); setImportModalOpen(true); }}
+                             className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-red-500/50 transition-all group/btn"
+                             title="Import from YouTube"
+                           >
+                             <Youtube className="w-5 h-5 text-neutral-400 group-hover/btn:text-red-500" />
+                           </button>
+                           
+                           <button 
+                             onClick={() => alert("Google Drive Integration Coming Soon!")}
+                             className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn"
+                             title="Import from Google Drive"
+                           >
+                             <HardDrive className="w-5 h-5 text-neutral-400 group-hover/btn:text-blue-500" />
+                           </button>
+
+                           <button 
+                             onClick={() => alert("Social Media Integration Coming Soon!")}
+                             className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-pink-500/50 transition-all group/btn"
+                             title="Other Sources"
+                           >
+                             <Instagram className="w-5 h-5 text-neutral-400 group-hover/btn:text-pink-500" />
+                           </button>
+                        </div>
                      </div>
                    ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
                      <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
@@ -660,11 +689,11 @@ const App = () => {
                      <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center">
-                                {fileType === 'srt' ? <FileText className="w-6 h-6" /> : <Clapperboard className="w-6 h-6" />}
+                              <div className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center overflow-hidden">
+                                {fileType === 'srt' ? <FileText className="w-6 h-6" /> : fileType === 'youtube' && youtubeMeta ? <img src={youtubeMeta.thumbnailUrl} className="w-full h-full object-cover"/> : <Clapperboard className="w-6 h-6" />}
                               </div>
                               <div>
-                                <h3 className="text-lg font-bold text-white">{file.name}</h3>
+                                <h3 className="text-lg font-bold text-white line-clamp-1">{file.name}</h3>
                                 <p className="text-neutral-500 text-sm">{subtitles.length > 0 ? `${subtitles.length} lines loaded` : 'Ready to configure'}</p>
                               </div>
                             </div>
@@ -747,7 +776,9 @@ const App = () => {
               </div>
               {status === TranslationStatus.COMPLETED && (
                 <div className="flex flex-col sm:flex-row gap-4">
-                  {fileType === 'video' && <Button variant="secondary" onClick={handleDownloadVideo} icon={<Film className="w-4 h-4" />}>Download Video</Button>}
+                  {(fileType === 'video' || fileType === 'youtube') && (
+                      <Button variant="secondary" onClick={handleDownloadVideo} icon={<Film className="w-4 h-4" />}>Download Video</Button>
+                  )}
                   <Button variant="primary" onClick={handleDownloadSrt} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>
                 </div>
               )}
@@ -803,7 +834,6 @@ const App = () => {
                 />
               </div>
               <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[450px] custom-scrollbar">
-                {/* Google Models Section */}
                 {filteredGoogleModels.length > 0 && (
                   <details open className="group/google">
                     <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
@@ -829,7 +859,6 @@ const App = () => {
                   </details>
                 )}
 
-                {/* OpenAI Models Section */}
                 {filteredOpenAIModels.length > 0 && (
                    <details open className="group/openai">
                     <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
@@ -855,7 +884,6 @@ const App = () => {
                   </details>
                 )}
                 
-                {/* No results message */}
                 {filteredGoogleModels.length === 0 && filteredOpenAIModels.length === 0 && (
                   <div className="text-center py-8 text-neutral-500 text-sm">No models found for your search.</div>
                 )}
@@ -864,18 +892,16 @@ const App = () => {
 
            <div className="space-y-6">
               
-              {/* YouTube Auth */}
               <div className="space-y-2">
                 <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
                   <Youtube className="w-4 h-4" /> YouTube Account
                 </label>
                 <YouTubeAuth onLoginSuccess={handleGoogleLoginSuccess} onLogout={handleGoogleLogout} userInfo={googleUser} />
                 <p className="text-xs text-neutral-500">
-                  Sign in to use your YouTube account for free, high-quality transcription.
+                  Sign in to use your YouTube account for transcription features and fetching captions.
                 </p>
               </div>
 
-              {/* Google API Key */}
               <div className="space-y-2">
                  <div className="flex items-center justify-between">
                     <label className="block text-sm font-bold text-white flex items-center gap-2">
@@ -900,7 +926,6 @@ const App = () => {
                 <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
               </div>
               
-              {/* OpenAI API Key */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                     <label className="block text-sm font-bold text-white flex items-center gap-2">
@@ -925,7 +950,6 @@ const App = () => {
                 <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
               </div>
 
-               {/* Rate Limit Settings */}
               <div className="space-y-2">
                  <div className="flex items-center justify-between mb-2">
                     <label className="block text-sm font-bold text-white flex items-center gap-2">
@@ -975,10 +999,6 @@ const App = () => {
               <h3 className="text-white font-bold mb-2">2. Third-Party Services</h3>
               <p>We use Google's Gemini API for processing translations. Data sent to Google is subject to their data processing terms.</p>
             </div>
-            <div>
-              <h3 className="text-white font-bold mb-2">3. User Rights</h3>
-              <p>You retain full ownership of your uploaded content.</p>
-            </div>
          </div>
       </Modal>
 
@@ -993,12 +1013,18 @@ const App = () => {
               <h3 className="text-white font-bold mb-2">2. Limitations</h3>
               <p>We do not guarantee 100% accuracy in translations. AI models can hallucinate or misinterpret context.</p>
             </div>
-            <div>
-               <h3 className="text-white font-bold mb-2">3. Liability</h3>
-               <p>We are not liable for any damages arising from the use of this tool.</p>
-            </div>
          </div>
       </Modal>
+      
+      {/* URL / YouTube Import Modal */}
+      <ImportUrlModal 
+        isOpen={importModalOpen} 
+        onClose={() => setImportModalOpen(false)} 
+        type={importType} 
+        onImportFile={handleImportFile}
+        onImportYouTube={handleImportYouTube}
+        googleAccessToken={googleAccessToken}
+      />
 
     </div>
   );

@@ -41,7 +41,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
       {/* Content Container - Dark Glass Effect with Scale/Slide Animation */}
       <div 
         className={`
-          relative w-full max-w-2xl md:max-w-4xl max-h-[85vh] overflow-hidden rounded-3xl border border-neutral-800 
+          relative w-full max-w-3xl md:max-w-6xl max-h-[85vh] overflow-hidden rounded-3xl border border-neutral-800 
           bg-neutral-900/80 backdrop-blur-xl shadow-2xl flex flex-col transform transition-all duration-300 ease-out
           ${isOpen ? 'scale-100 translate-y-0 opacity-100' : 'scale-95 translate-y-4 opacity-0'}
         `}

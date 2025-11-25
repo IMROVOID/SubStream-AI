@@ -33,6 +33,7 @@ export enum VideoProcessingStatus {
   // YouTube Specific Statuses
   UPLOADING_TO_YOUTUBE = 'UPLOADING_TO_YOUTUBE',
   AWAITING_YOUTUBE_CAPTIONS = 'AWAITING_YOUTUBE_CAPTIONS',
+  DOWNLOADING_FROM_URL = 'DOWNLOADING_FROM_URL',
 }
 
 
@@ -48,6 +49,22 @@ export interface AIModel {
   tags: string[];
   provider: 'google' | 'openai';
   transcriptionModel?: string; // Specific model for transcription, e.g., 'whisper-1'
+}
+
+export interface YouTubeVideoMetadata {
+  id: string;
+  title: string;
+  description: string;
+  thumbnailUrl: string;
+  channelTitle: string;
+  duration?: string; // ISO 8601 duration
+}
+
+export interface YouTubeCaptionTrack {
+  id: string;
+  language: string;
+  name: string;
+  isAutoSynced: boolean;
 }
 
 export const AVAILABLE_MODELS: AIModel[] = [
