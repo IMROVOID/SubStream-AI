@@ -504,13 +504,13 @@ const App = () => {
       <main className="relative z-10 max-w-5xl mx-auto px-6 py-12 md:py-20">
         
         <section className="mt-8 md:mt-12 mb-14 text-center">
-            <h1 className="text-5xl md:text-7xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
+            <h1 className="text-4xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
                 Bridge the Language <br/>
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-neutral-400 to-neutral-700">Gap Instantly.</span>
             </h1>
           <p className="text-base md:text-lg text-neutral-400 max-w-2xl mx-auto leading-relaxed animate-slide-up" style={{animationDelay: '0.1s'}}>
             Transform your subtitles with context-aware AI. 
-            Powered by Google's {activeModelData.name} for nuance and accuracy across {LANGUAGES.length}+ languages.
+            Powered by {activeModelData.provider === 'google' ? "Google's" : "OpenAI's"} {activeModelData.name} for nuance and accuracy across {LANGUAGES.length}+ languages.
           </p>
         </section>
 
@@ -837,13 +837,13 @@ const App = () => {
                                   selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'
                               }`}
                           >
-                              {option.label.split(' ')[0]}
+                              {option.label}
                           </button>
                       ))}
                   </div>
                    <div className="text-center mt-2">
                       <p className="font-medium text-white">
-                          {selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}
+                          {selectedRPM === 'unlimited' ? 'Unlimited Requests' : `${selectedRPM} Requests per Minute`}
                       </p>
                       <p className="text-xs text-neutral-500">
                           {RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}
