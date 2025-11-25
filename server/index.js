@@ -227,18 +227,19 @@ app.get('/api/download-video', async (req, res) => {
     }
 
     const tempId = `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    // We use a simple output template. yt-dlp will append extension.
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
     
-    console.log(`Downloading video: ${url} [${lang}]`);
+    console.log(`Downloading video: ${url} [${lang}] ID: ${tempId}`);
 
     try {
         let args = [
             url,
-            '--format', 'best',
+            '--format', 'best', // Or 'bestvideo+bestaudio' if you want strict merges, but 'best' is safer/faster for single file
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath,
             '--embed-subs',
-            '--merge-output-format', 'mkv'
+            '--merge-output-format', 'mkv' 
         ];
 
         if (isAuto) {
@@ -249,35 +250,48 @@ app.get('/api/download-video', async (req, res) => {
 
         await ytDlpWrap.execPromise(args);
 
+        // Find the generated file. 
+        // We look for ANY file starting with the tempId that is a video file.
         const files = fs.readdirSync(TEMP_DIR);
-        const videoFile = files.find(f => f.startsWith(tempId) && f.endsWith('.mkv'));
+        console.log(`Files in temp matching ${tempId}:`, files.filter(f => f.startsWith(tempId)));
 
-        if (!videoFile) throw new Error("Video file not generated");
+        // Sort by size to ensure we get the video, not just the subtitle file if it lingered
+        const matchedFiles = files
+            .filter(f => f.startsWith(tempId) && (f.endsWith('.mkv') || f.endsWith('.mp4') || f.endsWith('.webm')))
+            .map(f => ({ name: f, stat: fs.statSync(path.join(TEMP_DIR, f)) }))
+            .sort((a, b) => b.stat.size - a.stat.size);
 
+        if (matchedFiles.length === 0) {
+            throw new Error(`Video file not generated. Checked for ID: ${tempId}`);
+        }
+
+        const videoFile = matchedFiles[0].name;
         const filePath = path.join(TEMP_DIR, videoFile);
         
-        res.download(filePath, `video_substream_${tempId}.mkv`, (err) => {
+        console.log(`Sending file: ${filePath}`);
+
+        res.download(filePath, `video_substream.mkv`, (err) => {
             if (err) console.error("Send error:", err);
             // Cleanup after sending
             setTimeout(() => {
                 try {
-                    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-                    // Clean related sub files
                     const leftovers = fs.readdirSync(TEMP_DIR).filter(f => f.startsWith(tempId));
-                    leftovers.forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
+                    leftovers.forEach(f => {
+                         try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch(e) {}
+                    });
                 } catch (e) { console.error("Cleanup error:", e); }
-            }, 5000); // Delay cleanup slightly to ensure stream finishes
+            }, 10000); // 10s delay to ensure download stream is done
         });
 
     } catch (error) {
-        console.error("Video download failed:", error.message);
+        console.error("Video download failed DETAILED:", error);
         // Immediate cleanup
         try {
              const files = fs.readdirSync(TEMP_DIR);
              files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
         } catch (e) {}
         
-        res.status(500).send("Video processing failed.");
+        res.status(500).send(`Video processing failed: ${error.message}`);
     }
 });
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
@@ -55,6 +55,11 @@ const App = () => {
   const [status, setStatus] = useState<TranslationStatus>(TranslationStatus.IDLE);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  
+  // Download Progress State
+  const [downloadProgress, setDownloadProgress] = useState<number | undefined>(undefined);
+  const [downloadStatusText, setDownloadStatusText] = useState<string>('');
+  const [isDownloadComplete, setIsDownloadComplete] = useState(false);
 
   // Language & Translation Settings
   const [sourceLang, setSourceLang] = useState<string>('auto');
@@ -93,11 +98,11 @@ const App = () => {
   const debounceGoogleKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const debounceOpenAIKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
+  const progressInterval = useRef<NodeJS.Timeout | null>(null);
 
   // --- Effects ---
   useEffect(() => {
     if (subtitles.length > 0 && (status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED || fileType === 'youtube')) {
-        // Smooth scroll to results when subtitles appear
         setTimeout(() => {
             resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 300);
@@ -187,6 +192,7 @@ const App = () => {
     }
   }, []);
 
+
   // --- Helper Functions ---
 
   const updateUsage = (newRequests: number) => {
@@ -209,6 +215,9 @@ const App = () => {
     setExtractedTracks([]);
     setYoutubeMeta(null);
     setSelectedCaptionId('');
+    setDownloadProgress(undefined);
+    setDownloadStatusText('');
+    setIsDownloadComplete(false);
     if (videoSrc) {
        if (videoSrc.startsWith('blob:')) {
            URL.revokeObjectURL(videoSrc);
@@ -271,7 +280,6 @@ const App = () => {
   // --- Import Handlers ---
 
   const handleImportYouTube = (meta: YouTubeVideoMetadata) => {
-      // Manually reset specific fields to avoid async state issues with 'resetState'
       setFile(null);
       setSubtitles([]);
       setStatus(TranslationStatus.IDLE);
@@ -282,23 +290,21 @@ const App = () => {
       setFfmpegProgress(0);
       setExtractedTracks([]);
       setSelectedCaptionId('');
+      setDownloadProgress(undefined);
+      setDownloadStatusText('');
+      setIsDownloadComplete(false);
       
       if (videoSrc && videoSrc.startsWith('blob:')) {
            URL.revokeObjectURL(videoSrc);
       }
 
-      // Set New Data
       setFileType('youtube');
       setYoutubeMeta(meta);
-      // Use Embed URL for preview
       setVideoSrc(`https://www.youtube.com/embed/${meta.id}`);
-      
-      // Mock file for UI
       const mockFile = new File([""], meta.title, { type: 'video/youtube' });
       setFile(mockFile);
   };
 
-  // Handles downloading the selected caption track from the dropdown
   const handleYouTubeDownload = async () => {
       if (!selectedCaptionId || !youtubeMeta?.videoUrl) {
           setError("Please select a caption track first.");
@@ -314,16 +320,18 @@ const App = () => {
           const parsed = parseSRT(captionText);
           if (parsed.length === 0) throw new Error("Parsed subtitle file is empty.");
           setSubtitles(parsed);
-          // YouTube files are considered "Completed" for UI purposes once captions are loaded
           setStatus(TranslationStatus.COMPLETED); 
           setVideoProcessingStatus(VideoProcessingStatus.DONE);
       } catch (e: any) {
-          setError("Failed to download captions: " + e.message);
+          if (e.message.includes("Stale data")) {
+              setError(e.message);
+          } else {
+              setError("Failed to download captions: " + e.message);
+          }
           setVideoProcessingStatus(VideoProcessingStatus.ERROR);
       }
   };
 
-  // ... (Existing file handlers remain unchanged)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) processFile(selectedFile);
@@ -350,7 +358,6 @@ const App = () => {
       }
   };
 
-  // Called when URL Import Modal finishes processing a URL
   const handleImportFile = (importedFile: File) => {
       processFile(importedFile);
   };
@@ -499,8 +506,49 @@ const App = () => {
   const handleDownloadVideo = async () => {
     if (fileType === 'youtube') {
         if (!selectedCaptionId || !youtubeMeta?.videoUrl) return;
-        // Use the server-side download & merge logic
-        downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId);
+        
+        setError(null);
+        setDownloadProgress(0); 
+        setDownloadStatusText('Initializing...');
+        setIsDownloadComplete(false);
+
+        // Progress Simulation
+        progressInterval.current = setInterval(() => {
+            setDownloadProgress(prev => {
+                if (prev === undefined) return 0;
+                
+                // Stages logic for UI feedback
+                if (prev < 30) setDownloadStatusText('Fetching stream...');
+                else if (prev < 60) setDownloadStatusText('Embedding subs...');
+                else if (prev < 90) setDownloadStatusText('Finalizing...');
+                
+                if (prev >= 90) return 90; // Hold at 90
+                return prev + Math.random() * 4; // Increment
+            });
+        }, 600);
+
+        try {
+             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId);
+             
+             // On Success
+             if (progressInterval.current) clearInterval(progressInterval.current);
+             setDownloadProgress(100);
+             setDownloadStatusText('Done');
+             setIsDownloadComplete(true);
+             
+             // Reset after delay
+             setTimeout(() => {
+                 setDownloadProgress(undefined);
+                 setDownloadStatusText('');
+                 setIsDownloadComplete(false);
+             }, 3000);
+
+        } catch (e: any) {
+            if (progressInterval.current) clearInterval(progressInterval.current);
+            setDownloadProgress(undefined);
+            setDownloadStatusText('');
+            setError(`Video download failed: ${e.message}`);
+        }
         return;
     }
     
@@ -521,7 +569,6 @@ const App = () => {
     }
   };
 
-  // --- Derived Calculations ---
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
   const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
@@ -802,22 +849,35 @@ const App = () => {
         </div>
 
         {subtitles.length > 0 && (
-          <section ref={resultsRef} className="mt-24 border-t border-neutral-900 pt-12 animate-slide-up">
-            <div className="flex items-center justify-between mb-8">
+          <section ref={resultsRef} className="mt-24 border-t border-neutral-900 pt-12 animate-slide-up pb-24">
+            <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
               <div>
                 <h2 className="text-3xl font-display font-bold text-white mb-2">Live Preview</h2>
                 <p className="text-neutral-500">Comparing original vs translated output.</p>
               </div>
-              <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex items-center gap-4">
                   {(fileType === 'video' || fileType === 'youtube') && (
-                      <Button variant="secondary" onClick={handleDownloadVideo} icon={<Film className="w-4 h-4" />}>Download Video</Button>
+                      <div className="min-w-[160px]">
+                        <Button 
+                            variant="secondary" 
+                            onClick={handleDownloadVideo} 
+                            progress={downloadProgress}
+                            statusText={downloadStatusText}
+                            completed={isDownloadComplete}
+                            disabled={downloadProgress !== undefined}
+                            icon={<Film className="w-4 h-4" />}
+                            className="w-full"
+                        >
+                            Download Video
+                        </Button>
+                      </div>
                   )}
                   <Button variant="primary" onClick={handleDownloadSrt} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>
               </div>
             </div>
             <div className="rounded-3xl border border-neutral-800 bg-black/50 backdrop-blur overflow-hidden min-h-[400px]">
-              <div className={`grid ${fileType === 'youtube' ? 'grid-cols-[100px_1fr]' : 'grid-cols-[100px_1fr]'} border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
-                <div className="pl-2">Timestamp</div>
+              <div className={`grid ${fileType === 'youtube' ? 'grid-cols-1' : 'grid-cols-[100px_1fr]'} border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
+                {fileType !== 'youtube' && <div className="pl-2">Timestamp</div>}
                 <div className={`grid ${fileType === 'youtube' ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
                    <span>Original ({sourceLang})</span>
                    {fileType !== 'youtube' && <span className="text-white">Translated ({targetLang})</span>}
@@ -827,7 +887,7 @@ const App = () => {
                 {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={fileType === 'youtube'} /> ))}
               </div>
             </div>
-            <div className="mt-8 pb-12 flex justify-center">
+            <div className="mt-8 flex justify-center">
                 <Button variant="secondary" onClick={resetState} icon={<RefreshCw className="w-4 h-4" />}>
                     Translate Another File
                 </Button>
@@ -836,14 +896,24 @@ const App = () => {
         )}
       </main>
 
-      <footer className="border-t border-neutral-900 py-12 bg-black relative z-10">
-         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="text-neutral-500 text-sm">&copy; 2025 SubStream AI. All rights reserved.</div>
-            <div className="flex items-center gap-6 text-neutral-500 text-sm">
-               <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy Policy</button>
-               <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms of Service</button>
+      {/* FOOTER */}
+      <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
+        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-neutral-800 text-white flex items-center justify-center font-bold text-sm rounded font-display">S</div>
+                <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
             </div>
-         </div>
+            
+            <div className="flex items-center gap-6 text-sm text-neutral-500">
+                <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
+                <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy</button>
+                <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
+            </div>
+            
+            <div className="text-xs text-neutral-600">
+                &copy; {new Date().getFullYear()} SubStream AI. Open Source.
+            </div>
+        </div>
       </footer>
 
       {/* ... Modals ... */}

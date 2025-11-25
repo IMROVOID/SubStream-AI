@@ -26,3 +26,4 @@ dist-ssr
 .takeoutignore
 package-lock.json
 takeout.py
+/server/temp

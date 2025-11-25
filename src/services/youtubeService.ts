@@ -1,4 +1,5 @@
 import { YouTubeVideoMetadata, YouTubeCaptionTrack } from "../types";
+import { downloadFile } from "../utils/srtUtils";
 
 // Backend URL (Local Node Server)
 const BACKEND_URL = "http://localhost:4000/api";
@@ -42,6 +43,10 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 }
 
 export async function downloadCaptionTrack(videoUrl: string, trackToken: string): Promise<string> {
+    if (trackToken.startsWith('http')) {
+         // Legacy fallback
+    }
+
     try {
         const query = new URLSearchParams({
             url: videoUrl,
@@ -66,8 +71,23 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
         url: videoUrl,
         token: trackToken
     });
-    // Trigger download in browser
-    window.location.href = `${BACKEND_URL}/download-video?${query.toString()}`;
+    
+    try {
+        // Use fetch to handle errors and completion
+        const response = await fetch(`${BACKEND_URL}/download-video?${query.toString()}`);
+        
+        if (!response.ok) {
+             throw new Error("Download failed on server.");
+        }
+
+        // Convert to blob and trigger download
+        const blob = await response.blob();
+        downloadFile(`video_substream_${Date.now()}.mkv`, blob);
+
+    } catch (e: any) {
+        console.error("Video download failed:", e);
+        throw new Error("Failed to download video from server.");
+    }
 }
 
 
