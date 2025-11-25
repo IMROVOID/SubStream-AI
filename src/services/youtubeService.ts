@@ -3,7 +3,7 @@ import { YouTubeVideoMetadata, YouTubeCaptionTrack } from "../types";
 // Backend URL (Local Node Server)
 const BACKEND_URL = "http://localhost:4000/api";
 
-// Declare gapi explicitly for the upload feature (which still uses client-side OAuth)
+// Declare gapi explicitly for upload functionality
 declare var gapi: any;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -22,16 +22,16 @@ export function extractYouTubeId(url: string): string | null {
 }
 
 /**
- * Fetches Video Metadata + Captions using Local Node Backend
+ * Fetches Video Metadata + Captions using Local Node Backend (yt-dlp)
  */
 export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTubeVideoMetadata, captions: YouTubeCaptionTrack[] }> {
     try {
-        // We pass the full URL to the backend
+        // Pass the full URL to the backend
         const response = await fetch(`${BACKEND_URL}/info?url=${encodeURIComponent(videoUrl)}`);
         
         if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || `Server error: ${response.status}`);
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.error || `Server returned ${response.status}: Failed to process video.`);
         }
         
         const data = await response.json();
@@ -39,7 +39,11 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 
     } catch (e: any) {
         console.error("Backend API Error:", e);
-        throw new Error(e.message || "Could not connect to local server. Make sure 'node server/index.js' is running.");
+        // Provide a helpful message if the connection is refused (server not running)
+        if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
+            throw new Error("Could not connect to local server. Please run 'npm start' in the 'server' folder.");
+        }
+        throw new Error(e.message || "Failed to fetch video details.");
     }
 }
 
@@ -58,7 +62,7 @@ export async function downloadCaptionTrack(url: string): Promise<string> {
 }
 
 
-// --- GOOGLE OAUTH (Only for Uploading to User's Channel) ---
+// --- GOOGLE OAUTH (Only for Uploading) ---
 
 // Load the Google API script dynamically.
 function loadGapiScript() {

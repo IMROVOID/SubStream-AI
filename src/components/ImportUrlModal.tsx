@@ -2,15 +2,15 @@ import React, { useState } from 'react';
 import { Link, Youtube, Download, AlertCircle, Loader2, PlayCircle, FileText } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './Button';
-import { extractYouTubeId, getVideoDetails, downloadCaptionTrack } from '../services/youtubeService';
-import { YouTubeVideoMetadata, YouTubeCaptionTrack } from '../types';
+import { extractYouTubeId, getVideoDetails } from '../services/youtubeService';
+import { YouTubeVideoMetadata } from '../types';
 
 interface ImportUrlModalProps {
   isOpen: boolean;
   onClose: () => void;
   type: 'URL' | 'YOUTUBE' | 'GDRIVE' | 'SOCIAL' | null;
   onImportFile: (file: File) => void;
-  onImportYouTube: (meta: YouTubeVideoMetadata, captionText: string, videoEmbedUrl: string) => void;
+  onImportYouTube: (meta: YouTubeVideoMetadata) => void;
   googleAccessToken: string | null;
 }
 
@@ -20,10 +20,9 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
     type, 
     onImportFile, 
     onImportYouTube,
-    googleAccessToken 
 }) => {
   const [url, setUrl] = useState('');
-  const [status, setStatus] = useState<'IDLE' | 'LOADING' | 'PREVIEW' | 'DOWNLOADING'>('IDLE');
+  const [status, setStatus] = useState<'IDLE' | 'LOADING' | 'PREVIEW'>('IDLE');
   const [error, setError] = useState<string | null>(null);
   
   // URL Specific State
@@ -32,8 +31,6 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
 
   // YouTube Specific State
   const [ytMeta, setYtMeta] = useState<YouTubeVideoMetadata | null>(null);
-  const [ytCaptions, setYtCaptions] = useState<YouTubeCaptionTrack[]>([]);
-  const [selectedCaptionUrl, setSelectedCaptionUrl] = useState<string>('');
 
   const reset = () => {
       setUrl('');
@@ -42,7 +39,6 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
       setDetectedType(null);
       setFileMeta(null);
       setYtMeta(null);
-      setYtCaptions([]);
   };
 
   const handleUrlSubmit = async () => {
@@ -57,10 +53,10 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
               return;
           }
           try {
-              // Pass the full URL to the backend
+              // Fetch metadata and captions
               const { meta, captions } = await getVideoDetails(url);
-              setYtMeta(meta);
-              setYtCaptions(captions);
+              // Attach captions to meta so we can pass it all to parent
+              setYtMeta({ ...meta, availableCaptions: captions });
               setStatus('PREVIEW');
           } catch (e: any) {
               setError(e.message || "Failed to fetch YouTube details.");
@@ -92,9 +88,8 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
               }
           } catch (e: any) {
               console.error(e);
-              // Fallback: If HEAD fails (CORS), assume user knows what they are doing and just show generic preview
               if (e.message.includes("Failed to access")) {
-                 setError("CORS restricted or Invalid URL. We will attempt to force download, but it might fail if the server blocks cross-origin requests.");
+                 setError("CORS restricted or Invalid URL. We will attempt to force download, but it might fail.");
                  setDetectedType(url.endsWith('.srt') ? 'SRT' : 'VIDEO');
                  setFileMeta({ name: url.split('/').pop() || 'file', size: '?', type: 'Unknown' });
                  setStatus('PREVIEW');
@@ -106,27 +101,14 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
       }
   };
 
-  const handleConfirmDownload = async () => {
-      setStatus('DOWNLOADING');
-      
+  const handleConfirm = async () => {
       if (type === 'YOUTUBE' && ytMeta) {
-          try {
-             let captionText = '';
-             if (selectedCaptionUrl) {
-                 captionText = await downloadCaptionTrack(selectedCaptionUrl);
-             } else {
-                 captionText = ''; 
-             }
-             const embedUrl = `https://www.youtube.com/embed/${ytMeta.id}`;
-             onImportYouTube(ytMeta, captionText, embedUrl);
-             onClose();
-             reset();
-          } catch(e: any) {
-             setError(e.message);
-             setStatus('PREVIEW');
-          }
+          onImportYouTube(ytMeta);
+          onClose();
+          reset();
       } 
       else if (type === 'URL' && fileMeta) {
+          // For generic URL, we download immediately as before
           try {
               const response = await fetch(url);
               if (!response.ok) throw new Error("Download failed.");
@@ -136,8 +118,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
               onClose();
               reset();
           } catch (e: any) {
-              setError("Download Failed: " + e.message + ". The server might be blocking this request.");
-              setStatus('PREVIEW');
+              setError("Download Failed: " + e.message);
           }
       }
   };
@@ -196,33 +177,13 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
                         </div>
                     </div>
 
-                    <div className="space-y-2">
-                        <label className="text-sm font-bold text-neutral-400">Select Source Language / Caption Track</label>
-                        {ytCaptions.length > 0 ? (
-                            <select 
-                                className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-white focus:border-white outline-none"
-                                value={selectedCaptionUrl}
-                                onChange={(e) => setSelectedCaptionUrl(e.target.value)}
-                            >
-                                <option value="">-- Ignore Captions (Video Only) --</option>
-                                {ytCaptions.map(c => (
-                                    <option key={c.id} value={c.id}>
-                                        {c.name || c.language} {c.isAutoSynced ? '(Auto-Generated)' : ''}
-                                    </option>
-                                ))}
-                            </select>
-                        ) : (
-                            <div className="p-3 border border-yellow-900/30 bg-yellow-900/10 rounded-lg text-yellow-500 text-sm">
-                                No caption tracks found. You can import the video, but you'll need to generate subtitles manually.
-                            </div>
-                        )}
-                    </div>
+                    {/* Removed Caption Selection from here as requested */}
                     
                     {error && <div className="text-red-400 text-sm">{error}</div>}
 
                     <div className="flex justify-end gap-3">
                         <Button variant="outline" onClick={() => setStatus('IDLE')}>Back</Button>
-                        <Button onClick={handleConfirmDownload} icon={<Download className="w-4 h-4"/>}>Import Video</Button>
+                        <Button onClick={handleConfirm} icon={<Download className="w-4 h-4"/>}>Import Video</Button>
                     </div>
                 </div>
             )}
@@ -242,16 +203,9 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
                      {error && <div className="text-red-400 text-sm">{error}</div>}
                     <div className="flex justify-end gap-3">
                         <Button variant="outline" onClick={() => setStatus('IDLE')}>Back</Button>
-                        <Button onClick={handleConfirmDownload} icon={<Download className="w-4 h-4"/>}>Download & Process</Button>
+                        <Button onClick={handleConfirm} icon={<Download className="w-4 h-4"/>}>Download & Process</Button>
                     </div>
                 </div>
-            )}
-            
-            {status === 'DOWNLOADING' && (
-                 <div className="py-8 flex flex-col items-center justify-center space-y-4">
-                     <Loader2 className="w-10 h-10 text-white animate-spin" />
-                     <p className="text-neutral-400">Downloading and processing content...</p>
-                 </div>
             )}
 
         </div>
