@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube } from 'lucide-react';
+import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
+import { uploadVideoToYouTube, checkYouTubeCaptionStatus, downloadYouTubeCaptionTrack } from './services/youtubeService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
 import { StepIndicator } from './components/StepIndicator';
@@ -11,13 +13,31 @@ import { Modal } from './components/Modal';
 import { Documentation } from './components/Documentation';
 import { VideoPlayer } from './components/VideoPlayer';
 import { TrackSelector } from './components/TrackSelector';
+import { YouTubeAuth } from './components/YouTubeAuth';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 type Page = 'HOME' | 'DOCS';
 type ModalType = 'NONE' | 'PRIVACY' | 'TOS' | 'CONFIG';
 type ApiKeyStatus = 'idle' | 'validating' | 'valid' | 'invalid';
+type GoogleUser = { name: string; email: string; picture: string };
 
 const ESTIMATED_DAILY_QUOTA = 500; // Rough estimate for Free Tier
+
+const AppWrapper = () => {
+    const googleClientId = process.env.VITE_GOOGLE_CLIENT_ID;
+
+    if (!googleClientId) {
+        // You can render a more graceful error message here
+        return <div className="bg-black text-white h-screen flex items-center justify-center">Error: Google Client ID is not configured.</div>;
+    }
+    
+    return (
+        <GoogleOAuthProvider clientId={googleClientId}>
+            <App />
+        </GoogleOAuthProvider>
+    );
+};
+
 
 const App = () => {
   // Navigation & Modal State
@@ -56,6 +76,10 @@ const App = () => {
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
+  
+  // YouTube Auth State
+  const [googleUser, setGoogleUser] = useState<GoogleUser | null>(null);
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +87,24 @@ const App = () => {
   const debounceGoogleKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const debounceOpenAIKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
+
+  // --- Auth Handlers ---
+  
+  const handleGoogleLoginSuccess = (tokenResponse: TokenResponse) => {
+    setGoogleAccessToken(tokenResponse.access_token);
+    // Fetch user info
+    fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+    })
+    .then(res => res.json())
+    .then(data => setGoogleUser(data));
+  };
+
+  const handleGoogleLogout = () => {
+    setGoogleUser(null);
+    setGoogleAccessToken(null);
+  };
+
 
   // --- Effects ---
 
@@ -280,8 +322,8 @@ const App = () => {
       setVideoSrc(URL.createObjectURL(videoFile));
 
       if (tracks.length === 0) {
-        console.log("handleVideoUpload: No tracks found, proceeding to generate subtitles.");
-        await handleGenerateSubtitles();
+        console.log("handleVideoUpload: No tracks found, setting status to IDLE for user selection.");
+        setVideoProcessingStatus(VideoProcessingStatus.IDLE);
       } else {
         console.log(`handleVideoUpload: ${tracks.length} tracks found, setting status to IDLE for user selection.`);
         setVideoProcessingStatus(VideoProcessingStatus.IDLE);
@@ -347,6 +389,34 @@ const App = () => {
     }
   };
 
+  const handleGenerateWithYouTube = async () => {
+    if (!file || !googleAccessToken) {
+        setError("Please sign in with Google to use the YouTube transcription feature.");
+        return;
+    }
+    try {
+        setVideoProcessingStatus(VideoProcessingStatus.UPLOADING_TO_YOUTUBE);
+        setVideoProcessingMessage('Uploading video to your YouTube channel as "unlisted"...');
+        const videoId = await uploadVideoToYouTube(googleAccessToken, file);
+
+        setVideoProcessingStatus(VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS);
+        setVideoProcessingMessage('Video uploaded. Waiting for YouTube to auto-generate captions. This can take several minutes...');
+        const captionId = await checkYouTubeCaptionStatus(googleAccessToken, videoId);
+
+        setVideoProcessingMessage('Captions found! Downloading and parsing...');
+        const srtContent = await downloadYouTubeCaptionTrack(googleAccessToken, captionId);
+
+        const parsed = parseSRT(srtContent);
+        setSubtitles(parsed);
+        setVideoProcessingStatus(VideoProcessingStatus.DONE);
+    } catch (e: any) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error("!!!! CRITICAL ERROR in YouTube Generation !!!!", e);
+        setError(`Failed to generate subtitles via YouTube: ${errorMessage}`);
+        setVideoProcessingStatus(VideoProcessingStatus.ERROR);
+    }
+  };
+  
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
     
@@ -449,7 +519,9 @@ const App = () => {
     VideoProcessingStatus.EXTRACTING_AUDIO, 
     VideoProcessingStatus.TRANSCRIBING, 
     VideoProcessingStatus.MUXING,
-    VideoProcessingStatus.EXTRACTING_SUBTITLES
+    VideoProcessingStatus.EXTRACTING_SUBTITLES,
+    VideoProcessingStatus.UPLOADING_TO_YOUTUBE,
+    VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS
   ].includes(videoProcessingStatus);
   
   const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
@@ -460,7 +532,7 @@ const App = () => {
   }
 
   return (
-    <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black">
+    <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black flex flex-col">
       
       <div className="fixed inset-0 pointer-events-none z-0">
          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-neutral-900/30 blur-[120px] rounded-full mix-blend-screen" />
@@ -501,151 +573,157 @@ const App = () => {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-5xl mx-auto px-6 py-12 md:py-4">
-        
-        <section className="mt-8 md:mt-12 mb-14 text-center">
-            <h1 className="text-4xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
-                Bridge the Language<br/>
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-neutral-400 to-neutral-700">Gap Instantly.</span>
-            </h1>
-          <p className="text-base md:text-lg text-neutral-400 max-w-2xl mx-auto leading-relaxed animate-slide-up" style={{animationDelay: '0.1s'}}>
-            Transform your subtitles with context-aware AI. 
-            Powered by {activeModelData.provider === 'google' ? "Google's" : "OpenAI's"} {activeModelData.name} for nuance and accuracy across {LANGUAGES.length}+ languages.
-          </p>
-        </section>
+      <main className="relative z-10 max-w-5xl mx-auto px-6 w-full flex-1 flex flex-col">
+        <div className="flex-grow flex flex-col justify-center pt-20">
+            <section className="mb-14 text-center">
+                <h1 className="text-4xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
+                    Bridge the Language<br/>
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-neutral-400 to-neutral-700">Gap Instantly.</span>
+                </h1>
+                <p className="text-base md:text-lg text-neutral-400 max-w-2xl mx-auto leading-relaxed animate-slide-up" style={{animationDelay: '0.1s'}}>
+                    Transform your subtitles with context-aware AI. 
+                    Powered by {activeModelData.provider === 'google' ? "Google's" : "OpenAI's"} {activeModelData.name} for nuance and accuracy across {LANGUAGES.length}+ languages.
+                </p>
+            </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-stretch">
-          
-          <div className="lg:col-span-3">
-             <div className="lg:sticky lg:top-32 h-full">
-                <div className="
-                  h-full
-                  flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm
-                  lg:flex-col lg:p-6 lg:justify-between
-                ">
-                    <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
-                    <StepIndicator number={2} title="Configure" isActive={!!file && subtitles.length > 0 && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} />
-                    <StepIndicator number={3} title="Translate" isActive={status === TranslationStatus.TRANSLATING} isCompleted={status === TranslationStatus.COMPLETED} />
-                    <StepIndicator number={4} title="Download" isActive={status === TranslationStatus.COMPLETED} isCompleted={false} />
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-stretch pb-12">
+              <div className="lg:col-span-3">
+                 <div className="lg:sticky lg:top-32 h-full">
+                    <div className="
+                      h-full
+                      flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm
+                      lg:flex-col lg:p-6 lg:justify-between
+                    ">
+                        <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
+                        <StepIndicator number={2} title="Configure" isActive={!!file && subtitles.length > 0 && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} />
+                        <StepIndicator number={3} title="Translate" isActive={status === TranslationStatus.TRANSLATING} isCompleted={status === TranslationStatus.COMPLETED} />
+                        <StepIndicator number={4} title="Download" isActive={status === TranslationStatus.COMPLETED} isCompleted={false} />
+                    </div>
+                 </div>
+              </div>
+
+              <div className="lg:col-span-9 space-y-8">
+                {fileType === 'video' && videoSrc && subtitles.length > 0 && <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} />}
+
+                <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-8 md:p-12 hover:bg-neutral-900/30 transition-all duration-300">
+                   {!file ? (
+                     <div 
+                       className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
+                       onDragOver={(e) => e.preventDefault()}
+                       onDrop={handleDrop}
+                       onClick={() => fileInputRef.current?.click()}
+                     >
+                        <input type="file" ref={fileInputRef} className="hidden" accept={`.srt, ${SUPPORTED_VIDEO_FORMATS.join(',')}`} onChange={handleFileChange} />
+                        <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                          <Upload className="text-white w-8 h-8" />
+                        </div>
+                        <h2 className="text-xl font-bold text-white mb-2">Drop your SRT or Video file here</h2>
+                        <p className="text-neutral-500">or click to browse local files</p>
+                     </div>
+                   ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
+                     <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
+                        <Loader2 className="w-12 h-12 text-white animate-spin" />
+                        <div>
+                          <h2 className="text-xl font-bold text-white mb-1 uppercase tracking-widest">{videoProcessingStatus.replace(/_/g, ' ')}</h2>
+                          <p className="text-neutral-400">{videoProcessingMessage}</p>
+                        </div>
+                        {showProgressBar &&
+                          <div className="w-full max-w-sm">
+                            <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden">
+                                <div className="h-full bg-white transition-all duration-300" style={{width: `${ffmpegProgress}%`}}></div>
+                            </div>
+                            <p className="text-xs text-neutral-500 mt-1 text-right">{Math.round(ffmpegProgress)}%</p>
+                          </div>
+                        }
+                     </div>
+                   ) : (fileType === 'video' && videoProcessingStatus === VideoProcessingStatus.IDLE && subtitles.length === 0) ? (
+                     <TrackSelector 
+                        tracks={extractedTracks} 
+                        onSelectTrack={handleTrackSelection} 
+                        onGenerate={handleGenerateSubtitles}
+                        onGenerateYouTube={handleGenerateWithYouTube}
+                        isYouTubeAuthenticated={!!googleUser}
+                      />
+                   ) : (
+                     <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center">
+                                {fileType === 'srt' ? <FileText className="w-6 h-6" /> : <Clapperboard className="w-6 h-6" />}
+                              </div>
+                              <div>
+                                <h3 className="text-lg font-bold text-white">{file.name}</h3>
+                                <p className="text-neutral-500 text-sm">{subtitles.length > 0 ? `${subtitles.length} lines loaded` : 'Ready to configure'}</p>
+                              </div>
+                            </div>
+                            <Button variant="outline" onClick={resetState}>Change File</Button>
+                        </div>
+
+                        {subtitles.length > 0 && 
+                          <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
+                              <Info className="w-4 h-4 shrink-0" />
+                              <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
+                          </div>
+                        }
+                     </div>
+                   )}
                 </div>
-             </div>
-          </div>
 
-          <div className="lg:col-span-9 space-y-8">
-            {fileType === 'video' && videoSrc && subtitles.length > 0 && <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} />}
-
-            <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-8 md:p-12 hover:bg-neutral-900/30 transition-all duration-300">
-               {!file ? (
-                 <div 
-                   className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
-                   onDragOver={(e) => e.preventDefault()}
-                   onDrop={handleDrop}
-                   onClick={() => fileInputRef.current?.click()}
-                 >
-                    <input type="file" ref={fileInputRef} className="hidden" accept={`.srt, ${SUPPORTED_VIDEO_FORMATS.join(',')}`} onChange={handleFileChange} />
-                    <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                      <Upload className="text-white w-8 h-8" />
-                    </div>
-                    <h2 className="text-xl font-bold text-white mb-2">Drop your SRT or Video file here</h2>
-                    <p className="text-neutral-500">or click to browse local files</p>
-                 </div>
-               ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
-                 <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
-                    <Loader2 className="w-12 h-12 text-white animate-spin" />
-                    <div>
-                      <h2 className="text-xl font-bold text-white mb-1 uppercase tracking-widest">{videoProcessingStatus.replace('_', ' ')}</h2>
-                      <p className="text-neutral-400">{videoProcessingMessage}</p>
-                    </div>
-                    {showProgressBar &&
-                      <div className="w-full max-w-sm">
-                        <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-white transition-all duration-300" style={{width: `${ffmpegProgress}%`}}></div>
+                {(subtitles.length > 0) && (
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+                      <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
+                        <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Source Language</label>
+                        <div className="relative">
+                          <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} disabled={status === TranslationStatus.TRANSLATING}>
+                            <option value="auto">✨ Auto Detect</option>
+                            {LANGUAGES.map(l => <option key={`source-${l.code}`} value={l.name}>{l.name}</option>)}
+                          </select>
+                          <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
                         </div>
-                        <p className="text-xs text-neutral-500 mt-1 text-right">{Math.round(ffmpegProgress)}%</p>
                       </div>
-                    }
-                 </div>
-               ) : (fileType === 'video' && videoProcessingStatus === VideoProcessingStatus.IDLE && subtitles.length === 0) ? (
-                 <TrackSelector tracks={extractedTracks} onSelectTrack={handleTrackSelection} onGenerate={handleGenerateSubtitles} />
-               ) : (
-                 <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 rounded-xl bg-white text-black flex items-center justify-center">
-                            {fileType === 'srt' ? <FileText className="w-6 h-6" /> : <Clapperboard className="w-6 h-6" />}
-                          </div>
-                          <div>
-                            <h3 className="text-lg font-bold text-white">{file.name}</h3>
-                            <p className="text-neutral-500 text-sm">{subtitles.length > 0 ? `${subtitles.length} lines loaded` : 'Ready to configure'}</p>
-                          </div>
+                      <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
+                        <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Target Language</label>
+                        <div className="relative">
+                          <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={targetLang} onChange={(e) => setTargetLang(e.target.value)} disabled={status === TranslationStatus.TRANSLATING}>
+                             {LANGUAGES.map(l => <option key={`target-${l.code}`} value={l.name}>{l.name}</option>)}
+                          </select>
+                          <ArrowRight className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
                         </div>
-                        <Button variant="outline" onClick={resetState}>Change File</Button>
-                    </div>
-
-                    {subtitles.length > 0 && 
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
-                          <Info className="w-4 h-4 shrink-0" />
-                          <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
                       </div>
-                    }
-                 </div>
-               )}
-            </div>
+                   </div>
+                )}
 
-            {(subtitles.length > 0) && (
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
-                  <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
-                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Source Language</label>
-                    <div className="relative">
-                      <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} disabled={status === TranslationStatus.TRANSLATING}>
-                        <option value="auto">✨ Auto Detect</option>
-                        {LANGUAGES.map(l => <option key={`source-${l.code}`} value={l.name}>{l.name}</option>)}
-                      </select>
-                      <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-                    </div>
+                {(subtitles.length > 0) && (
+                  <div className="flex justify-end gap-4 animate-fade-in">
+                    {status === TranslationStatus.TRANSLATING ? (
+                      <div className="flex-1 p-4 rounded-xl border border-neutral-800 bg-neutral-900/50 flex items-center gap-4">
+                        <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                        <div className="flex-1">
+                           <div className="flex justify-between text-xs font-medium mb-1">
+                             <span>Translating with {activeModelData.name}...</span>
+                             <span>{progress}%</span>
+                           </div>
+                           <div className="w-full h-1 bg-neutral-800 rounded-full overflow-hidden">
+                              <div className="h-full bg-white transition-all duration-300" style={{width: `${progress}%`}}></div>
+                           </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button onClick={handleTranslate} className="w-full md:w-auto text-lg" icon={<Zap className="w-5 h-5" />}>
+                        Start Translation
+                      </Button>
+                    )}
                   </div>
-                  <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
-                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Target Language</label>
-                    <div className="relative">
-                      <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={targetLang} onChange={(e) => setTargetLang(e.target.value)} disabled={status === TranslationStatus.TRANSLATING}>
-                         {LANGUAGES.map(l => <option key={`target-${l.code}`} value={l.name}>{l.name}</option>)}
-                      </select>
-                      <ArrowRight className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-                    </div>
+                )}
+                
+                {error && (
+                  <div className="p-4 rounded-xl bg-red-900/10 border border-red-900/40 text-red-200 text-sm flex items-center gap-3 animate-fade-in">
+                    <AlertCircle className="w-5 h-5 text-red-500" />
+                    <span>{error}</span>
                   </div>
-               </div>
-            )}
-
-            {(subtitles.length > 0) && (
-              <div className="flex justify-end gap-4 animate-fade-in">
-                {status === TranslationStatus.TRANSLATING ? (
-                  <div className="flex-1 p-4 rounded-xl border border-neutral-800 bg-neutral-900/50 flex items-center gap-4">
-                    <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-                    <div className="flex-1">
-                       <div className="flex justify-between text-xs font-medium mb-1">
-                         <span>Translating with {activeModelData.name}...</span>
-                         <span>{progress}%</span>
-                       </div>
-                       <div className="w-full h-1 bg-neutral-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-white transition-all duration-300" style={{width: `${progress}%`}}></div>
-                       </div>
-                    </div>
-                  </div>
-                ) : (
-                  <Button onClick={handleTranslate} className="w-full md:w-auto text-lg" icon={<Zap className="w-5 h-5" />}>
-                    Start Translation
-                  </Button>
                 )}
               </div>
-            )}
-            
-            {error && (
-              <div className="p-4 rounded-xl bg-red-900/10 border border-red-900/40 text-red-200 text-sm flex items-center gap-3 animate-fade-in">
-                <AlertCircle className="w-5 h-5 text-red-500" />
-                <span>{error}</span>
-              </div>
-            )}
-          </div>
+            </div>
         </div>
 
         {subtitles.length > 0 && (status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED) && (
@@ -773,6 +851,18 @@ const App = () => {
            </div>
 
            <div className="space-y-6">
+              
+              {/* YouTube Auth */}
+              <div className="space-y-2">
+                <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <Youtube className="w-4 h-4" /> YouTube Account
+                </label>
+                <YouTubeAuth onLoginSuccess={handleGoogleLoginSuccess} onLogout={handleGoogleLogout} userInfo={googleUser} />
+                <p className="text-xs text-neutral-500">
+                  Sign in to use your YouTube account for free, high-quality transcription.
+                </p>
+              </div>
+
               {/* Google API Key */}
               <div className="space-y-2">
                 <label className="block text-sm font-bold text-white mb-2 flex items-center gap-2">
@@ -898,4 +988,4 @@ const App = () => {
   );
 };
 
-export default App;
+export default AppWrapper;

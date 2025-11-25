@@ -27,10 +27,14 @@ export enum VideoProcessingStatus {
   EXTRACTING_AUDIO = 'EXTRACTING_AUDIO',
   TRANSCRIBING = 'TRANSCRIBING',
   EXTRACTING_SUBTITLES = 'EXTRACTING_SUBTITLES',
-  MUXING = 'MUXING', // Muxing is combining streams (video + new subtitles)
+  MUXING = 'MUXING',
   DONE = 'DONE',
   ERROR = 'ERROR',
+  // YouTube Specific Statuses
+  UPLOADING_TO_YOUTUBE = 'UPLOADING_TO_YOUTUBE',
+  AWAITING_YOUTUBE_CAPTIONS = 'AWAITING_YOUTUBE_CAPTIONS',
 }
+
 
 export interface LanguageOption {
   code: string;
