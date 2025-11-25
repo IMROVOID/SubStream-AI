@@ -1,12 +1,45 @@
 import { GoogleGenAI, GenerationConfig } from "@google/genai";
 import OpenAI from 'openai';
-import { SubtitleNode, AIModel, LANGUAGES } from "../types";
+import { SubtitleNode, AIModel, LANGUAGES, RPMLimit } from "../types";
 
 export const BATCH_SIZE = 10; 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
 
+// Rate Limiting State
+let currentRPM: RPMLimit = 15; // Default
+let requestTimestamps: number[] = [];
+
+// Helper function to set the RPM
+export const setGlobalRPM = (rpm: RPMLimit) => {
+    currentRPM = rpm;
+    requestTimestamps = []; // Reset history on change
+    console.log(`Global Rate Limit set to: ${rpm}`);
+};
+
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const enforceRateLimit = async () => {
+    if (currentRPM === 'unlimited') return;
+
+    const now = Date.now();
+    // Remove timestamps older than 1 minute
+    requestTimestamps = requestTimestamps.filter(t => now - t < 60000);
+
+    if (requestTimestamps.length >= currentRPM) {
+        // Find how long until the oldest request expires
+        const oldestRequest = requestTimestamps[0];
+        const timeToWait = 60000 - (now - oldestRequest) + 100; // +100ms buffer
+        
+        console.warn(`Rate limit (${currentRPM} RPM) hit. Waiting ${timeToWait}ms...`);
+        await delay(timeToWait);
+        // Recursively check again after waiting to ensure slot is clear
+        await enforceRateLimit();
+    } else {
+        requestTimestamps.push(Date.now());
+    }
+};
+
 
 // Helper function to convert ArrayBuffer to Base64 in a browser environment
 function arrayBufferToBase64(buffer: ArrayBuffer) {
@@ -30,28 +63,25 @@ export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => 
 
     for (const model of modelsToTry) {
         try {
+            await enforceRateLimit(); // Check limit before validation
             // Attempt a lightweight call to check for model accessibility.
             await ai.models.countTokens({ model, contents: [{ role: "user", parts: [{ text: "test" }] }] });
             // If the call succeeds, the key is valid.
             return true;
         } catch (error: any) {
             // Check if it's specifically a 'NOT_FOUND' error for the model.
-            // The error object from the SDK might not have a clean 'status' property, so we check the message too.
             const isNotFoundError = error?.status === 'NOT_FOUND' || (error?.message && error.message.includes('NOT_FOUND'));
             
             if (isNotFoundError) {
                 console.warn(`Validation with model "${model}" failed (Not Found). Trying next model...`);
-                // This error is expected if the model is unavailable; we continue to the next one.
             } else {
-                // If it's a different error (e.g., authentication, invalid format), the key is definitely invalid.
                 console.error("Google API Key validation failed with a critical error:", error);
                 return false;
             }
         }
     }
 
-    // If the loop completes without returning true, it means all fallback models failed.
-    console.error("All fallback models for Google API Key validation failed. The key is likely invalid or there's a network issue.");
+    console.error("All fallback models for Google API Key validation failed.");
     return false;
 };
 
@@ -59,6 +89,7 @@ export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => 
 export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => {
     if (!apiKey || !apiKey.startsWith('sk-')) return false;
     try {
+        await enforceRateLimit(); // Check limit before validation
         const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
         await openai.models.list(); // Simple API call to verify the key
         return true;
@@ -76,22 +107,42 @@ async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey:
     const base64Audio = arrayBufferToBase64(audioBuffer);
     const audioParts = [{ inlineData: { data: base64Audio, mimeType: audioBlob.type } }];
 
-    const prompt = `You are an expert audio transcription service. 
-    Transcribe the following audio which is in ${sourceLang === 'auto' ? 'the auto-detected language' : sourceLang}.
-    Your output MUST be ONLY in the SRT (SubRip) format. 
-    Do not include any other text, explanations, or markdown formatting.
+    // Improved Prompt for Strict SRT Formatting
+    const prompt = `You are a professional captioning AI.
+    TASK: Transcribe the audio perfectly into SRT (SubRip) subtitle format.
+    LANGUAGE: ${sourceLang === 'auto' ? 'Detect the spoken language automatically' : sourceLang}.
     
-    Example output format:
-    1
-    00:00:01,000 --> 00:00:04,500
-    This is the first line of dialogue.
-    
-    2
-    00:00:05,100 --> 00:00:08,000
-    And this is the second.`;
+    CRITICAL FORMATTING RULES:
+    1.  **Strict Segmentation**: You MUST split the audio into SHORT, distinct subtitle blocks.
+    2.  **Timing**: Each block must have exact timestamps corresponding to when those specific words are spoken.
+    3.  **Length Limit**: Max 42 characters per line. Max 2 lines per block.
+    4.  **Duration**: No single subtitle block should last longer than 5 seconds. Split long sentences into multiple blocks.
+    5.  **Output**: Return ONLY the SRT content. No markdown, no "Here is the SRT", no code blocks. Just the raw text.
 
-    const result = await ai.models.generateContent({ model: modelId, contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }] });
+    Bad Example (DO NOT DO THIS):
+    1
+    00:00:00,000 --> 00:00:30,000
+    [30 seconds of text crammed into one block...]
+
+    Good Example (DO THIS):
+    1
+    00:00:01,000 --> 00:00:03,500
+    Welcome back to the channel.
+
+    2
+    00:00:03,600 --> 00:00:06,000
+    Today we are discussing AI models.
+    `;
+
+    await enforceRateLimit(); // Check limit
+    const result = await ai.models.generateContent({ 
+        model: modelId, 
+        contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }] 
+    });
+    
     const text = result.text;
+    if (!text) throw new Error("No transcription generated.");
+    
     return text.replace(/```srt\n|```/g, '').trim();
 }
 
@@ -110,6 +161,7 @@ async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey:
         if (langData) options.language = langData.code;
     }
     
+    await enforceRateLimit(); // Check limit
     const transcription = await openai.audio.transcriptions.create(options) as any;
     if (typeof transcription !== 'string') throw new Error('OpenAI transcription returned an invalid result.');
     return transcription;
@@ -148,6 +200,7 @@ async function translateWithGoogle(subtitles: SubtitleNode[], sourceLang: string
     const systemInstruction = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
     const generationConfig: GenerationConfig = { responseMimeType: 'application/json' };
 
+    await enforceRateLimit(); // Check limit
     const result = await ai.models.generateContent({ model: modelId, contents: [{ role: "user", parts: [{ text: systemInstruction }] }], config: generationConfig });
     const responseText = result.text;
     if (!responseText) throw new Error("Received empty response from Google AI.");
@@ -161,6 +214,7 @@ async function translateWithOpenAI(subtitles: SubtitleNode[], sourceLang: string
     const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
     const systemPrompt = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
 
+    await enforceRateLimit(); // Check limit
     const response = await openai.chat.completions.create({
         model: modelId,
         messages: [{ role: 'system', content: systemPrompt }],
@@ -234,8 +288,6 @@ export const processFullSubtitleFile = async (
       processedCount += batch.length;
       onProgress(Math.min(processedCount, subtitles.length));
       onBatchComplete([...results]);
-      
-      await delay(1000);
       
     } catch (e) {
       console.error(`Batch starting at ${i} failed after retries`, e);

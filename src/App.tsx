@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown } from 'lucide-react';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus } from './types';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge } from 'lucide-react';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
-import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio } from './services/aiService';
+import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
@@ -55,6 +55,7 @@ const App = () => {
   const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[0].id);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
+  const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,6 +115,7 @@ const App = () => {
     const storedGoogleKey = localStorage.getItem('substream_google_api_key');
     const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
     const storedModel = localStorage.getItem('substream_model_id');
+    const storedRPM = localStorage.getItem('substream_rpm');
     const storedUsage = localStorage.getItem('substream_daily_usage');
     const lastUsageDate = localStorage.getItem('substream_usage_date');
     const today = new Date().toDateString();
@@ -131,6 +133,14 @@ const App = () => {
 
     if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
       setSelectedModelId(storedModel);
+    }
+    
+    if (storedRPM) {
+        const rpm = (storedRPM === 'unlimited' ? 'unlimited' : parseInt(storedRPM, 10)) as RPMLimit;
+        setSelectedRPM(rpm);
+        setGlobalRPM(rpm);
+    } else {
+        setGlobalRPM(15); // Default
     }
 
     if (lastUsageDate === today && storedUsage) {
@@ -171,6 +181,10 @@ const App = () => {
         setUserOpenAIApiKey(tempOpenAIApiKey);
     }
     localStorage.setItem('substream_model_id', selectedModelId);
+    
+    localStorage.setItem('substream_rpm', selectedRPM.toString());
+    setGlobalRPM(selectedRPM);
+    
     setActiveModal('NONE');
   };
 

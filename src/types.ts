@@ -145,3 +145,12 @@ export const SUPPORTED_VIDEO_FORMATS = [
   'video/webm',
   'video/x-msvideo', // AVI
 ];
+
+export type RPMLimit = 2 | 15 | 30 | 'unlimited';
+
+export const RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
+    { value: 2, label: 'Low (2 RPM)', description: 'Best for avoiding strict rate limits on free tiers.' },
+    { value: 15, label: 'Medium (15 RPM)', description: 'Recommended default. Good balance of speed and safety.' },
+    { value: 30, label: 'High (30 RPM)', description: 'Faster, but higher risk of rate limits.' },
+    { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. Only for high-tier paid keys.' },
+];
