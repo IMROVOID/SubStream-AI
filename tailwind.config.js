@@ -11,6 +11,9 @@ export default {
         sans: ['Inter', 'sans-serif'],
         display: ['Space Grotesk', 'sans-serif'],
       },
+      fontSize: {
+        '4xl': ['2.5rem', { lineHeight: '2.75rem' }],
+      },
       colors: {
         neutral: {
           950: '#0a0a0a',
