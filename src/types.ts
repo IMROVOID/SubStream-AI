@@ -47,6 +47,7 @@ export interface AIModel {
 }
 
 export const AVAILABLE_MODELS: AIModel[] = [
+  // Google Models
   {
     id: 'gemini-3-pro-preview',
     name: 'Gemini 3 Pro',
@@ -82,11 +83,75 @@ export const AVAILABLE_MODELS: AIModel[] = [
     tags: ['Fast', 'Efficient'],
     provider: 'google',
   },
-  // OpenAI Models
+  // OpenAI Models (Sorted from Newest/Most Advanced to Efficient)
+  {
+    id: 'gpt-5.1',
+    name: 'GPT-5.1',
+    description: 'The latest iteration, offering cutting-edge performance and multimodal capabilities.',
+    tags: ['Bleeding-Edge', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-5-pro',
+    name: 'GPT-5 Pro',
+    description: 'A professional-grade model from the GPT-5 series with top-tier reasoning.',
+    tags: ['Pro', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-5',
+    name: 'GPT-5',
+    description: 'The foundational next-gen model for advanced understanding and generation.',
+    tags: ['Next-Gen', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-5-mini',
+    name: 'GPT-5 Mini',
+    description: 'A balanced and efficient model from the GPT-5 series, ideal for speed.',
+    tags: ['Fast', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-5-nano',
+    name: 'GPT-5 Nano',
+    description: 'The most compact and fastest model in the GPT-5 family for lightweight tasks.',
+    tags: ['Ultra-Fast', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-4.1',
+    name: 'GPT-4.1',
+    description: 'An enhanced version of GPT-4 with improved speed and context handling.',
+    tags: ['Advanced', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-4.1-mini',
+    name: 'GPT-4.1 Mini',
+    description: 'A faster, more efficient variant of the GPT-4.1 architecture.',
+    tags: ['Efficient', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'gpt-4.1-nano',
+    name: 'GPT-4.1 Nano',
+    description: 'The smallest and quickest model from the GPT-4.1 series for rapid responses.',
+    tags: ['Fast', 'OpenAI'],
+    provider: 'openai',
+    transcriptionModel: 'whisper-1'
+  },
   {
     id: 'gpt-4o',
     name: 'GPT-4o',
-    description: "OpenAI's flagship, most intelligent model. Excellent for nuanced understanding and generation.",
+    description: "OpenAI's flagship Omni model. Excellent for nuanced understanding and generation.",
     tags: ['Flagship', 'OpenAI'],
     provider: 'openai',
     transcriptionModel: 'whisper-1'
@@ -96,22 +161,6 @@ export const AVAILABLE_MODELS: AIModel[] = [
     name: 'GPT-4o Mini',
     description: 'A smaller, faster, and more affordable version of GPT-4o with strong performance.',
     tags: ['Fast', 'OpenAI'],
-    provider: 'openai',
-    transcriptionModel: 'whisper-1'
-  },
-  {
-    id: 'gpt-4.1-turbo',
-    name: 'GPT-4.1 Turbo',
-    description: 'A hypothetical faster and more capable version of GPT-4. (Not yet released)',
-    tags: ['Hypothetical', 'OpenAI'],
-    provider: 'openai',
-    transcriptionModel: 'whisper-1'
-  },
-  {
-    id: 'gpt-5-pro',
-    name: 'GPT-5 Pro',
-    description: 'A hypothetical next-gen model for unparalleled performance. (Not yet released)',
-    tags: ['Experimental', 'OpenAI'],
     provider: 'openai',
     transcriptionModel: 'whisper-1'
   },
@@ -149,8 +198,8 @@ export const SUPPORTED_VIDEO_FORMATS = [
 export type RPMLimit = 2 | 15 | 30 | 'unlimited';
 
 export const RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
-    { value: 2, label: 'Low (2 RPM)', description: 'Best for avoiding strict rate limits on free tiers.' },
-    { value: 15, label: 'Medium (15 RPM)', description: 'Recommended default. Good balance of speed and safety.' },
-    { value: 30, label: 'High (30 RPM)', description: 'Faster, but higher risk of rate limits.' },
+    { value: 2, label: 'Low', description: 'Best for avoiding strict rate limits on free tiers (2 RPM).' },
+    { value: 15, label: 'Medium', description: 'Recommended default. Good balance of speed and safety (15 RPM).' },
+    { value: 30, label: 'High', description: 'Faster, but higher risk of rate limits (30 RPM).' },
     { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. Only for high-tier paid keys.' },
 ];
