@@ -229,20 +229,23 @@ app.get('/api/download-video', async (req, res) => {
     }
 
     const tempId = `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    // Output template with no extension, let yt-dlp decide
+    // We use a simple output template. yt-dlp will append extension.
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
     
     console.log(`Downloading video: ${url} [${lang}] ID: ${tempId}`);
 
     try {
-        // We use 'best' which usually gives a single file (mp4) to avoid heavy merging
-        // We removed '--merge-output-format' to avoid ffmpeg hard failures if it can't remux
+        // Use 'best' to minimize merging overhead, output MP4 for compatibility
+        // Embed thumbnails and subs. Convert subs to SRT first for cleanliness.
         let args = [
             url,
             '--format', 'best', 
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath,
             '--embed-subs',
+            '--embed-thumbnail',
+            '--convert-subs', 'srt',
+            '--merge-output-format', 'mp4',
             '--force-ipv4'
         ];
 
@@ -260,13 +263,11 @@ app.get('/api/download-video', async (req, res) => {
         // Check for finished video files
         let videoFile = files.find(f => 
             f.startsWith(tempId) && 
-            (f.endsWith('.mkv') || f.endsWith('.mp4') || f.endsWith('.webm')) &&
+            (f.endsWith('.mp4') || f.endsWith('.mkv')) &&
             !f.endsWith('.part')
         );
 
         // Fallback: Check for .part files. 
-        // Sometimes yt-dlp finishes writing but the OS hasn't released the lock to rename, 
-        // or a minor non-fatal error prevented renaming. We assume it's valid if execPromise finished.
         if (!videoFile) {
             const partFile = files.find(f => f.startsWith(tempId) && f.endsWith('.part'));
             if (partFile) {
@@ -287,9 +288,8 @@ app.get('/api/download-video', async (req, res) => {
         
         console.log(`Sending file: ${filePath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
 
-        // Send file with correct extension
-        const ext = path.extname(videoFile);
-        res.download(filePath, `video_substream${ext}`, (err) => {
+        // Send file
+        res.download(filePath, (err) => {
             if (err) console.error("Send error:", err);
             // Cleanup after sending
             setTimeout(() => {

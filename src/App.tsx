@@ -507,6 +507,12 @@ const App = () => {
     if (fileType === 'youtube') {
         if (!selectedCaptionId || !youtubeMeta?.videoUrl) return;
         
+        // Determine Filename
+        const selectedTrack = youtubeMeta.availableCaptions?.find(c => c.id === selectedCaptionId);
+        const langSuffix = selectedTrack ? ` - ${selectedTrack.name}` : '';
+        const cleanTitle = youtubeMeta.title.replace(/[^a-z0-9 ]/gi, '').trim(); // Simple cleanup
+        const fileName = `${cleanTitle}${langSuffix}.mp4`;
+
         setError(null);
         setDownloadProgress(0); 
         setDownloadStatusText('Initializing...');
@@ -528,7 +534,7 @@ const App = () => {
         }, 600);
 
         try {
-             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId);
+             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId, fileName);
              
              // On Success
              if (progressInterval.current) clearInterval(progressInterval.current);

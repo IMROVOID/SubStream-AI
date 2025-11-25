@@ -66,10 +66,11 @@ export async function downloadCaptionTrack(videoUrl: string, trackToken: string)
     }
 }
 
-export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken: string): Promise<void> {
+export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken: string, fileName: string): Promise<void> {
     const query = new URLSearchParams({
         url: videoUrl,
-        token: trackToken
+        token: trackToken,
+        name: fileName
     });
     
     try {
@@ -77,16 +78,21 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
         const response = await fetch(`${BACKEND_URL}/download-video?${query.toString()}`);
         
         if (!response.ok) {
-             throw new Error("Download failed on server.");
+             const errorText = await response.text().catch(() => "Unknown Server Error");
+             throw new Error(errorText || "Download failed on server.");
         }
 
         // Convert to blob and trigger download
         const blob = await response.blob();
-        downloadFile(`video_substream_${Date.now()}.mkv`, blob);
+        
+        // Ensure the downloaded file has the correct extension
+        // The server tries to send it with the correct name, but blob download needs a hint
+        const downloadName = fileName.endsWith('.mp4') ? fileName : `${fileName}.mp4`;
+        downloadFile(downloadName, blob);
 
     } catch (e: any) {
         console.error("Video download failed:", e);
-        throw new Error("Failed to download video from server.");
+        throw new Error(e.message || "Failed to download video from server.");
     }
 }
 
