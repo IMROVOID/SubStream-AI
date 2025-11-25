@@ -92,12 +92,24 @@ const App = () => {
   
   const handleGoogleLoginSuccess = (tokenResponse: TokenResponse) => {
     setGoogleAccessToken(tokenResponse.access_token);
-    // Fetch user info
     fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
     })
-    .then(res => res.json())
-    .then(data => setGoogleUser(data));
+    .then(res => {
+        if (!res.ok) {
+            throw new Error(`Failed to fetch user info: ${res.statusText}`);
+        }
+        return res.json();
+    })
+    .then(data => {
+        setGoogleUser(data);
+    })
+    .catch(error => {
+        console.error("Error fetching Google user info:", error);
+        setError("Could not verify your Google account after sign-in. Please try again.");
+        setGoogleAccessToken(null);
+        setGoogleUser(null);
+    });
   };
 
   const handleGoogleLogout = () => {
@@ -573,8 +585,8 @@ const App = () => {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-5xl mx-auto px-6 w-full flex-1 flex flex-col">
-        <div className="flex-grow flex flex-col justify-start h-[91vh] pt-8 md:pt-20">
+      <main className="relative z-10 max-w-5xl mx-auto px-6 w-full flex-grow flex flex-col">
+        <div className="flex-grow flex flex-col justify-start pt-16 md:pt-30">
             <section className="mb-14 text-center">
                 <h1 className="text-4xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
                     Bridge the Language<br/>
