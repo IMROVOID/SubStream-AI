@@ -95,6 +95,7 @@ const App = () => {
   // YouTube Auth State
   const [googleUser, setGoogleUser] = useState<GoogleUser | null>(null);
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [isAuthLoaded, setIsAuthLoaded] = useState(false);
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -164,10 +165,6 @@ const App = () => {
       setOpenAIApiKeyStatus('valid');
     }
 
-    if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
-      setSelectedModelId(storedModel);
-    }
-    
     if (storedRPM) {
         const rpm = (storedRPM === 'unlimited' ? 'unlimited' : parseInt(storedRPM, 10)) as RPMLimit;
         setSelectedRPM(rpm);
@@ -184,14 +181,45 @@ const App = () => {
       localStorage.setItem('substream_daily_usage', '0');
     }
 
+    // --- TOKEN EXPIRY CHECK & AUTH RESTORATION ---
     const savedUser = localStorage.getItem('substream_google_user');
     const savedToken = localStorage.getItem('substream_google_token');
-    if (savedUser && savedToken) {
-        setGoogleUser(JSON.parse(savedUser));
-        setGoogleAccessToken(savedToken);
+    const savedTimestamp = localStorage.getItem('substream_google_token_timestamp');
+    
+    let isValidAuth = false;
+
+    if (savedUser && savedToken && savedTimestamp) {
+        const tokenAge = Date.now() - parseInt(savedTimestamp, 10);
+        if (tokenAge < 3000000) {
+            setGoogleUser(JSON.parse(savedUser));
+            setGoogleAccessToken(savedToken);
+            isValidAuth = true;
+        } else {
+            console.warn("Google Token Expired. Clearing session.");
+            handleGoogleLogout(); 
+        }
     }
 
+    // --- MODEL RESTORATION WITH FALLBACK LOGIC ---
+    if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
+        // If user wants YouTube model but isn't authenticated, fallback to Gemini
+        if (storedModel === 'youtube-auto' && !isValidAuth) {
+            setSelectedModelId(AVAILABLE_MODELS[1].id); // Gemini 3 Pro
+        } else {
+            setSelectedModelId(storedModel);
+        }
+    }
+    
+    setIsAuthLoaded(true);
+
   }, []);
+
+  // --- REACTIVE AUTH CHECK ---
+  useEffect(() => {
+      if (isAuthLoaded && selectedModelId === 'youtube-auto' && !googleUser) {
+          setSelectedModelId(AVAILABLE_MODELS[1].id); 
+      }
+  }, [googleUser, selectedModelId, isAuthLoaded]);
 
   useEffect(() => {
     if (tempGoogleApiKey === '') {
@@ -247,7 +275,7 @@ const App = () => {
 
     toastTimeoutRef.current = setTimeout(() => {
         setToast(prev => prev ? { ...prev, isVisible: false } : null);
-        setTimeout(() => setToast(null), 500); // Wait for animation to finish
+        setTimeout(() => setToast(null), 500); 
     }, 3000);
   };
 
@@ -306,6 +334,7 @@ const App = () => {
     const accessToken = tokenResponse.access_token;
     setGoogleAccessToken(accessToken);
     localStorage.setItem('substream_google_token', accessToken);
+    localStorage.setItem('substream_google_token_timestamp', Date.now().toString());
     
     fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -314,14 +343,11 @@ const App = () => {
     .then(data => {
         setGoogleUser(data);
         localStorage.setItem('substream_google_user', JSON.stringify(data));
-        showToast(`Welcome, ${data.name}!`); // Notify user
+        showToast(`Welcome, ${data.name}!`); 
     })
     .catch(error => {
         console.error("Failed to fetch user info", error);
-        setGoogleAccessToken(null);
-        setGoogleUser(null);
-        localStorage.removeItem('substream_google_token');
-        localStorage.removeItem('substream_google_user');
+        handleGoogleLogout();
     });
   };
 
@@ -335,6 +361,7 @@ const App = () => {
     setGoogleAccessToken(null);
     localStorage.removeItem('substream_google_token');
     localStorage.removeItem('substream_google_user');
+    localStorage.removeItem('substream_google_token_timestamp');
     showToast("Disconnected from YouTube.");
   };
 
@@ -526,20 +553,31 @@ const App = () => {
         try {
             setError(null);
             
+            // 1. Upload (with progress)
             setVideoProcessingStatus(VideoProcessingStatus.UPLOADING_TO_YOUTUBE);
             setVideoProcessingMessage('Uploading video to YouTube (Unlisted)...');
-            setFfmpegProgress(0); 
+            setFfmpegProgress(0);
             
             const uploadTitle = getOutputFilename('').replace('SubStream_', '').replace(/\.$/, '').replace(/_/g, ' ');
-            const videoId = await uploadVideoToYouTube(googleAccessToken, file, uploadTitle);
+            const videoId = await uploadVideoToYouTube(
+                googleAccessToken, 
+                file, 
+                uploadTitle,
+                (percent) => setFfmpegProgress(percent)
+            );
             
+            // 2. Poll for Captions (with progress)
             setVideoProcessingStatus(VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS);
             const captionId = await checkYouTubeCaptionStatus(
                 googleAccessToken, 
                 videoId, 
-                (msg) => setVideoProcessingMessage(msg)
+                (msg, percent) => {
+                    setVideoProcessingMessage(msg);
+                    setFfmpegProgress(percent);
+                }
             );
             
+            // 3. Download Caption
             setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
             setVideoProcessingMessage('Downloading generated captions...');
             const captionText = await downloadYouTubeCaptionTrackOAuth(googleAccessToken, captionId);
@@ -552,7 +590,19 @@ const App = () => {
 
         } catch (e: any) {
             console.error("YouTube Auto-Caption Error:", e);
-            setError(`YouTube Auto-Caption failed: ${e.message}`);
+            
+            const msg = e.message || "";
+            const lowerMsg = msg.toLowerCase();
+
+            // FIXED ERROR HANDLING
+            if (lowerMsg.includes("quota")) {
+                 setError("Daily YouTube Upload Quota Exceeded. Please try again tomorrow or use a Gemini/OpenAI model.");
+            } else if (lowerMsg.includes("401") || lowerMsg.includes("invalid authentication") || lowerMsg.includes("session expired")) {
+                setError(`Session expired. Please click "Authenticate YouTube" again.`);
+                handleGoogleLogout(); 
+            } else {
+                setError(`YouTube Auto-Caption failed: ${msg}`);
+            }
             setVideoProcessingStatus(VideoProcessingStatus.ERROR);
         }
         return;
@@ -723,8 +773,8 @@ const App = () => {
   }, [modelSearchQuery]);
   
   const youtubeModel = useMemo(() => {
-      return AVAILABLE_MODELS.filter(model => model.provider === 'youtube');
-  }, []);
+      return AVAILABLE_MODELS.filter(model => model.provider === 'youtube' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
+  }, [modelSearchQuery]);
 
   const showProgressBar = [
     VideoProcessingStatus.EXTRACTING_AUDIO, 
@@ -1101,6 +1151,46 @@ const App = () => {
                 <input type="text" placeholder="Search models..." value={modelSearchQuery} onChange={(e) => setModelSearchQuery(e.target.value)} className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors" />
               </div>
               <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[450px] custom-scrollbar">
+                
+                {/* YOUTUBE MODELS (NEW) */}
+                {youtubeModel.length > 0 && (
+                  <details open className="group/youtube">
+                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
+                      <span className="font-bold text-neutral-300">YouTube Services</span>
+                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/youtube:rotate-180" />
+                    </summary>
+                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
+                      {youtubeModel.map((model) => {
+                        const isDisabled = !googleUser;
+                        return (
+                            <div 
+                                key={model.id} 
+                                onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                                className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 
+                                    ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                                      selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}
+                                `}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                      {model.name}
+                                      {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
+                                  </h4>
+                                  <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                                </div>
+                                {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              </div>
+                            </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
+
                 {filteredGoogleModels.length > 0 && (
                   <details open className="group/google">
                     <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">

@@ -1,7 +1,7 @@
 import { YouTubeVideoMetadata, YouTubeCaptionTrack, YouTubeUserVideo } from "../types";
 import { downloadFile } from "../utils/srtUtils";
 
-// Backend URL (Local Node Server) - Used for external video info fetching
+// Backend URL (Local Node Server)
 const BACKEND_URL = "http://localhost:4000/api";
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -85,12 +85,8 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
 }
 
 
-// --- GOOGLE OAUTH DIRECT API (No GAPI) ---
+// --- GOOGLE OAUTH PROXY METHODS (Resolves COEP/CORS Issues) ---
 
-/**
- * Fetches the user's uploaded videos.
- * Optimized to use 'channels -> playlistItems' flow to save quota (2 units) vs 'search' (100 units).
- */
 export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserVideo[]> {
     // 1. Get Uploads Playlist ID
     const channelResp = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', {
@@ -122,7 +118,7 @@ export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserV
     const videoIds = playlistData.items.map((item: any) => item.contentDetails.videoId).join(',');
     if (!videoIds) return [];
 
-    // 3. Get Video Details (to get Privacy Status & Metadata)
+    // 3. Get Video Details
     const videosResp = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status,contentDetails&id=${videoIds}`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -141,7 +137,6 @@ export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserV
     }));
 }
 
-// Helper to format ISO 8601 duration (PT1M33S) to readable string (01:33)
 function formatDuration(isoDuration: string): string {
     const match = isoDuration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
     if (!match) return "00:00";
@@ -154,122 +149,153 @@ function formatDuration(isoDuration: string): string {
     const m = minutes ? `${minutes.padStart(2, '0')}:` : '00:';
     const s = seconds ? seconds.padStart(2, '0') : '00';
 
-    return `${h}${m}${s}`.replace(/^00:/, ''); // cleanup leading 00: if no hours
+    return `${h}${m}${s}`.replace(/^00:/, ''); 
 }
 
 /**
- * Uploads a video to YouTube using the Resumable Upload Protocol.
- * This handles large files better than a simple POST.
+ * Uploads a video to YouTube using the Local Proxy for Init.
+ * This completely bypasses the browser COEP/CORS restrictions for the initial request.
  */
-export async function uploadVideoToYouTube(accessToken: string, videoFile: File, title: string): Promise<string> {
-    // 1. Initiate the Resumable Upload Session
+export async function uploadVideoToYouTube(accessToken: string, videoFile: File, title: string, onProgress?: (percent: number) => void): Promise<string> {
+    
+    // 1. Initiate Session via Local Proxy
     const metadata = {
         snippet: {
             title: title,
             description: 'Uploaded automatically by SubStream AI for transcription.',
         },
         status: {
-            privacyStatus: 'unlisted', // Unlisted is best for privacy while allowing tool access
+            privacyStatus: 'unlisted', 
         },
     };
 
-    const initResponse = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+    const initResp = await fetch(`${BACKEND_URL}/proxy/upload-init`, {
         method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-            'X-Upload-Content-Length': videoFile.size.toString(),
-            'X-Upload-Content-Type': videoFile.type || 'video/mp4'
-        },
-        body: JSON.stringify(metadata)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            token: accessToken,
+            metadata: metadata,
+            fileSize: videoFile.size.toString(),
+            fileType: videoFile.type || 'video/mp4'
+        })
     });
 
-    if (!initResponse.ok) {
-        const err = await initResponse.json().catch(() => ({}));
-        console.error("Upload Init Error:", err);
-        throw new Error(`YouTube Upload Init Failed: ${err.error?.message || initResponse.statusText}`);
+    if (!initResp.ok) {
+        const err = await initResp.json().catch(() => ({}));
+        
+        // --- IMPROVED ERROR PARSING ---
+        // Google errors come as { error: { code: 403, message: "..." } }
+        let errorMessage = "Unknown Error";
+        if (err.error && typeof err.error === 'object' && err.error.message) {
+             errorMessage = err.error.message;
+        } else if (err.error) {
+             errorMessage = JSON.stringify(err.error);
+        } else if (err.message) {
+             errorMessage = err.message;
+        }
+
+        // Clean up HTML tags if present (Google sometimes sends links in errors)
+        errorMessage = errorMessage.replace(/<[^>]*>?/gm, '');
+
+        console.error("YouTube Upload Init Failed Response:", err);
+
+        if (initResp.status === 403) {
+             throw new Error(`YouTube Permission Denied (403): ${errorMessage}. Ensure 'YouTube Data API v3' is ENABLED in Google Cloud Console and Quota is not exceeded.`);
+        }
+        if (initResp.status === 401) {
+            throw new Error("Session Expired (401). Please re-authenticate YouTube.");
+        }
+        
+        throw new Error(`Upload Init Failed (${initResp.status}): ${errorMessage}`);
     }
 
-    const uploadUrl = initResponse.headers.get('location');
-    if (!uploadUrl) throw new Error("YouTube did not provide an upload location.");
+    const { location: uploadUrl } = await initResp.json();
+    if (!uploadUrl) throw new Error("Backend did not return an upload location.");
 
-    // 2. Upload the actual binary content
-    const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': videoFile.type || 'video/mp4'
-        },
-        body: videoFile
+    // 2. Upload binary to the Google URL provided by the proxy
+    // We use XMLHttpRequest here to allow progress tracking and better error handling.
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        xhr.setRequestHeader('Content-Type', videoFile.type || 'video/mp4');
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && onProgress) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                onProgress(percentComplete);
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const uploadData = JSON.parse(xhr.responseText);
+                    resolve(uploadData.id);
+                } catch (e) {
+                    reject(new Error("Failed to parse YouTube response after upload."));
+                }
+            } else {
+                reject(new Error(`Binary Upload Failed (${xhr.status}): ${xhr.statusText}`));
+            }
+        };
+
+        xhr.onerror = () => reject(new Error("Network Error during Binary Upload (Check AdBlocker/Firewall)."));
+        
+        xhr.send(videoFile);
     });
-
-    if (!uploadResponse.ok) {
-        const err = await uploadResponse.json().catch(() => ({}));
-        console.error("Upload Binary Error:", err);
-        throw new Error(`YouTube Upload Failed: ${err.error?.message || uploadResponse.statusText}`);
-    }
-
-    const uploadData = await uploadResponse.json();
-    return uploadData.id;
 }
 
 /**
- * Polls the YouTube API to check if the Automatic Speech Recognition (ASR) track is ready.
- * This can take several minutes.
+ * Polls the YouTube API via Local Proxy to check if the ASR track is ready.
  */
-export async function checkYouTubeCaptionStatus(accessToken: string, videoId: string, onProgress?: (msg: string) => void): Promise<string> {
-    const MAX_ATTEMPTS = 60; // 10 minutes if checking every 10s
-    const INTERVAL_MS = 10000;
+export async function checkYouTubeCaptionStatus(accessToken: string, videoId: string, onProgress?: (msg: string, percent: number) => void): Promise<string> {
+    const MAX_ATTEMPTS = 120; // 20 minutes
+    const INTERVAL_MS = 10000; // 10 seconds
 
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        const percent = Math.round((i / MAX_ATTEMPTS) * 100);
+        
         try {
-            if (onProgress) onProgress(`Waiting for YouTube to generate captions... (${i + 1}/${MAX_ATTEMPTS})`);
+            if (onProgress) onProgress(`Waiting for YouTube to generate captions... (${i + 1}/${MAX_ATTEMPTS})`, percent);
             
-            const response = await fetch(`https://www.googleapis.com/youtube/v3/captions?part=snippet&videoId=${videoId}`, {
-                headers: { 'Authorization': `Bearer ${accessToken}` }
-            });
+            // Proxy this call to avoid CORS/COEP
+            const response = await fetch(`${BACKEND_URL}/proxy/captions?token=${encodeURIComponent(accessToken)}&videoId=${videoId}`);
 
             if (!response.ok) {
-                // Detailed Error Logging
-                const errorBody = await response.json().catch(() => ({}));
-                console.warn(`Caption Check Attempt ${i+1} Failed:`, errorBody);
-
-                const errorMessage = errorBody.error?.message || response.statusText;
-
-                // If 403 or 401, we want to know WHY
-                if (response.status === 401 || response.status === 403) {
-                    throw new Error(`YouTube API Permission Denied: ${errorMessage}. (Please ensure "YouTube Data API v3" is enabled in Cloud Console and you re-authenticated).`);
-                }
+                // If 404/403/500 comes from proxy
+                console.warn(`Caption check failed (${response.status})`);
             } else {
                 const data = await response.json();
                 
-                // Look for the automatic track
-                // trackKind='ASR' means Automatic Speech Recognition
-                const asrTrack = data.items?.find((item: any) => item.snippet.trackKind === 'ASR');
+                if (data.items && data.items.length > 0) {
+                    const asrTrack = data.items.find((item: any) => item.snippet.trackKind === 'ASR');
+                    const trackToUse = asrTrack || data.items[0];
 
-                if (asrTrack && asrTrack.id) {
-                    return asrTrack.id;
+                    if (trackToUse && trackToUse.id) {
+                        if (onProgress) onProgress("Captions generated successfully!", 100);
+                        return trackToUse.id;
+                    }
                 }
             }
         } catch (e: any) {
-            console.warn("Polling error catch:", e);
-            // Stop polling if it's a hard permission error
-            if (e.message.includes("Permission Denied")) throw e;
+            console.warn("Polling error:", e);
         }
 
         await delay(INTERVAL_MS);
     }
 
-    throw new Error('Timed out waiting for YouTube captions. The video might be too long or audio too unclear.');
+    throw new Error('Timed out waiting for YouTube captions.');
 }
 
+/**
+ * Downloads the caption via Proxy
+ */
 export async function downloadYouTubeCaptionTrackOAuth(accessToken: string, captionId: string): Promise<string> {
-    const response = await fetch(`https://www.googleapis.com/youtube/v3/captions/${captionId}?tfmt=srt`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
+    const response = await fetch(`${BACKEND_URL}/proxy/download-caption?token=${encodeURIComponent(accessToken)}&captionId=${captionId}`);
 
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(`Failed to download caption: ${err.error?.message || response.statusText}`);
+        throw new Error(`Failed to download caption: ${err.error || response.statusText}`);
     }
 
     return await response.text();

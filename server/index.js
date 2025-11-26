@@ -10,7 +10,8 @@ const app = express();
 const PORT = 4000;
 
 app.use(cors());
-app.use(express.json());
+// Increase payload limit for metadata json
+app.use(express.json({ limit: '50mb' }));
 
 // --- CONFIGURATION ---
 const TEMP_DIR = path.join(__dirname, 'temp');
@@ -42,7 +43,81 @@ const ensureBinary = async () => {
 
 ensureBinary();
 
-// --- ENDPOINTS ---
+// --- PROXY ENDPOINTS FOR YOUTUBE UPLOAD (Bypasses COOP/COEP) ---
+
+// 1. Proxy for Upload Initialization
+app.post('/api/proxy/upload-init', async (req, res) => {
+    const { token, metadata, fileType, fileSize } = req.body;
+
+    if (!token) return res.status(401).json({ error: "No token provided" });
+
+    try {
+        console.log("Proxy: Initiating Upload...");
+        // We call Google API from Node, bypassing browser CORS/COEP checks
+        const response = await axios.post(
+            'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+            metadata,
+            {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'X-Upload-Content-Length': fileSize,
+                    'X-Upload-Content-Type': fileType
+                }
+            }
+        );
+
+        // Return the 'location' header which is the actual upload URL
+        console.log("Proxy: Upload URL received.");
+        res.json({ location: response.headers.location });
+    } catch (e) {
+        const status = e.response?.status || 500;
+        const data = e.response?.data || { error: e.message };
+        
+        console.error(`Proxy Upload Init Error (${status}):`, JSON.stringify(data, null, 2));
+        
+        // Pass the exact Google error back to frontend
+        res.status(status).json(data);
+    }
+});
+
+// 2. Proxy for Checking Captions Status
+app.get('/api/proxy/captions', async (req, res) => {
+    const { token, videoId } = req.query;
+
+    if (!token || !videoId) return res.status(400).json({ error: "Missing params" });
+
+    try {
+        const response = await axios.get(`https://www.googleapis.com/youtube/v3/captions?part=snippet&videoId=${videoId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        res.json(response.data);
+    } catch (e) {
+        console.error("Proxy Check Captions Error:", e.response?.data || e.message);
+        res.status(e.response?.status || 500).json(e.response?.data || { error: e.message });
+    }
+});
+
+// 3. Proxy for Downloading Auth Captions
+app.get('/api/proxy/download-caption', async (req, res) => {
+    const { token, captionId } = req.query;
+
+    if (!token || !captionId) return res.status(400).json({ error: "Missing params" });
+
+    try {
+        const response = await axios.get(`https://www.googleapis.com/youtube/v3/captions/${captionId}?tfmt=srt`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+            responseType: 'text' // Important: we want the SRT text
+        });
+        res.send(response.data);
+    } catch (e) {
+        console.error("Proxy Download Caption Error:", e.response?.data || e.message);
+        res.status(e.response?.status || 500).json(e.response?.data || { error: e.message });
+    }
+});
+
+
+// --- EXISTING YT-DLP ENDPOINTS ---
 
 app.get('/api/info', async (req, res) => {
     const url = req.query.url;
