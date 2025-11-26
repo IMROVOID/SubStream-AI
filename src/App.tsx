@@ -241,6 +241,33 @@ const App = () => {
     localStorage.setItem('substream_usage_date', new Date().toDateString());
   };
 
+  // Standardized Filename Generator
+  const getOutputFilename = (extension: string) => {
+    let baseName = 'video';
+    
+    if (file) {
+        baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+    } else if (youtubeMeta?.title) {
+        baseName = youtubeMeta.title;
+    }
+
+    // Sanitize
+    const cleanBase = baseName.replace(/[^a-zA-Z0-9 \-_]/g, '').trim();
+    
+    // Determine Action
+    // If using YouTube Auto model (uploading), we are "transcribing"
+    // If using AI model and source==auto or source==target, we are "transcribing"
+    // Otherwise "translating"
+    const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId);
+    const isTranscribing = activeModel?.provider === 'youtube' || sourceLang === 'auto' || sourceLang === targetLang;
+    const action = isTranscribing ? 'Transcribed' : 'Translated';
+    
+    // Language Suffix
+    const langName = isTranscribing ? 'Auto' : (LANGUAGES.find(l => l.name === targetLang)?.name || 'English');
+    
+    return `SubStream_${cleanBase}_${action}_${langName}.${extension}`;
+  };
+
   const resetState = () => {
     setFile(null);
     setFileType(null);
@@ -476,15 +503,58 @@ const App = () => {
 
     // --- YOUTUBE TRANSCRIPTION LOGIC ---
     if (activeModel.provider === 'youtube') {
-        if (!googleAccessToken || !googleUser) {
-            setActiveModal('CONFIG');
-            setError("Please authenticate with YouTube to use Auto-Caption.");
+        if (!googleAccessToken || !googleUser || !file) {
+            if (!file) {
+                setError("No file loaded to upload.");
+            } else {
+                setActiveModal('CONFIG');
+                setError("Please authenticate with YouTube to use Auto-Caption.");
+            }
             return;
         }
-        setError("YouTube Auto-Transcription logic is being updated to the new Auth flow. Please stick to Gemini models for now.");
+
+        try {
+            setError(null);
+            
+            // 1. Upload
+            setVideoProcessingStatus(VideoProcessingStatus.UPLOADING_TO_YOUTUBE);
+            setVideoProcessingMessage('Uploading video to YouTube (Unlisted)...');
+            setFfmpegProgress(0); 
+            
+            // Use standardized title for upload
+            const uploadTitle = getOutputFilename('').replace('SubStream_', '').replace(/\.$/, '').replace(/_/g, ' '); // "MyMovie Transcribed Auto"
+            
+            const videoId = await uploadVideoToYouTube(googleAccessToken, file, uploadTitle);
+            
+            // 2. Poll for Captions
+            setVideoProcessingStatus(VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS);
+            const captionId = await checkYouTubeCaptionStatus(
+                googleAccessToken, 
+                videoId, 
+                (msg) => setVideoProcessingMessage(msg)
+            );
+            
+            // 3. Download Caption
+            setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
+            setVideoProcessingMessage('Downloading generated captions...');
+            const captionText = await downloadYouTubeCaptionTrackOAuth(googleAccessToken, captionId);
+            
+            // 4. Parse
+            const parsed = parseSRT(captionText);
+            if (parsed.length === 0) throw new Error("Downloaded caption file is empty.");
+            
+            setSubtitles(parsed);
+            setVideoProcessingStatus(VideoProcessingStatus.DONE);
+
+        } catch (e: any) {
+            console.error("YouTube Auto-Caption Error:", e);
+            setError(`YouTube Auto-Caption failed: ${e.message}`);
+            setVideoProcessingStatus(VideoProcessingStatus.ERROR);
+        }
         return;
     }
 
+    // --- AI MODEL TRANSCRIPTION LOGIC ---
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
 
@@ -568,20 +638,18 @@ const App = () => {
   const handleDownloadSrt = () => {
     if (subtitles.length === 0) return;
     const content = stringifySRT(subtitles);
-    const filename = file ? `translated_${file.name.split('.')[0]}.srt` : 'translated_subtitles.srt';
+    // Use new filename generator
+    const filename = getOutputFilename('srt');
     downloadFile(filename, content);
   };
 
   const handleDownloadVideo = async () => {
+    // Calculate filename once
+    const fileName = getOutputFilename('mp4');
+
     if (fileType === 'youtube') {
         if (!selectedCaptionId || !youtubeMeta?.videoUrl) return;
         
-        // Determine Filename
-        const selectedTrack = youtubeMeta.availableCaptions?.find(c => c.id === selectedCaptionId);
-        const langSuffix = selectedTrack ? ` - ${selectedTrack.name}` : '';
-        const cleanTitle = youtubeMeta.title.replace(/[^a-z0-9 ]/gi, '').trim(); // Simple cleanup
-        const fileName = `${cleanTitle}${langSuffix}.mp4`;
-
         setError(null);
         setDownloadProgress(0); 
         setDownloadStatusText('Initializing...');
@@ -591,27 +659,22 @@ const App = () => {
         progressInterval.current = setInterval(() => {
             setDownloadProgress(prev => {
                 if (prev === undefined) return 0;
-                
-                // Stages logic for UI feedback
                 if (prev < 30) setDownloadStatusText('Fetching stream...');
                 else if (prev < 60) setDownloadStatusText('Embedding subs...');
                 else if (prev < 90) setDownloadStatusText('Finalizing...');
-                
-                if (prev >= 90) return 90; // Hold at 90
-                return prev + Math.random() * 4; // Increment
+                if (prev >= 90) return 90;
+                return prev + Math.random() * 4;
             });
         }, 600);
 
         try {
              await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId, fileName);
              
-             // On Success
              if (progressInterval.current) clearInterval(progressInterval.current);
              setDownloadProgress(100);
              setDownloadStatusText('Done');
              setIsDownloadComplete(true);
              
-             // Reset after delay
              setTimeout(() => {
                  setDownloadProgress(undefined);
                  setDownloadStatusText('');
@@ -634,9 +697,12 @@ const App = () => {
         setVideoProcessingMessage('Packaging your new video file... This will not re-encode the video.');
         const finalSrt = stringifySRT(subtitles);
         const targetLangData = LANGUAGES.find(l => l.name === targetLang);
+        
+        // Ensure mkv extension for ffmpeg output
+        const mkvFileName = fileName.replace('.mp4', '.mkv');
         const newVideoBlob = await addSrtToVideo(ffmpegRef.current, file, finalSrt, targetLangData?.code || 'eng');
         
-        downloadFile(`translated_${file.name.split('.')[0]}.mkv`, newVideoBlob);
+        downloadFile(mkvFileName, newVideoBlob);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
     } catch(e: any) {
         setError(`Failed to package video file: ${e.message}`);
@@ -672,7 +738,6 @@ const App = () => {
   
   const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
 
-  // --- IF THIS IS THE POPUP, RENDER NOTHING ---
   if (isAuthCallback) {
       return null; 
   }

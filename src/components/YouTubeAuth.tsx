@@ -21,6 +21,7 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
     
     const scope = [
       'https://www.googleapis.com/auth/youtube.upload',
+      'https://www.googleapis.com/auth/youtube.force-ssl', // Required for downloading captions
       'profile',
       'email'
     ].join(' ');
@@ -31,7 +32,8 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
       response_type: 'token',
       scope: scope,
       include_granted_scopes: 'true',
-      state: state
+      state: state,
+      prompt: 'consent' // <--- CRITICAL: Forces the user to re-accept scopes, ensuring force-ssl is granted
     });
 
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;

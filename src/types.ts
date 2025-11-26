@@ -35,7 +35,7 @@ export enum VideoProcessingStatus {
   AWAITING_YOUTUBE_CAPTIONS = 'AWAITING_YOUTUBE_CAPTIONS',
   DOWNLOADING_FROM_URL = 'DOWNLOADING_FROM_URL',
   FETCHING_YOUTUBE_INFO = 'FETCHING_YOUTUBE_INFO',
-  DOWNLOADING_VIDEO = 'DOWNLOADING_VIDEO', // New Status
+  DOWNLOADING_VIDEO = 'DOWNLOADING_VIDEO',
 }
 
 
@@ -69,6 +69,16 @@ export interface YouTubeCaptionTrack {
   language: string;
   name: string;
   isAutoSynced: boolean;
+}
+
+export interface YouTubeUserVideo {
+    id: string;
+    title: string;
+    description: string;
+    thumbnail: string;
+    publishedAt: string;
+    privacyStatus: 'public' | 'unlisted' | 'private';
+    duration: string;
 }
 
 export const AVAILABLE_MODELS: AIModel[] = [
