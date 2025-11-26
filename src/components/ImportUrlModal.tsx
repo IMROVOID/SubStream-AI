@@ -30,6 +30,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
   // URL Specific State
   const [detectedType, setDetectedType] = useState<'VIDEO' | 'SRT' | null>(null);
   const [fileMeta, setFileMeta] = useState<{name: string, size?: string, type: string} | null>(null);
+  const [useProxy, setUseProxy] = useState(false);
 
   // YouTube Specific State
   const [ytMeta, setYtMeta] = useState<YouTubeVideoMetadata | null>(null);
@@ -57,6 +58,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
           setUserVideos([]);
           setSearchQuery('');
           setShowSortMenu(false);
+          setUseProxy(false);
       }
   }, [isOpen]);
 
@@ -86,6 +88,55 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
       }
   }, [mode, googleAccessToken]);
 
+  const checkUrl = async (targetUrl: string, tryProxy: boolean = false) => {
+      setUseProxy(tryProxy);
+      
+      try {
+          let contentType: string | null = '';
+          let contentLength: string | null = null;
+          
+          if (!tryProxy) {
+              const response = await fetch(targetUrl, { method: 'HEAD' });
+              if (!response.ok) throw new Error(`Status ${response.status}`);
+              contentType = response.headers.get('content-type');
+              contentLength = response.headers.get('content-length');
+          } else {
+              // Use Backend Proxy
+              const proxyUrl = `http://localhost:4000/api/proxy/file-head?url=${encodeURIComponent(targetUrl)}`;
+              const response = await fetch(proxyUrl);
+              const data = await response.json();
+              if (!data.ok) throw new Error(data.error || "Proxy failed");
+              contentType = data.contentType;
+              contentLength = data.contentLength;
+          }
+
+          const name = targetUrl.split('/').pop()?.split('?')[0] || 'downloaded_file';
+          const size = contentLength ? `${(parseInt(contentLength) / (1024 * 1024)).toFixed(2)} MB` : 'Unknown Size';
+
+          if (contentType?.includes('text') || name.endsWith('.srt') || name.endsWith('.vtt')) {
+              setDetectedType('SRT');
+              setFileMeta({ name, size, type: 'Subtitle File' });
+              setStatus('PREVIEW');
+          } else if (contentType?.includes('video') || name.match(/\.(mp4|mkv|mov|webm)$/i)) {
+              setDetectedType('VIDEO');
+              setFileMeta({ name, size, type: 'Video File' });
+              setStatus('PREVIEW');
+          } else {
+              throw new Error("Unsupported file type. Please provide a direct link to an SRT or Video file.");
+          }
+
+      } catch (e: any) {
+          if (!tryProxy) {
+              // Retry with Proxy automatically on failure (likely CORS)
+              console.log("Direct fetch failed, trying proxy...", e);
+              checkUrl(targetUrl, true);
+          } else {
+              setError(`Failed to access URL: ${e.message}`);
+              setStatus('IDLE');
+          }
+      }
+  };
+
   const handleUrlSubmit = async () => {
       setError(null);
       setStatus('LOADING');
@@ -107,39 +158,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
           }
       } 
       else if (type === 'URL') {
-          try {
-              const response = await fetch(url, { method: 'HEAD' });
-              if (!response.ok) throw new Error(`Failed to access URL: ${response.statusText}`);
-              
-              const contentType = response.headers.get('content-type') || '';
-              const contentLength = response.headers.get('content-length');
-              
-              const name = url.split('/').pop()?.split('?')[0] || 'downloaded_file';
-              const size = contentLength ? `${(parseInt(contentLength) / (1024 * 1024)).toFixed(2)} MB` : 'Unknown Size';
-
-              if (contentType.includes('text') || name.endsWith('.srt') || name.endsWith('.vtt')) {
-                  setDetectedType('SRT');
-                  setFileMeta({ name, size, type: 'Subtitle File' });
-                  setStatus('PREVIEW');
-              } else if (contentType.includes('video') || name.match(/\.(mp4|mkv|mov|webm)$/i)) {
-                  setDetectedType('VIDEO');
-                  setFileMeta({ name, size, type: 'Video File' });
-                  setStatus('PREVIEW');
-              } else {
-                  throw new Error("Unsupported file type. Please provide a direct link to an SRT or Video file.");
-              }
-          } catch (e: any) {
-              console.error(e);
-              if (e.message.includes("Failed to access")) {
-                 setError("CORS restricted or Invalid URL. We will attempt to force download, but it might fail.");
-                 setDetectedType(url.endsWith('.srt') ? 'SRT' : 'VIDEO');
-                 setFileMeta({ name: url.split('/').pop() || 'file', size: '?', type: 'Unknown' });
-                 setStatus('PREVIEW');
-              } else {
-                 setError(e.message);
-                 setStatus('IDLE');
-              }
-          }
+          checkUrl(url);
       }
   };
 
@@ -150,7 +169,12 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
       } 
       else if (type === 'URL' && fileMeta) {
           try {
-              const response = await fetch(url);
+              let fetchUrl = url;
+              if (useProxy) {
+                   fetchUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(url)}`;
+              }
+              
+              const response = await fetch(fetchUrl);
               if (!response.ok) throw new Error("Download failed.");
               const blob = await response.blob();
               const file = new File([blob], fileMeta.name, { type: blob.type });
@@ -278,6 +302,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
                                 <div>
                                     <h3 className="font-bold text-white break-all">{fileMeta.name}</h3>
                                     <p className="text-sm text-neutral-500">{fileMeta.type} • {fileMeta.size}</p>
+                                    {useProxy && <span className="text-[10px] text-amber-500 border border-amber-900/50 px-1.5 py-0.5 rounded bg-amber-900/20">Proxy Active</span>}
                                 </div>
                             </div>
                             {error && <div className="text-red-400 text-sm">{error}</div>}

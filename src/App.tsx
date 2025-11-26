@@ -320,10 +320,10 @@ const App = () => {
     setDownloadProgress(undefined);
     setDownloadStatusText('');
     setIsDownloadComplete(false);
-    if (videoSrc) {
-       if (videoSrc.startsWith('blob:')) {
-           URL.revokeObjectURL(videoSrc);
-       }
+    
+    // Proper blob cleanup
+    if (videoSrc && videoSrc.startsWith('blob:')) {
+       URL.revokeObjectURL(videoSrc);
     }
     setVideoSrc(null);
   };

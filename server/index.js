@@ -43,6 +43,62 @@ const ensureBinary = async () => {
 
 ensureBinary();
 
+// --- GENERAL FILE PROXY (Resolves CORS for Import URL) ---
+
+// 1. Check File Info (HEAD)
+app.get('/api/proxy/file-head', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: "Missing URL" });
+
+    try {
+        const response = await axios.head(url);
+        res.json({
+            contentType: response.headers['content-type'],
+            contentLength: response.headers['content-length'],
+            ok: true
+        });
+    } catch (e) {
+        // If HEAD fails (some servers block it), try GET with range 0-1
+        try {
+            const response = await axios.get(url, { headers: { Range: 'bytes=0-1' } });
+            res.json({
+                contentType: response.headers['content-type'],
+                contentLength: response.headers['content-range'] ? response.headers['content-range'].split('/')[1] : null,
+                ok: true
+            });
+        } catch (innerError) {
+            res.status(400).json({ error: "Could not access URL", details: innerError.message });
+        }
+    }
+});
+
+// 2. Download File (GET Stream)
+app.get('/api/proxy/file-get', async (req, res) => {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: "Missing URL" });
+
+    try {
+        const response = await axios({
+            method: 'get',
+            url: url,
+            responseType: 'stream'
+        });
+
+        const contentType = response.headers['content-type'];
+        const contentLength = response.headers['content-length'];
+
+        if (contentType) res.setHeader('Content-Type', contentType);
+        if (contentLength) res.setHeader('Content-Length', contentLength);
+
+        response.data.pipe(res);
+
+    } catch (e) {
+        console.error("Proxy File Get Error:", e.message);
+        res.status(500).send("Failed to fetch file via proxy.");
+    }
+});
+
+
 // --- PROXY ENDPOINTS FOR YOUTUBE UPLOAD (Bypasses COOP/COEP) ---
 
 // 1. Proxy for Upload Initialization
