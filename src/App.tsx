@@ -802,7 +802,7 @@ const App = () => {
                         tracks={extractedTracks} 
                         onSelectTrack={handleTrackSelection} 
                         onGenerate={handleGenerateSubtitles}
-                        onGenerateYouTube={handleGenerateWithYouTube}
+                        activeModel={activeModelData}
                         isYouTubeAuthenticated={!!googleUser}
                       />
                    ) : (

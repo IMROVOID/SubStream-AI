@@ -1,50 +1,69 @@
 import React from 'react';
-import { Bot, FileText, Youtube } from 'lucide-react';
-import { ExtractedSubtitleTrack } from '../types';
+import { Bot, FileText, Youtube, Sparkles } from 'lucide-react';
+import { ExtractedSubtitleTrack, AIModel } from '../types';
 
 interface TrackSelectorProps {
   tracks: ExtractedSubtitleTrack[];
   onSelectTrack: (trackIndex: number) => void;
   onGenerate: () => void;
-  onGenerateYouTube: () => void;
+  activeModel: AIModel;
   isYouTubeAuthenticated: boolean;
 }
 
-export const TrackSelector: React.FC<TrackSelectorProps> = ({ tracks, onSelectTrack, onGenerate, onGenerateYouTube, isYouTubeAuthenticated }) => {
+export const TrackSelector: React.FC<TrackSelectorProps> = ({ 
+  tracks, 
+  onSelectTrack, 
+  onGenerate, 
+  activeModel,
+  isYouTubeAuthenticated 
+}) => {
+  
+  const isYouTubeModel = activeModel.provider === 'youtube';
+
   return (
-    <div className="animate-fade-in space-y-6">
+    <div className="animate-fade-in space-y-6 max-w-2xl mx-auto">
       <h2 className="text-xl font-bold text-white text-center">Subtitle Source</h2>
-      <p className="text-center text-neutral-400 -mt-4">Choose an existing track or generate new subtitles.</p>
+      <p className="text-center text-neutral-400 -mt-4">
+        Choose an existing track or generate new subtitles using <strong>{activeModel.name}</strong>.
+      </p>
       
       <div className="space-y-3">
-        {/* AI Generation Option */}
+        {/* Unified Generation Button */}
         <button 
           onClick={onGenerate}
-          className="w-full flex items-center gap-4 p-4 rounded-xl border border-neutral-700 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-white transition-all text-left"
+          className={`w-full flex items-center gap-4 p-4 rounded-xl border transition-all text-left group
+            ${isYouTubeModel 
+                ? 'bg-red-900/10 border-red-900/30 hover:bg-red-900/20 hover:border-red-500/50' 
+                : 'bg-indigo-900/10 border-indigo-900/30 hover:bg-indigo-900/20 hover:border-indigo-500/50'}
+          `}
         >
-          <div className="w-10 h-10 bg-indigo-900/50 border border-indigo-700/50 rounded-lg flex items-center justify-center shrink-0">
-            <Bot className="w-5 h-5 text-indigo-300" />
+          <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 transition-colors
+             ${isYouTubeModel ? 'bg-red-900/20 text-red-500' : 'bg-indigo-900/20 text-indigo-400'}
+          `}>
+            {isYouTubeModel ? <Youtube className="w-6 h-6" /> : <Sparkles className="w-6 h-6" />}
           </div>
-          <div>
-            <h3 className="font-bold text-white">Generate with AI Model</h3>
-            <p className="text-xs text-neutral-400">Uses the selected AI model (e.g., Gemini, GPT). Requires an API key.</p>
+          <div className="flex-1">
+            <h3 className={`font-bold flex items-center gap-2 ${isYouTubeModel ? 'text-red-100' : 'text-indigo-100'}`}>
+              Generate with {activeModel.name}
+              {isYouTubeModel && !isYouTubeAuthenticated && (
+                  <span className="text-[10px] uppercase bg-neutral-800 text-neutral-400 px-1.5 py-0.5 rounded border border-neutral-700">Auth Required</span>
+              )}
+            </h3>
+            <p className="text-xs text-neutral-400 mt-1">
+              {isYouTubeModel 
+                ? "Uploads video as 'unlisted' to your channel to generate high-accuracy captions." 
+                : "Generates subtitles locally using the selected AI model API."}
+            </p>
           </div>
         </button>
 
-        {/* YouTube Generation Option */}
-        <button 
-          onClick={onGenerateYouTube}
-          disabled={!isYouTubeAuthenticated}
-          className="w-full flex items-center gap-4 p-4 rounded-xl border border-neutral-700 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-white transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <div className="w-10 h-10 bg-red-900/50 border border-red-700/50 rounded-lg flex items-center justify-center shrink-0">
-            <Youtube className="w-5 h-5 text-red-300" />
-          </div>
-          <div>
-            <h3 className="font-bold text-white">Generate with YouTube</h3>
-            <p className="text-xs text-neutral-400">Uploads video as 'unlisted' to your YouTube account to generate free captions.</p>
-          </div>
-        </button>
+        {/* Divider if tracks exist */}
+        {tracks.length > 0 && (
+            <div className="relative py-2">
+                <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-neutral-800"></span></div>
+                <div className="relative flex justify-center"><span className="bg-neutral-900 px-3 text-xs text-neutral-500 uppercase">Or extract from video</span></div>
+            </div>
+        )}
 
         {/* Existing Tracks */}
         {tracks.map((track) => (
@@ -53,12 +72,12 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({ tracks, onSelectTr
             onClick={() => onSelectTrack(track.index)}
             className="w-full flex items-center gap-4 p-4 rounded-xl border border-neutral-800 bg-neutral-900/20 hover:bg-neutral-800/50 hover:border-neutral-600 transition-all text-left"
           >
-            <div className="w-10 h-10 bg-neutral-800 rounded-lg flex items-center justify-center shrink-0">
-              <FileText className="w-5 h-5 text-neutral-300" />
+            <div className="w-12 h-12 bg-neutral-800 rounded-lg flex items-center justify-center shrink-0">
+              <FileText className="w-6 h-6 text-neutral-400" />
             </div>
             <div>
-              <h3 className="font-bold text-white">{track.title}</h3>
-              <p className="text-xs text-neutral-500 uppercase">{track.language}</p>
+              <h3 className="font-bold text-white">{track.title || `Subtitle Track ${track.index}`}</h3>
+              <p className="text-xs text-neutral-500 uppercase mt-0.5">Language: {track.language}</p>
             </div>
           </button>
         ))}
