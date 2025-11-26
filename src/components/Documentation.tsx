@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, ArrowLeft, AlertCircle, FileText, Zap, Shield, Cpu, Layers, Key, Gauge } from 'lucide-react';
+import { Search, ArrowLeft, AlertCircle, FileText, Zap, Shield, Cpu, Layers, Key, Gauge, Youtube, Link as LinkIcon, Globe } from 'lucide-react';
 
 interface DocItem {
   id: string;
@@ -17,8 +17,8 @@ const DOCS_DATA: DocItem[] = [
     content: (
       <div className="space-y-6">
         <p className="text-lg leading-relaxed text-neutral-300">
-          SubStream AI is a next-generation subtitle translation tool powered by Google's <strong className="text-white">Gemini</strong> models. 
-          Unlike traditional translators that process line-by-line, SubStream understands the full context of a scene, ensuring dialogue flows naturally in the target language.
+          SubStream AI is a next-generation subtitle translation and generation tool. 
+          It bridges the gap between raw video and global accessibility using <strong className="text-white">Google Gemini</strong> for context-aware translation and <strong className="text-white">YouTube AI</strong> for high-accuracy speech-to-text.
         </p>
         
         <div className="p-6 bg-neutral-900/40 rounded-2xl border border-neutral-800">
@@ -26,23 +26,18 @@ const DOCS_DATA: DocItem[] = [
           <ol className="relative border-l border-neutral-800 ml-3 space-y-6">
             <li className="ml-6">
               <span className="absolute -left-1.5 mt-1.5 w-3 h-3 bg-neutral-600 rounded-full ring-4 ring-neutral-900"></span>
-              <h4 className="font-bold text-white text-sm">Upload</h4>
-              <p className="text-neutral-400 text-sm">Drag & drop your <code>.srt</code> file into the upload zone.</p>
+              <h4 className="font-bold text-white text-sm">Import Media</h4>
+              <p className="text-neutral-400 text-sm">Upload a local file, paste a URL, or import directly from your YouTube channel.</p>
             </li>
             <li className="ml-6">
               <span className="absolute -left-1.5 mt-1.5 w-3 h-3 bg-neutral-600 rounded-full ring-4 ring-neutral-900"></span>
-              <h4 className="font-bold text-white text-sm">Select Languages</h4>
-              <p className="text-neutral-400 text-sm">Choose your target language. Source language is auto-detected by default.</p>
-            </li>
-            <li className="ml-6">
-              <span className="absolute -left-1.5 mt-1.5 w-3 h-3 bg-neutral-600 rounded-full ring-4 ring-neutral-900"></span>
-              <h4 className="font-bold text-white text-sm">Translate</h4>
-              <p className="text-neutral-400 text-sm">Click "Start Translation". The AI processes subtitles in smart batches.</p>
+              <h4 className="font-bold text-white text-sm">Configure AI</h4>
+              <p className="text-neutral-400 text-sm">Select <strong>Gemini</strong> for translation or <strong>YouTube Auto-Caption</strong> for generating subtitles from scratch.</p>
             </li>
              <li className="ml-6">
               <span className="absolute -left-1.5 mt-1.5 w-3 h-3 bg-green-500 rounded-full ring-4 ring-neutral-900"></span>
-              <h4 className="font-bold text-white text-sm">Download</h4>
-              <p className="text-neutral-400 text-sm">Review the side-by-side preview and download your new SRT file.</p>
+              <h4 className="font-bold text-white text-sm">Process & Download</h4>
+              <p className="text-neutral-400 text-sm">Review the side-by-side preview, then download the SRT file or the video with burned-in subtitles.</p>
             </li>
           </ol>
         </div>
@@ -50,33 +45,87 @@ const DOCS_DATA: DocItem[] = [
     )
   },
   {
-    id: 'limits',
-    title: 'File Limits & Formats',
+    id: 'file-sources',
+    title: 'Supported Sources',
     category: 'General',
     content: (
       <div className="space-y-6">
-        <p>Ensure your files meet the following criteria for optimal processing:</p>
+        <p>SubStream AI supports various input methods:</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-5 bg-neutral-800/20 border border-neutral-800 rounded-xl hover:bg-neutral-800/30 transition-colors">
-            <div className="flex items-center gap-3 mb-2">
-              <FileText className="w-5 h-5 text-blue-400" />
-              <span className="text-sm font-bold uppercase text-neutral-400">Supported Format</span>
+             <div className="flex items-center gap-3 mb-2">
+              <Globe className="w-5 h-5 text-blue-400" />
+              <span className="text-sm font-bold uppercase text-neutral-400">Import from URL</span>
             </div>
-            <span className="text-xl text-white font-medium">.SRT (SubRip)</span>
-            <p className="text-xs text-neutral-500 mt-1">UTF-8 Encoding recommended</p>
+            <p className="text-sm text-neutral-300">Paste direct links to <code>.mp4</code>, <code>.mkv</code>, or <code>.srt</code> files. We use a smart proxy to bypass CORS restrictions.</p>
           </div>
           <div className="p-5 bg-neutral-800/20 border border-neutral-800 rounded-xl hover:bg-neutral-800/30 transition-colors">
              <div className="flex items-center gap-3 mb-2">
-              <Cpu className="w-5 h-5 text-purple-400" />
-              <span className="text-sm font-bold uppercase text-neutral-400">Max File Size</span>
+              <Youtube className="w-5 h-5 text-red-500" />
+              <span className="text-sm font-bold uppercase text-neutral-400">YouTube Import</span>
             </div>
-            <span className="text-xl text-white font-medium">~5 MB</span>
-            <p className="text-xs text-neutral-500 mt-1">Approx. 2 hours of dialogue</p>
+            <p className="text-sm text-neutral-300">Browse your own channel or paste a public video URL to extract existing captions.</p>
           </div>
         </div>
-        <div className="p-4 rounded-lg bg-yellow-900/10 border border-yellow-900/30 text-yellow-200/80 text-sm">
-          <strong>Note:</strong> Very large files are processed in chunks. Ensure you have a stable internet connection during the process.
+      </div>
+    )
+  },
+
+  // --- INTEGRATIONS (NEW) ---
+  {
+    id: 'youtube-auto-caption',
+    title: 'YouTube Auto-Caption',
+    category: 'Integrations',
+    content: (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+           <Youtube className="w-8 h-8 text-red-500" />
+           <h3 className="text-2xl font-bold text-white">Free AI Transcription</h3>
         </div>
+        <p>
+           We leverage YouTube's powerful speech recognition engine to generate subtitles for your local videos for free.
+        </p>
+        
+        <div className="space-y-4 border-l-2 border-red-900/50 pl-6">
+           <div>
+              <h4 className="font-bold text-white">How it works:</h4>
+              <ol className="list-decimal list-inside text-sm text-neutral-400 mt-2 space-y-2">
+                 <li>You authenticate with your Google Account.</li>
+                 <li>We upload your video to your channel as <strong>Unlisted</strong> (private to you).</li>
+                 <li>We poll YouTube's servers until they generate the automatic captions (ASR).</li>
+                 <li>We download the captions and delete the temp data from our interface.</li>
+              </ol>
+           </div>
+           
+           <div className="p-4 bg-red-950/30 rounded-lg border border-red-900/50 text-red-200 text-sm">
+              <strong className="block mb-1">Quota Warning:</strong>
+              YouTube limits uploads to approx. 6 videos per day for unverified API projects. If you see a "Quota Exceeded" error, please wait 24 hours or switch to an OpenAI/Gemini model.
+           </div>
+        </div>
+      </div>
+    )
+  },
+  {
+    id: 'youtube-auth',
+    title: 'YouTube Authentication',
+    category: 'Integrations',
+    content: (
+      <div className="space-y-4">
+         <p>To use features like <strong>Channel Browser</strong> or <strong>Auto-Caption</strong>, you must authenticate.</p>
+         
+         <h4 className="font-bold text-white mt-4">Permissions We Request:</h4>
+         <ul className="space-y-3">
+            <li className="flex gap-3 items-start">
+               <div className="mt-1 p-1 bg-neutral-800 rounded"><Youtube className="w-3 h-3 text-white"/></div>
+               <div>
+                  <strong className="text-white block text-sm">Manage your YouTube videos</strong>
+                  <span className="text-xs text-neutral-500">Required to upload videos for transcription and list your channel videos for importing.</span>
+               </div>
+            </li>
+         </ul>
+         <p className="text-xs text-neutral-500 mt-2">
+            We strictly follow the <a href="https://developers.google.com/youtube/terms/api-services-terms-of-service" target="_blank" className="underline hover:text-white">YouTube API Services Terms of Service</a>. Your data is handled securely and keys are stored locally.
+         </p>
       </div>
     )
   },
@@ -96,7 +145,7 @@ const DOCS_DATA: DocItem[] = [
               <h4 className="font-bold text-white">Changing Models</h4>
               <p className="text-sm text-neutral-400 mt-2 mb-3">
                  Click the Model Name in the top right of the navigation bar. 
-                 This opens the Configuration overlay where you can switch between <strong>Gemini 3 Pro</strong> (Best Quality), <strong>Gemini 2.5 Pro/Flash</strong>, and others to suit your needs.
+                 This opens the Configuration overlay where you can switch between <strong>Gemini 3 Pro</strong>, <strong>GPT-4o</strong>, and <strong>YouTube Services</strong>.
               </p>
            </div>
         </div>
@@ -106,42 +155,14 @@ const DOCS_DATA: DocItem[] = [
            <div>
               <h4 className="font-bold text-white">Using Custom API Keys</h4>
               <p className="text-sm text-neutral-400 mt-2 mb-3">
-                 In the same Configuration overlay, paste your key starting with <code>AIzaSy...</code>.
+                 In the same Configuration overlay, paste your key starting with <code>AIzaSy...</code> or <code>sk-...</code>.
               </p>
               <ul className="list-disc list-inside text-xs text-neutral-500 space-y-1">
                  <li>Your key is stored in your browser's local storage.</li>
-                 <li>It is never sent to our servers, only directly to Google APIs.</li>
-                 <li>You can clear it at any time.</li>
+                 <li>It is never sent to our servers, only directly to AI APIs.</li>
               </ul>
            </div>
         </div>
-
-      </div>
-    )
-  },
-  {
-    id: 'quota-estimation',
-    title: 'Quota & Estimations',
-    category: 'Setup',
-    content: (
-      <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <Gauge className="w-6 h-6 text-cyan-400" />
-          <h3 className="text-xl font-bold text-white">Understanding Usage</h3>
-        </div>
-        <p>
-          The app displays an estimated "Cost" in API requests when you upload a file. 
-        </p>
-        <div className="p-4 rounded-lg bg-neutral-800/30 border-l-4 border-cyan-500">
-           <p className="text-white font-medium">Formula:</p>
-           <code className="block mt-2 text-cyan-300 font-mono text-sm">Total API Requests = Total Subtitle Lines / 10</code>
-        </div>
-        <p className="text-sm text-neutral-400">
-           We batch subtitles in groups of 10 to optimize for context and speed. A typical movie with 1,500 lines will consume approximately 150 API requests.
-        </p>
-        <p className="text-sm text-neutral-400">
-           The "Remaining Requests" indicator in the top right is a local estimator based on the standard Gemini Free Tier limit (1,500 requests/day). It resets daily on your browser.
-        </p>
       </div>
     )
   },
@@ -161,33 +182,13 @@ const DOCS_DATA: DocItem[] = [
           Standard translators translate one line at a time, often resulting in broken sentences when a speaker's thought spans multiple subtitles.
         </p>
         <p>
-          <strong>SubStream AI</strong> groups subtitles into "Semantic Batches" (typically 10-20 lines). It sends the entire batch to Gemini 3 Pro, allowing the model to:
+          <strong>SubStream AI</strong> groups subtitles into "Semantic Batches" (typically 10-20 lines). It sends the entire batch to the AI model, allowing it to:
         </p>
         <ul className="space-y-2 list-disc list-inside text-neutral-300">
           <li>See the previous and next lines before translating.</li>
           <li>Understand gender and formality (e.g., distinct "You" in Spanish/French).</li>
           <li>Maintain consistent terminology for names and places.</li>
         </ul>
-      </div>
-    )
-  },
-  {
-    id: 'advanced-settings',
-    title: 'Advanced Settings',
-    category: 'Features',
-    content: (
-      <div className="space-y-4">
-        <p>Currently, the app uses optimized default settings for the best balance of speed and quality.</p>
-        <div className="grid grid-cols-1 gap-4 mt-4">
-          <div className="p-4 rounded-lg border border-neutral-800 bg-neutral-900/30">
-            <h4 className="font-bold text-white mb-1">Temperature: 0.7</h4>
-            <p className="text-sm text-neutral-400">Balanced for creativity and accuracy. Ensures translations aren't too robotic but stick to the original meaning.</p>
-          </div>
-           <div className="p-4 rounded-lg border border-neutral-800 bg-neutral-900/30">
-            <h4 className="font-bold text-white mb-1">Model Selection</h4>
-            <p className="text-sm text-neutral-400">You can now switch between models via the top navigation bar. Use <strong>Flash</strong> models for speed and <strong>Pro</strong> models for quality.</p>
-          </div>
-        </div>
       </div>
     )
   },
@@ -202,64 +203,29 @@ const DOCS_DATA: DocItem[] = [
         <p>If you encounter issues, check the error code or message displayed.</p>
 
         <div className="space-y-4">
-          {/* Error 1 */}
           <div className="flex gap-4 p-4 bg-red-950/20 border border-red-900/30 rounded-xl">
              <AlertCircle className="w-6 h-6 text-red-500 shrink-0" />
              <div>
-               <h4 className="text-red-200 font-bold">Translation Failed (500 / XHR Error)</h4>
+               <h4 className="text-red-200 font-bold">YouTube Quota Exceeded (403)</h4>
                <p className="text-sm text-red-200/70 mt-1">
-                 This usually means the AI service is temporarily overloaded or the batch size was too large for the network.
+                 You have uploaded too many videos today using the Auto-Caption feature. This is a limit set by Google.
                </p>
                <div className="mt-3 p-2 bg-black/40 rounded text-xs font-mono text-red-300">
-                 Fix: The app automatically retries. If it fails repeatedly, try refreshing the page or checking your internet connection.
+                 Fix: Switch to a Gemini/OpenAI model for transcription or wait 24 hours.
                </div>
              </div>
           </div>
-
-          {/* Error 2 */}
-          <div className="flex gap-4 p-4 bg-neutral-800/30 border border-neutral-800 rounded-xl">
-             <Shield className="w-6 h-6 text-orange-400 shrink-0" />
+           
+           <div className="flex gap-4 p-4 bg-neutral-800/30 border border-neutral-800 rounded-xl">
+             <LinkIcon className="w-6 h-6 text-blue-400 shrink-0" />
              <div>
-               <h4 className="text-white font-bold">Empty Output / Safety Filter</h4>
+               <h4 className="text-white font-bold">Import URL Failed</h4>
                <p className="text-sm text-neutral-400 mt-1">
-                 Gemini has built-in safety filters. If your subtitle file contains extreme violence, hate speech, or explicit content, the model may refuse to generate text.
-               </p>
-             </div>
-          </div>
-
-          {/* Error 3 */}
-          <div className="flex gap-4 p-4 bg-neutral-800/30 border border-neutral-800 rounded-xl">
-             <Zap className="w-6 h-6 text-yellow-400 shrink-0" />
-             <div>
-               <h4 className="text-white font-bold">Rate Limit Exceeded (429)</h4>
-               <p className="text-sm text-neutral-400 mt-1">
-                 You are sending too many requests too quickly. The app has a built-in delay (1 second) between batches to prevent this, but it can still happen under heavy load.
+                 If importing a direct URL fails, the server might be blocking automated requests. We automatically retry using a proxy, but some secure links (like expired S3 links) cannot be accessed.
                </p>
              </div>
           </div>
         </div>
-      </div>
-    )
-  },
-  {
-    id: 'parsing-issues',
-    title: 'Parsing Issues',
-    category: 'Support',
-    content: (
-      <div className="space-y-4">
-        <p>If the app says <strong>"Failed to parse SRT file"</strong> or shows 0 lines:</p>
-        <ul className="list-disc list-inside space-y-2 text-neutral-300 text-sm">
-          <li>Check if the file is a valid <code>.srt</code>. It should look like this:</li>
-        </ul>
-        <div className="bg-black p-4 rounded-lg border border-neutral-800 font-mono text-xs text-neutral-400">
-          1<br/>
-          00:00:01,000 --&gt; 00:00:04,000<br/>
-          Hello world.
-        </div>
-        <ul className="list-disc list-inside space-y-2 text-neutral-300 text-sm pt-2">
-          <li>Ensure the file encoding is <strong>UTF-8</strong>.</li>
-          <li>Some SRT files have malformed timestamps (e.g., using dots instead of commas). SubStream tries to correct this, but severe errors may fail.</li>
-        </ul>
       </div>
     )
   }
@@ -358,13 +324,13 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
                       <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-widest">{group.category}</h3>
                     </div>
                     
-                    {/* Tree Vertical Line - Runs from header down to last item */}
+                    {/* Tree Vertical Line */}
                     <div className="absolute left-[3px] top-6 bottom-4 w-px bg-neutral-900"></div>
                     
                     <div className="space-y-1 relative">
                       {group.docs.map((doc, index) => (
                         <div key={doc.id} className="relative pl-6">
-                          {/* Curved Connector for Tree View */}
+                          {/* Curved Connector */}
                           <div className="absolute left-[3px] top-0 h-[24px] w-4 border-l border-b border-neutral-800 rounded-bl-xl"></div>
                           
                           <button

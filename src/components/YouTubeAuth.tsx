@@ -33,7 +33,7 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
       scope: scope,
       include_granted_scopes: 'true',
       state: state,
-      prompt: 'consent' // <--- CRITICAL: Forces the user to re-accept scopes, ensuring force-ssl is granted
+      prompt: 'consent' // Forces the user to re-accept scopes, ensuring force-ssl is granted
     });
 
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -93,6 +93,7 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
     <Button 
         onClick={handleLogin} 
         type="button" 
+        variant="secondary"
         className="bg-[#151515] hover:bg-[#252525] text-white border border-neutral-800 hover:border-neutral-700 px-4 py-3 transition-colors"
         icon={<Youtube className="w-4 h-4 text-red-500" />}
     >

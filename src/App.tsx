@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
@@ -320,10 +320,10 @@ const App = () => {
     setDownloadProgress(undefined);
     setDownloadStatusText('');
     setIsDownloadComplete(false);
-    
-    // Proper blob cleanup
-    if (videoSrc && videoSrc.startsWith('blob:')) {
-       URL.revokeObjectURL(videoSrc);
+    if (videoSrc) {
+       if (videoSrc.startsWith('blob:')) {
+           URL.revokeObjectURL(videoSrc);
+       }
     }
     setVideoSrc(null);
   };
@@ -1307,29 +1307,76 @@ const App = () => {
       </Modal>
 
       <Modal isOpen={activeModal === 'PRIVACY'} onClose={() => setActiveModal('NONE')} title="Privacy Policy">
-         <div className="space-y-5 text-sm text-neutral-300">
-            <p className="text-neutral-500">Last Updated: November 2025</p>
-            <div>
-              <h3 className="text-white font-bold mb-2">1. Data Collection</h3>
-              <p>We do not store your subtitle files. All processing is done in-memory and via the Gemini API. Once your session ends, your data is cleared from our interface.</p>
+         <div className="space-y-6 text-sm text-neutral-300 leading-relaxed">
+            <p className="text-xs text-neutral-500">Last Updated: November 2025</p>
+            
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                <Shield className="w-4 h-4 text-green-400" /> Data Handling & Storage
+              </h3>
+              <p>
+                <strong>SubStream AI</strong> is a "Client-Side" application. We do not store your API keys, subtitle files, or personal data on our servers.
+                All API keys are stored locally in your browser's <code>localStorage</code>.
+              </p>
             </div>
-            <div>
-              <h3 className="text-white font-bold mb-2">2. Third-Party Services</h3>
-              <p>We use Google's Gemini API for processing translations. Data sent to Google is subject to their data processing terms.</p>
+
+            <div className="space-y-3 pt-4 border-t border-neutral-800">
+              <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                <Youtube className="w-4 h-4 text-red-500" /> YouTube API Services
+              </h3>
+              <p>
+                This application uses YouTube API Services to provide features such as importing videos from your channel and uploading videos for auto-captioning.
+                By using these features, you agree to be bound by the <a href="https://www.youtube.com/t/terms" target="_blank" className="text-white underline">YouTube Terms of Service</a>.
+              </p>
+              <p>We access the following data only when you explicitly authenticate:</p>
+              <ul className="list-disc list-inside pl-2 mt-1 space-y-1 text-neutral-400">
+                  <li><strong>Uploads:</strong> To upload videos as "Unlisted" for transcription purposes.</li>
+                  <li><strong>Channel List:</strong> To display your videos in the import selector.</li>
+              </ul>
+              <p>
+                Please refer to the <a href="http://www.google.com/policies/privacy" target="_blank" className="text-white underline">Google Privacy Policy</a> for more information on how Google handles your data.
+              </p>
+            </div>
+
+            <div className="space-y-3 pt-4 border-t border-neutral-800">
+              <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                 <LinkIcon className="w-4 h-4 text-blue-400" /> Proxy Usage
+              </h3>
+              <p>
+                When importing files from external URLs, data is streamed through a temporary local proxy to bypass CORS restrictions. The data is not persisted on the server.
+              </p>
             </div>
          </div>
       </Modal>
 
       <Modal isOpen={activeModal === 'TOS'} onClose={() => setActiveModal('NONE')} title="Terms of Service">
-         <div className="space-y-5 text-sm text-neutral-300">
-            <p className="text-neutral-500">Last Updated: November 2025</p>
-            <div>
-              <h3 className="text-white font-bold mb-2">1. Usage</h3>
-              <p>SubStream AI is provided "as is" for subtitle translation purposes. Do not use for illegal content.</p>
+         <div className="space-y-6 text-sm text-neutral-300 leading-relaxed">
+            <p className="text-xs text-neutral-500">Last Updated: November 2025</p>
+            
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">1. Acceptance of Terms</h3>
+              <p>By accessing and using SubStream AI, you accept and agree to be bound by the terms and provision of this agreement.</p>
             </div>
-            <div>
-              <h3 className="text-white font-bold mb-2">2. Limitations</h3>
-              <p>We do not guarantee 100% accuracy in translations. AI models can hallucinate or misinterpret context.</p>
+
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">2. YouTube Integration</h3>
+              <p>
+                Our service integrates with YouTube. By using the YouTube features (Import, Auto-Caption), you agree to the <a href="https://www.youtube.com/t/terms" target="_blank" className="text-white underline">YouTube Terms of Service</a>.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">3. User Responsibility</h3>
+              <p>
+                You are solely responsible for the content you process using this tool. You agree not to upload content that violates copyright laws, contains illegal material, or infringes on the rights of others.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">4. Disclaimer</h3>
+              <p>
+                This software is provided "as is", without warranty of any kind, express or implied. The developers are not liable for any damages or data loss arising from the use of this software.
+              </p>
             </div>
          </div>
       </Modal>
