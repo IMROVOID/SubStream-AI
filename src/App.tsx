@@ -100,16 +100,107 @@ const App = () => {
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // --- Effects ---
+  // --- 1. DETECT IF THIS IS THE POPUP (Auth Callback) ---
+  const isAuthCallback = useMemo(() => {
+    return window.location.hash.includes('access_token') && window.location.hash.includes('state=youtube_auth');
+  }, []);
+
+  // --- 2. POPUP LOGIC: Broadcast & Close ---
   useEffect(() => {
-    if (subtitles.length > 0 && (status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED || fileType === 'youtube')) {
-        setTimeout(() => {
-            resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 300);
+    if (isAuthCallback) {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get('access_token');
+
+        if (accessToken) {
+            // Send token to the main window
+            const channel = new BroadcastChannel('substream_auth_channel');
+            channel.postMessage({ token: accessToken });
+            channel.close();
+
+            // Close this popup
+            window.close();
+            
+            // Fallback message if window.close() is blocked
+            document.body.innerHTML = `
+                <div style="background:black; color:white; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif;">
+                    <div style="font-size:24px; font-weight:bold; margin-bottom:10px;">Authentication Successful</div>
+                    <div>You can now close this window.</div>
+                </div>
+            `;
+        }
     }
-  }, [subtitles.length, status, fileType]);
+  }, [isAuthCallback]);
+
+  // --- 3. MAIN WINDOW LOGIC: Listen for Token ---
+  useEffect(() => {
+    const channel = new BroadcastChannel('substream_auth_channel');
+    channel.onmessage = (event) => {
+        if (event.data && event.data.token) {
+            console.log("Received token from popup");
+            handleGoogleLoginSuccess({ access_token: event.data.token } as TokenResponse);
+        }
+    };
+    return () => channel.close();
+  }, []);
+
+  // --- LOAD PERSISTED SETTINGS ---
+  useEffect(() => {
+    const storedGoogleKey = localStorage.getItem('substream_google_api_key');
+    const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
+    const storedModel = localStorage.getItem('substream_model_id');
+    const storedRPM = localStorage.getItem('substream_rpm');
+    const storedUsage = localStorage.getItem('substream_daily_usage');
+    const lastUsageDate = localStorage.getItem('substream_usage_date');
+    const today = new Date().toDateString();
+
+    // Load API Keys
+    if (storedGoogleKey) {
+      setUserGoogleApiKey(storedGoogleKey);
+      setTempGoogleApiKey(storedGoogleKey);
+      setGoogleApiKeyStatus('valid');
+    }
+    if (storedOpenAIKey) {
+      setUserOpenAIApiKey(storedOpenAIKey);
+      setTempOpenAIApiKey(storedOpenAIKey);
+      setOpenAIApiKeyStatus('valid');
+    }
+
+    // Load Model Settings
+    if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
+      setSelectedModelId(storedModel);
+    }
+    
+    // Load RPM
+    if (storedRPM) {
+        const rpm = (storedRPM === 'unlimited' ? 'unlimited' : parseInt(storedRPM, 10)) as RPMLimit;
+        setSelectedRPM(rpm);
+        setGlobalRPM(rpm);
+    } else {
+        setGlobalRPM(15); 
+    }
+
+    // Load Usage
+    if (lastUsageDate === today && storedUsage) {
+      setRequestsUsed(parseInt(storedUsage, 10));
+    } else {
+      setRequestsUsed(0);
+      localStorage.setItem('substream_usage_date', today);
+      localStorage.setItem('substream_daily_usage', '0');
+    }
+
+    // Load Persisted Google User
+    const savedUser = localStorage.getItem('substream_google_user');
+    const savedToken = localStorage.getItem('substream_google_token');
+    if (savedUser && savedToken) {
+        setGoogleUser(JSON.parse(savedUser));
+        setGoogleAccessToken(savedToken);
+    }
+
+  }, []);
 
   useEffect(() => {
+    // --- Key Validation Effects ---
     if (tempGoogleApiKey === '') {
       setGoogleApiKeyStatus('idle');
       return;
@@ -151,47 +242,6 @@ const App = () => {
     return () => { if (debounceOpenAIKeyTimer.current) clearTimeout(debounceOpenAIKeyTimer.current); };
   }, [tempOpenAIApiKey, userOpenAIApiKey]);
 
-  useEffect(() => {
-    const storedGoogleKey = localStorage.getItem('substream_google_api_key');
-    const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
-    const storedModel = localStorage.getItem('substream_model_id');
-    const storedRPM = localStorage.getItem('substream_rpm');
-    const storedUsage = localStorage.getItem('substream_daily_usage');
-    const lastUsageDate = localStorage.getItem('substream_usage_date');
-    const today = new Date().toDateString();
-
-    if (storedGoogleKey) {
-      setUserGoogleApiKey(storedGoogleKey);
-      setTempGoogleApiKey(storedGoogleKey);
-      setGoogleApiKeyStatus('valid');
-    }
-    if (storedOpenAIKey) {
-      setUserOpenAIApiKey(storedOpenAIKey);
-      setTempOpenAIApiKey(storedOpenAIKey);
-      setOpenAIApiKeyStatus('valid');
-    }
-
-    if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
-      setSelectedModelId(storedModel);
-    }
-    
-    if (storedRPM) {
-        const rpm = (storedRPM === 'unlimited' ? 'unlimited' : parseInt(storedRPM, 10)) as RPMLimit;
-        setSelectedRPM(rpm);
-        setGlobalRPM(rpm);
-    } else {
-        setGlobalRPM(15); 
-    }
-
-    if (lastUsageDate === today && storedUsage) {
-      setRequestsUsed(parseInt(storedUsage, 10));
-    } else {
-      setRequestsUsed(0);
-      localStorage.setItem('substream_usage_date', today);
-      localStorage.setItem('substream_daily_usage', '0');
-    }
-  }, []);
-
 
   // --- Helper Functions ---
 
@@ -227,25 +277,35 @@ const App = () => {
   };
 
   const handleGoogleLoginSuccess = (tokenResponse: TokenResponse) => {
-    setGoogleAccessToken(tokenResponse.access_token);
+    if (!tokenResponse || !tokenResponse.access_token) return;
+    
+    const accessToken = tokenResponse.access_token;
+    setGoogleAccessToken(accessToken);
+    localStorage.setItem('substream_google_token', accessToken); // Persist Token
+    
+    // Fetch User Info
     fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
     })
-    .then(res => {
-        if (!res.ok) throw new Error(`Failed to fetch user info`);
-        return res.json();
+    .then(res => res.json())
+    .then(data => {
+        setGoogleUser(data);
+        localStorage.setItem('substream_google_user', JSON.stringify(data)); // Persist User Info
     })
-    .then(data => setGoogleUser(data))
     .catch(error => {
-        console.error(error);
+        console.error("Failed to fetch user info", error);
         setGoogleAccessToken(null);
         setGoogleUser(null);
+        localStorage.removeItem('substream_google_token');
+        localStorage.removeItem('substream_google_user');
     });
   };
 
   const handleGoogleLogout = () => {
     setGoogleUser(null);
     setGoogleAccessToken(null);
+    localStorage.removeItem('substream_google_token');
+    localStorage.removeItem('substream_google_user');
   };
 
   const saveSettings = () => {
@@ -598,6 +658,11 @@ const App = () => {
   ].includes(videoProcessingStatus);
   
   const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
+
+  // --- IF THIS IS THE POPUP, RENDER NOTHING ---
+  if (isAuthCallback) {
+      return null; // Don't render the app content in the auth popup
+  }
 
   if (currentPage === 'DOCS') {
     return <Documentation onBack={() => setCurrentPage('HOME')} />;
@@ -998,54 +1063,64 @@ const App = () => {
                 )}
               </div>
            </div>
-           <div className="space-y-6">
-              <div className="space-y-2">
-                 <div className="flex items-center justify-between">
-                    <label className="block text-sm font-bold text-white flex items-center gap-2"><Key className="w-4 h-4" /> Google AI API Key</label>
-                    {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
-                 </div>
-                <div className="relative">
-                   <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
-                   <div className="absolute right-3 top-3.5">
-                      {googleApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                      {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
-                      {googleApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
-                   </div>
-                </div>
-                <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
-              </div>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                    <label className="block text-sm font-bold text-white flex items-center gap-2"><Key className="w-4 h-4" /> OpenAI API Key</label>
-                    {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
-                 </div>
-                <div className="relative">
-                   <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
-                   <div className="absolute right-3 top-3.5">
-                      {openAIApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                      {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
-                      {openAIApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
-                   </div>
-                </div>
-                <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
-              </div>
-
-              <div className="space-y-2">
-                 <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
-                    <p className="font-medium text-white text-sm">{selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}</p>
-                 </div>
-                  <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
-                      <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${selectedRpmIndex * 100}%)` }} />
-                      {RPM_OPTIONS.map((option) => (
-                          <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
-                      ))}
+           
+           {/* RIGHT COLUMN */}
+           <div className="space-y-6 flex flex-col h-full">
+              <div className="space-y-6 flex-grow">
+                  <div className="space-y-2">
+                     <div className="flex items-center justify-between">
+                        <label className="block text-sm font-bold text-white flex items-center gap-2"><Key className="w-4 h-4" /> Google AI API Key</label>
+                        {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
+                     </div>
+                    <div className="relative">
+                       <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-3.5">
+                          {googleApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                          {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                          {googleApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       </div>
+                    </div>
+                    <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
                   </div>
-                   <p className="text-xs text-neutral-500 text-center mt-2">{RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
+                  
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <label className="block text-sm font-bold text-white flex items-center gap-2"><Key className="w-4 h-4" /> OpenAI API Key</label>
+                        {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
+                     </div>
+                    <div className="relative">
+                       <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-3.5">
+                          {openAIApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                          {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                          {openAIApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       </div>
+                    </div>
+                    <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
+                  </div>
+    
+                  <div className="space-y-2">
+                     <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
+                        <p className="font-medium text-white text-sm">{selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}</p>
+                     </div>
+                      <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
+                          <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${selectedRpmIndex * 100}%)` }} />
+                          {RPM_OPTIONS.map((option) => (
+                              <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
+                          ))}
+                      </div>
+                       <p className="text-xs text-neutral-500 text-center mt-2">{RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
+                  </div>
               </div>
               
-              <div className="flex justify-end gap-3 pt-4">
+              {/* FOOTER ACTIONS - MODIFIED */}
+              <div className="flex items-center justify-between w-full pt-6 mt-8 border-t border-neutral-800">
+                <YouTubeAuth 
+                    onLoginSuccess={handleGoogleLoginSuccess} 
+                    onLogout={handleGoogleLogout} 
+                    userInfo={googleUser} 
+                />
                 <Button onClick={saveSettings} disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating'}>Save Settings</Button>
               </div>
            </div>
