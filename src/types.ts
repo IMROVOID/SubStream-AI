@@ -49,7 +49,7 @@ export interface AIModel {
   name: string;
   description: string;
   tags: string[];
-  provider: 'google' | 'openai';
+  provider: 'google' | 'openai' | 'youtube';
   transcriptionModel?: string;
 }
 
@@ -72,6 +72,14 @@ export interface YouTubeCaptionTrack {
 }
 
 export const AVAILABLE_MODELS: AIModel[] = [
+  // YouTube Integration
+  {
+    id: 'youtube-auto',
+    name: 'YouTube Auto-Caption',
+    description: 'Uploads video to YouTube (Unlisted) to generate captions via Google speech recognition. Best for free, high-accuracy transcription.',
+    tags: ['Free', 'Cloud', 'Transcription Only'],
+    provider: 'youtube',
+  },
   // Google Models
   {
     id: 'gemini-3-pro-preview',

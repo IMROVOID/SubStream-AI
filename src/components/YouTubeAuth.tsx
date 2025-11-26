@@ -91,7 +91,7 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
     <Button 
         onClick={handleLogin} 
         type="button" 
-        className="bg-neutral-800 hover:bg-neutral-700 text-white border border-neutral-700 hover:border-neutral-600 px-4 py-3 transition-colors"
+        className="bg-[#151515] hover:bg-[#252525] text-white border border-neutral-800 hover:border-neutral-700 px-4 py-3 transition-colors"
         icon={<Youtube className="w-4 h-4 text-red-500" />}
     >
       Authenticate YouTube

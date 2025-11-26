@@ -83,7 +83,7 @@ const App = () => {
   const [tempOpenAIApiKey, setTempOpenAIApiKey] = useState<string>('');
   const [openAIApiKeyStatus, setOpenAIApiKeyStatus] = useState<ApiKeyStatus>('idle');
   
-  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[0].id);
+  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); // Default to Gemini 3 Pro (index 1, since 0 is YouTube)
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
@@ -302,6 +302,13 @@ const App = () => {
   };
 
   const handleGoogleLogout = () => {
+    // If the current model is YouTube Auto and we logout, switch to fallback
+    if (selectedModelId === 'youtube-auto') {
+        // Find next available model (Gemini 3 Pro usually index 1)
+        const fallbackModel = AVAILABLE_MODELS.find(m => m.provider === 'google') || AVAILABLE_MODELS[1];
+        setSelectedModelId(fallbackModel.id);
+    }
+
     setGoogleUser(null);
     setGoogleAccessToken(null);
     localStorage.removeItem('substream_google_token');
@@ -477,13 +484,30 @@ const App = () => {
 
   const handleGenerateSubtitles = async () => {
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
-    const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
-    const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
-
+    
     if (fileType === 'youtube') {
          setError("AI Audio transcription for YouTube links is currently limited. Please select a caption track.");
          return;
     }
+
+    // --- YOUTUBE TRANSCRIPTION LOGIC ---
+    if (activeModel.provider === 'youtube') {
+        if (!googleAccessToken || !googleUser) {
+            setActiveModal('CONFIG');
+            setError("Please authenticate with YouTube to use Auto-Caption.");
+            return;
+        }
+        // Currently this just acts as a placeholder for the legacy upload logic or future implementation
+        // Since we don't have the legacy `handleGenerateWithYouTube` wired up fully in this context
+        // We will show the user an info message or call the old function if present.
+        // For now, we'll call the placeholder logic which relies on `gapi` (legacy)
+        // But since we moved to new Auth, we might need to refactor uploadVideoToYouTube to use fetch with the accessToken
+        setError("YouTube Auto-Transcription logic is being updated to the new Auth flow. Please stick to Gemini models for now.");
+        return;
+    }
+
+    const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
 
     if (!ffmpegRef.current || (!apiKey && !hasDefaultKey)) {
         setActiveModal('CONFIG');
@@ -521,6 +545,13 @@ const App = () => {
     if (subtitles.length === 0) return;
     
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
+    
+    // Prevent Translation with YouTube Model
+    if (activeModel.provider === 'youtube') {
+        setError("YouTube Auto-Caption can only be used for generating subtitles from video, not for translating text. Please select a Gemini or OpenAI model.");
+        return;
+    }
+
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
 
@@ -648,6 +679,10 @@ const App = () => {
     return AVAILABLE_MODELS.filter(model => model.provider === 'openai' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
   }, [modelSearchQuery]);
   
+  const youtubeModel = useMemo(() => {
+      return AVAILABLE_MODELS.filter(model => model.provider === 'youtube');
+  }, []);
+
   const showProgressBar = [
     VideoProcessingStatus.EXTRACTING_AUDIO, 
     VideoProcessingStatus.TRANSCRIBING, 
@@ -967,41 +1002,6 @@ const App = () => {
         )}
       </main>
 
-      {/* FOOTER */}
-      <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8">
-            {/* Top Row */}
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
-                {/* Brand */}
-                <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-neutral-800 text-white flex items-center justify-center font-bold text-sm rounded font-display">S</div>
-                    <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
-                </div>
-
-                {/* Copyright (Middle) */}
-                <div className="text-xs text-neutral-600">
-                    &copy; {new Date().getFullYear()} SubStream AI. Open Source.
-                </div>
-
-                {/* Links (Right) */}
-                <div className="flex items-center gap-6 text-sm text-neutral-500">
-                    <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
-                    <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy</button>
-                    <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
-                </div>
-            </div>
-
-            {/* Bottom Row - Developer Info */}
-            <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-xs text-neutral-500 w-full">
-                <span>Developed by <a href="https://rovoid.ir" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
-                <span className="hidden md:block w-1 h-1 rounded-full bg-neutral-800"></span>
-                <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
-                    <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
-                </button>
-            </div>
-        </div>
-      </footer>
-
       {/* ... Modals ... */}
       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
@@ -1012,6 +1012,46 @@ const App = () => {
                 <input type="text" placeholder="Search models..." value={modelSearchQuery} onChange={(e) => setModelSearchQuery(e.target.value)} className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors" />
               </div>
               <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[450px] custom-scrollbar">
+                
+                {/* YOUTUBE MODELS (NEW) */}
+                {youtubeModel.length > 0 && (
+                  <details open className="group/youtube">
+                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
+                      <span className="font-bold text-neutral-300">YouTube Services</span>
+                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/youtube:rotate-180" />
+                    </summary>
+                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
+                      {youtubeModel.map((model) => {
+                        const isDisabled = !googleUser;
+                        return (
+                            <div 
+                                key={model.id} 
+                                onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                                className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 
+                                    ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                                      selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}
+                                `}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                      {model.name}
+                                      {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
+                                  </h4>
+                                  <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                                </div>
+                                {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              </div>
+                            </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
+
                 {filteredGoogleModels.length > 0 && (
                   <details open className="group/google">
                     <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
