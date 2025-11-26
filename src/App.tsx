@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
@@ -47,6 +47,10 @@ const App = () => {
   // Import Modal State
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importType, setImportType] = useState<'URL' | 'YOUTUBE' | 'GDRIVE' | 'SOCIAL' | null>(null);
+
+  // Notification State
+  const [toast, setToast] = useState<{ message: string; isVisible: boolean } | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Core App State
   const [file, setFile] = useState<File | null>(null);
@@ -234,6 +238,19 @@ const App = () => {
 
   // --- Helper Functions ---
 
+  const showToast = (message: string) => {
+    if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+    }
+    
+    setToast({ message, isVisible: true });
+
+    toastTimeoutRef.current = setTimeout(() => {
+        setToast(prev => prev ? { ...prev, isVisible: false } : null);
+        setTimeout(() => setToast(null), 500); // Wait for animation to finish
+    }, 3000);
+  };
+
   const updateUsage = (newRequests: number) => {
     const total = requestsUsed + newRequests;
     setRequestsUsed(total);
@@ -241,7 +258,6 @@ const App = () => {
     localStorage.setItem('substream_usage_date', new Date().toDateString());
   };
 
-  // Standardized Filename Generator
   const getOutputFilename = (extension: string) => {
     let baseName = 'video';
     
@@ -251,18 +267,10 @@ const App = () => {
         baseName = youtubeMeta.title;
     }
 
-    // Sanitize
     const cleanBase = baseName.replace(/[^a-zA-Z0-9 \-_]/g, '').trim();
-    
-    // Determine Action
-    // If using YouTube Auto model (uploading), we are "transcribing"
-    // If using AI model and source==auto or source==target, we are "transcribing"
-    // Otherwise "translating"
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId);
     const isTranscribing = activeModel?.provider === 'youtube' || sourceLang === 'auto' || sourceLang === targetLang;
     const action = isTranscribing ? 'Transcribed' : 'Translated';
-    
-    // Language Suffix
     const langName = isTranscribing ? 'Auto' : (LANGUAGES.find(l => l.name === targetLang)?.name || 'English');
     
     return `SubStream_${cleanBase}_${action}_${langName}.${extension}`;
@@ -306,6 +314,7 @@ const App = () => {
     .then(data => {
         setGoogleUser(data);
         localStorage.setItem('substream_google_user', JSON.stringify(data));
+        showToast(`Welcome, ${data.name}!`); // Notify user
     })
     .catch(error => {
         console.error("Failed to fetch user info", error);
@@ -326,6 +335,7 @@ const App = () => {
     setGoogleAccessToken(null);
     localStorage.removeItem('substream_google_token');
     localStorage.removeItem('substream_google_user');
+    showToast("Disconnected from YouTube.");
   };
 
   const saveSettings = () => {
@@ -341,6 +351,7 @@ const App = () => {
     localStorage.setItem('substream_rpm', selectedRPM.toString());
     setGlobalRPM(selectedRPM);
     setActiveModal('NONE');
+    showToast("Configuration Saved.");
   };
 
   const clearGoogleApiKey = () => {
@@ -501,7 +512,6 @@ const App = () => {
          return;
     }
 
-    // --- YOUTUBE TRANSCRIPTION LOGIC ---
     if (activeModel.provider === 'youtube') {
         if (!googleAccessToken || !googleUser || !file) {
             if (!file) {
@@ -516,17 +526,13 @@ const App = () => {
         try {
             setError(null);
             
-            // 1. Upload
             setVideoProcessingStatus(VideoProcessingStatus.UPLOADING_TO_YOUTUBE);
             setVideoProcessingMessage('Uploading video to YouTube (Unlisted)...');
             setFfmpegProgress(0); 
             
-            // Use standardized title for upload
-            const uploadTitle = getOutputFilename('').replace('SubStream_', '').replace(/\.$/, '').replace(/_/g, ' '); // "MyMovie Transcribed Auto"
-            
+            const uploadTitle = getOutputFilename('').replace('SubStream_', '').replace(/\.$/, '').replace(/_/g, ' ');
             const videoId = await uploadVideoToYouTube(googleAccessToken, file, uploadTitle);
             
-            // 2. Poll for Captions
             setVideoProcessingStatus(VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS);
             const captionId = await checkYouTubeCaptionStatus(
                 googleAccessToken, 
@@ -534,12 +540,10 @@ const App = () => {
                 (msg) => setVideoProcessingMessage(msg)
             );
             
-            // 3. Download Caption
             setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
             setVideoProcessingMessage('Downloading generated captions...');
             const captionText = await downloadYouTubeCaptionTrackOAuth(googleAccessToken, captionId);
             
-            // 4. Parse
             const parsed = parseSRT(captionText);
             if (parsed.length === 0) throw new Error("Downloaded caption file is empty.");
             
@@ -554,7 +558,6 @@ const App = () => {
         return;
     }
 
-    // --- AI MODEL TRANSCRIPTION LOGIC ---
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
 
@@ -638,13 +641,11 @@ const App = () => {
   const handleDownloadSrt = () => {
     if (subtitles.length === 0) return;
     const content = stringifySRT(subtitles);
-    // Use new filename generator
     const filename = getOutputFilename('srt');
     downloadFile(filename, content);
   };
 
   const handleDownloadVideo = async () => {
-    // Calculate filename once
     const fileName = getOutputFilename('mp4');
 
     if (fileType === 'youtube') {
@@ -655,7 +656,6 @@ const App = () => {
         setDownloadStatusText('Initializing...');
         setIsDownloadComplete(false);
 
-        // Progress Simulation
         progressInterval.current = setInterval(() => {
             setDownloadProgress(prev => {
                 if (prev === undefined) return 0;
@@ -698,7 +698,6 @@ const App = () => {
         const finalSrt = stringifySRT(subtitles);
         const targetLangData = LANGUAGES.find(l => l.name === targetLang);
         
-        // Ensure mkv extension for ffmpeg output
         const mkvFileName = fileName.replace('.mp4', '.mkv');
         const newVideoBlob = await addSrtToVideo(ffmpegRef.current, file, finalSrt, targetLangData?.code || 'eng');
         
@@ -752,6 +751,18 @@ const App = () => {
       <div className="fixed inset-0 pointer-events-none z-0">
          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-neutral-900/30 blur-[120px] rounded-full mix-blend-screen" />
          <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-neutral-800/20 blur-[100px] rounded-full mix-blend-screen" />
+      </div>
+
+      {/* Toast Notification Container */}
+      <div className={`
+          fixed bottom-10 left-1/2 transform -translate-x-1/2 z-50 
+          flex items-center gap-3 px-6 py-3.5 rounded-full min-w-[320px] justify-center
+          bg-neutral-900/30 border border-white/10 text-white shadow-[0_0_30px_rgba(0,0,0,0.3)] backdrop-blur-xl
+          transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1)
+          ${toast?.isVisible ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-8 opacity-0 scale-95 pointer-events-none'}
+      `}>
+         <Sparkles className="w-5 h-5 text-indigo-400 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]" />
+         <span className="text-sm font-medium tracking-wide">{toast?.message}</span>
       </div>
 
       <nav className="relative z-20 border-b border-neutral-900 bg-black/80 backdrop-blur-xl sticky top-0 transition-all">
@@ -838,10 +849,10 @@ const App = () => {
                            <button onClick={() => { setImportType('YOUTUBE'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-red-500/50 transition-all group/btn" title="Import from YouTube">
                              <Youtube className="w-5 h-5 text-neutral-400 group-hover/btn:text-red-500" />
                            </button>
-                           <button onClick={() => alert("Google Drive Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn" title="Import from Google Drive">
+                           <button onClick={() => showToast("Google Drive Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn" title="Import from Google Drive">
                              <HardDrive className="w-5 h-5 text-neutral-400 group-hover/btn:text-blue-500" />
                            </button>
-                           <button onClick={() => alert("Social Media Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-pink-500/50 transition-all group/btn" title="Other Sources">
+                           <button onClick={() => showToast("Social Media Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-pink-500/50 transition-all group/btn" title="Other Sources">
                              <Instagram className="w-5 h-5 text-neutral-400 group-hover/btn:text-pink-500" />
                            </button>
                         </div>
@@ -1090,46 +1101,6 @@ const App = () => {
                 <input type="text" placeholder="Search models..." value={modelSearchQuery} onChange={(e) => setModelSearchQuery(e.target.value)} className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors" />
               </div>
               <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[450px] custom-scrollbar">
-                
-                {/* YOUTUBE MODELS (NEW) */}
-                {youtubeModel.length > 0 && (
-                  <details open className="group/youtube">
-                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
-                      <span className="font-bold text-neutral-300">YouTube Services</span>
-                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/youtube:rotate-180" />
-                    </summary>
-                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
-                      {youtubeModel.map((model) => {
-                        const isDisabled = !googleUser;
-                        return (
-                            <div 
-                                key={model.id} 
-                                onClick={() => !isDisabled && setSelectedModelId(model.id)} 
-                                className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 
-                                    ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
-                                      selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}
-                                `}
-                            >
-                              <div className="flex items-start justify-between">
-                                <div>
-                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
-                                      {model.name}
-                                      {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
-                                  </h4>
-                                  <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
-                                </div>
-                                {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
-                              </div>
-                              <div className="flex gap-2 mt-3">
-                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
-                              </div>
-                            </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                )}
-
                 {filteredGoogleModels.length > 0 && (
                   <details open className="group/google">
                     <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
