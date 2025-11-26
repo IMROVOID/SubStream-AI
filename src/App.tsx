@@ -83,7 +83,7 @@ const App = () => {
   const [tempOpenAIApiKey, setTempOpenAIApiKey] = useState<string>('');
   const [openAIApiKeyStatus, setOpenAIApiKeyStatus] = useState<ApiKeyStatus>('idle');
   
-  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); // Default to Gemini 3 Pro (index 1, since 0 is YouTube)
+  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); // Default to Gemini 3 Pro
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
@@ -113,15 +113,11 @@ const App = () => {
         const accessToken = params.get('access_token');
 
         if (accessToken) {
-            // Send token to the main window
             const channel = new BroadcastChannel('substream_auth_channel');
             channel.postMessage({ token: accessToken });
             channel.close();
-
-            // Close this popup
             window.close();
             
-            // Fallback message if window.close() is blocked
             document.body.innerHTML = `
                 <div style="background:black; color:white; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif;">
                     <div style="font-size:24px; font-weight:bold; margin-bottom:10px;">Authentication Successful</div>
@@ -137,7 +133,6 @@ const App = () => {
     const channel = new BroadcastChannel('substream_auth_channel');
     channel.onmessage = (event) => {
         if (event.data && event.data.token) {
-            console.log("Received token from popup");
             handleGoogleLoginSuccess({ access_token: event.data.token } as TokenResponse);
         }
     };
@@ -154,7 +149,6 @@ const App = () => {
     const lastUsageDate = localStorage.getItem('substream_usage_date');
     const today = new Date().toDateString();
 
-    // Load API Keys
     if (storedGoogleKey) {
       setUserGoogleApiKey(storedGoogleKey);
       setTempGoogleApiKey(storedGoogleKey);
@@ -166,12 +160,10 @@ const App = () => {
       setOpenAIApiKeyStatus('valid');
     }
 
-    // Load Model Settings
     if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
       setSelectedModelId(storedModel);
     }
     
-    // Load RPM
     if (storedRPM) {
         const rpm = (storedRPM === 'unlimited' ? 'unlimited' : parseInt(storedRPM, 10)) as RPMLimit;
         setSelectedRPM(rpm);
@@ -180,7 +172,6 @@ const App = () => {
         setGlobalRPM(15); 
     }
 
-    // Load Usage
     if (lastUsageDate === today && storedUsage) {
       setRequestsUsed(parseInt(storedUsage, 10));
     } else {
@@ -189,7 +180,6 @@ const App = () => {
       localStorage.setItem('substream_daily_usage', '0');
     }
 
-    // Load Persisted Google User
     const savedUser = localStorage.getItem('substream_google_user');
     const savedToken = localStorage.getItem('substream_google_token');
     if (savedUser && savedToken) {
@@ -200,7 +190,6 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    // --- Key Validation Effects ---
     if (tempGoogleApiKey === '') {
       setGoogleApiKeyStatus('idle');
       return;
@@ -281,16 +270,15 @@ const App = () => {
     
     const accessToken = tokenResponse.access_token;
     setGoogleAccessToken(accessToken);
-    localStorage.setItem('substream_google_token', accessToken); // Persist Token
+    localStorage.setItem('substream_google_token', accessToken);
     
-    // Fetch User Info
     fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
     })
     .then(res => res.json())
     .then(data => {
         setGoogleUser(data);
-        localStorage.setItem('substream_google_user', JSON.stringify(data)); // Persist User Info
+        localStorage.setItem('substream_google_user', JSON.stringify(data));
     })
     .catch(error => {
         console.error("Failed to fetch user info", error);
@@ -302,9 +290,7 @@ const App = () => {
   };
 
   const handleGoogleLogout = () => {
-    // If the current model is YouTube Auto and we logout, switch to fallback
     if (selectedModelId === 'youtube-auto') {
-        // Find next available model (Gemini 3 Pro usually index 1)
         const fallbackModel = AVAILABLE_MODELS.find(m => m.provider === 'google') || AVAILABLE_MODELS[1];
         setSelectedModelId(fallbackModel.id);
     }
@@ -343,8 +329,6 @@ const App = () => {
     setTempOpenAIApiKey('');
     setOpenAIApiKeyStatus('idle');
   };
-
-  // --- Import Handlers ---
 
   const handleImportYouTube = (meta: YouTubeVideoMetadata) => {
       setFile(null);
@@ -497,11 +481,6 @@ const App = () => {
             setError("Please authenticate with YouTube to use Auto-Caption.");
             return;
         }
-        // Currently this just acts as a placeholder for the legacy upload logic or future implementation
-        // Since we don't have the legacy `handleGenerateWithYouTube` wired up fully in this context
-        // We will show the user an info message or call the old function if present.
-        // For now, we'll call the placeholder logic which relies on `gapi` (legacy)
-        // But since we moved to new Auth, we might need to refactor uploadVideoToYouTube to use fetch with the accessToken
         setError("YouTube Auto-Transcription logic is being updated to the new Auth flow. Please stick to Gemini models for now.");
         return;
     }
@@ -546,7 +525,6 @@ const App = () => {
     
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
     
-    // Prevent Translation with YouTube Model
     if (activeModel.provider === 'youtube') {
         setError("YouTube Auto-Caption can only be used for generating subtitles from video, not for translating text. Please select a Gemini or OpenAI model.");
         return;
@@ -696,7 +674,7 @@ const App = () => {
 
   // --- IF THIS IS THE POPUP, RENDER NOTHING ---
   if (isAuthCallback) {
-      return null; // Don't render the app content in the auth popup
+      return null; 
   }
 
   if (currentPage === 'DOCS') {
@@ -1001,6 +979,41 @@ const App = () => {
           </section>
         )}
       </main>
+
+      {/* FOOTER */}
+      <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
+        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8">
+            {/* Top Row */}
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
+                {/* Brand */}
+                <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 bg-neutral-800 text-white flex items-center justify-center font-bold text-sm rounded font-display">S</div>
+                    <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
+                </div>
+
+                {/* Copyright (Middle) */}
+                <div className="text-xs text-neutral-600">
+                    &copy; {new Date().getFullYear()} SubStream AI. Open Source.
+                </div>
+
+                {/* Links (Right) */}
+                <div className="flex items-center gap-6 text-sm text-neutral-500">
+                    <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
+                    <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy</button>
+                    <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
+                </div>
+            </div>
+
+            {/* Bottom Row - Developer Info */}
+            <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-xs text-neutral-500 w-full">
+                <span>Developed by <a href="https://rovoid.ir" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
+                <span className="hidden md:block w-1 h-1 rounded-full bg-neutral-800"></span>
+                <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
+                    <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
+                </button>
+            </div>
+        </div>
+      </footer>
 
       {/* ... Modals ... */}
       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
