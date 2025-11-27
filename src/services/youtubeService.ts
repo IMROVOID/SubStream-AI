@@ -147,8 +147,8 @@ function formatDuration(isoDuration: string): string {
 }
 
 /**
- * Uploads a video to YouTube using the Local Proxy for Init and Binary Upload.
- * This completely bypasses the browser COEP/CORS restrictions.
+ * Uploads a video to YouTube using the Local Proxy for Init and Direct Browser Upload for Binary.
+ * This prevents the local server from handling heavy video data.
  */
 export async function uploadVideoToYouTube(accessToken: string, videoFile: File, title: string, onProgress?: (percent: number) => void): Promise<string> {
     
@@ -203,32 +203,28 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
     const { location: uploadUrl } = await initResp.json();
     if (!uploadUrl) throw new Error("Backend did not return an upload location.");
 
-    // 2. Upload binary via Local Proxy to bypass CORS
+    // 2. Upload binary VIA LOCAL PROXY to avoid CORS
+    // Browser -> LocalHost:4000 -> Google
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         
-        // POINT TO PROXY INSTEAD OF GOOGLE
-        const proxyUploadUrl = `${BACKEND_URL}/proxy/upload-binary?url=${encodeURIComponent(uploadUrl)}`;
+        // Point to our local proxy endpoint
+        xhr.open('PUT', `${BACKEND_URL}/proxy/upload-finish`, true);
         
-        xhr.open('PUT', proxyUploadUrl, true);
+        // Pass the actual Google Upload URL in a custom header
+        xhr.setRequestHeader('x-upload-url', uploadUrl);
         xhr.setRequestHeader('Content-Type', videoFile.type || 'video/mp4');
 
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable && onProgress) {
-                // VISUAL FIX: Clamp progress to 90% because local transfer is instant.
-                // It will hang at 90% while the server uploads to YouTube, then jump to 100%.
-                const rawPercent = Math.round((e.loaded / e.total) * 100);
-                const visualPercent = Math.min(rawPercent, 90); 
-                onProgress(visualPercent);
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                onProgress(percentComplete);
             }
         };
 
         xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 try {
-                    // Update to 100% on success
-                    if (onProgress) onProgress(100);
-                    
                     const uploadData = JSON.parse(xhr.responseText);
                     resolve(uploadData.id);
                 } catch (e) {
@@ -239,7 +235,7 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
             }
         };
 
-        xhr.onerror = () => reject(new Error("Network Error during Binary Upload via Proxy."));
+        xhr.onerror = () => reject(new Error("Network Error during Binary Upload (Check Backend Connection)."));
         
         xhr.send(videoFile);
     });
@@ -258,6 +254,7 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
         try {
             if (onProgress) onProgress(`Waiting for YouTube to generate captions... (${i + 1}/${MAX_ATTEMPTS})`, percent);
             
+            // Proxy this call to avoid CORS/COEP
             const response = await fetch(`${BACKEND_URL}/proxy/captions?token=${encodeURIComponent(accessToken)}&videoId=${videoId}`);
 
             if (!response.ok) {

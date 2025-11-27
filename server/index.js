@@ -3,7 +3,8 @@ const cors = require('cors');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 const ffmpegPath = require('ffmpeg-static'); 
 const axios = require('axios');
-const https = require('https'); 
+// Import HttpsProxyAgent to handle v2ray/local proxy tunnels correctly
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const path = require('path');
 const fs = require('fs');
 
@@ -12,7 +13,8 @@ const PORT = 4000;
 
 app.use(cors());
 
-// Increase limit to handle large JSON payloads
+// Increase limit to handle large JSON payloads if necessary
+// Note: This middleware is for parsing JSON bodies. Binary uploads via streams won't be affected if content-type differs.
 app.use(express.json({ limit: '50mb' })); 
 
 // --- CONFIGURATION ---
@@ -26,6 +28,19 @@ if (!fs.existsSync(TEMP_DIR)) {
 
 // Initialize yt-dlp wrapper
 const ytDlpWrap = new YTDlpWrap(YT_DLP_BINARY_PATH);
+
+// --- PROXY CONFIGURATION HELPER ---
+const getSystemProxy = () => {
+    // 1. Check Environment Variables first
+    const envProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (envProxy) return envProxy;
+
+    // 2. Fallback: Assume v2rayN default HTTP port (10809) on Windows
+    return 'http://127.0.0.1:10809';
+};
+
+const PROXY_URL = getSystemProxy();
+console.log(`[Server] Network Proxy Configuration: ${PROXY_URL ? PROXY_URL : 'Direct Connection'}`);
 
 // --- HELPERS ---
 const ensureBinary = async () => {
@@ -47,22 +62,32 @@ ensureBinary();
 
 // --- AXIOS CLIENT CONFIGURATION ---
 const createAxiosClient = () => {
-    const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-    
     const config = {
-        timeout: 60000, // Default 60s timeout for normal requests
-        headers: { 'Cache-Control': 'no-cache' },
+        timeout: 60000, // Default 60s timeout
+        headers: { 
+            'Cache-Control': 'no-cache',
+            // Spoof User-Agent to look like a browser (helps with Google API checks)
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+        },
         maxBodyLength: Infinity, 
         maxContentLength: Infinity
     };
 
-    if (proxyUrl) {
-        console.log(`[Server] System Proxy detected: ${proxyUrl}. Using default Axios proxy handler.`);
+    if (PROXY_URL) {
+        try {
+            // Use HttpsProxyAgent for robust tunneling
+            const agent = new HttpsProxyAgent(PROXY_URL);
+            config.httpsAgent = agent;
+            
+            // IMPORTANT: Disable axios native proxy logic to prevent conflicts
+            config.proxy = false; 
+            
+        } catch (e) {
+            console.warn("[Server] Invalid Proxy URL format. Falling back to direct.", e.message);
+        }
     } else {
-        config.httpsAgent = new https.Agent({ 
-            keepAlive: true, // Keep connection alive for uploads
-            family: 4 
-        });
+        // Direct connection optimization
+        config.proxy = false; 
     }
 
     return axios.create(config);
@@ -78,13 +103,14 @@ const makeRequestWithRetry = async (config, retries = 3) => {
         const isNetworkError = !error.response && (
             error.code === 'ECONNRESET' || 
             error.code === 'ETIMEDOUT' || 
+            error.code === 'ERR_BAD_RESPONSE' ||
             (error.message && error.message.includes('socket disconnected')) ||
             (error.message && error.message.includes('timeout'))
         );
         
         if (isNetworkError && retries > 0) {
-            console.log(`[Proxy] Network error (${error.message}). Retrying... (${retries} left)`);
-            await new Promise(r => setTimeout(r, 1500)); // Wait 1.5s
+            console.log(`[Proxy] Network error (${error.message || error.code}). Retrying... (${retries} left)`);
+            await new Promise(r => setTimeout(r, 2000)); // Wait 2s
             return makeRequestWithRetry(config, retries - 1);
         }
         throw error;
@@ -194,6 +220,8 @@ app.post('/api/proxy/upload-init', async (req, res) => {
     if (!token) return res.status(401).json({ error: "No token provided" });
 
     try {
+        console.log("Proxy: Initiating Upload...");
+        // Call Google API using the configured Axios client (with Proxy Agent)
         const response = await makeRequestWithRetry({
             method: 'post',
             url: 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
@@ -205,43 +233,62 @@ app.post('/api/proxy/upload-init', async (req, res) => {
                 'X-Upload-Content-Type': fileType
             }
         });
+        
+        console.log("Proxy: Upload URL received.");
         res.json({ location: response.headers.location });
     } catch (e) {
         const status = e.response?.status || 500;
         const data = e.response?.data || { error: e.message };
-        console.error(`Proxy Upload Init Error (${status}):`, JSON.stringify(data, null, 2));
+        
+        console.error(`Proxy Upload Init Error (${status}):`);
+        if (e.code) console.error(`Error Code: ${e.code}`);
+        if (data) console.error(JSON.stringify(data, null, 2));
+        
         res.status(status).json(data);
     }
 });
 
-// NEW: Endpoint to handle the actual binary upload via proxy to bypass CORS
-app.put('/api/proxy/upload-binary', async (req, res) => {
-    const { url } = req.query;
-    
-    if (!url) return res.status(400).json({ error: "Missing upload URL" });
+// NEW: Endpoint to handle the actual binary upload via proxy
+app.put('/api/proxy/upload-finish', async (req, res) => {
+    const uploadUrl = req.headers['x-upload-url'];
+    const contentType = req.headers['content-type'];
+    const contentLength = req.headers['content-length'];
 
-    // req is the readable stream of the file from the browser
+    if (!uploadUrl) {
+        return res.status(400).json({ error: "Missing 'x-upload-url' header" });
+    }
+
     try {
-        // IMPORTANT: Disable timeout for this specific request because video uploads take time
+        console.log("Proxy: Streaming binary upload to Google...");
+        
+        // Stream the incoming request directly to Google
+        // We use req as the data stream. express.json() ignores non-json content types, 
+        // so the stream should be intact for video files.
         const response = await axiosClient({
             method: 'put',
-            url: url,
-            data: req, // Stream directly to Google
-            timeout: 0, // <--- DISABLED TIMEOUT
+            url: uploadUrl,
+            data: req, 
             headers: {
-                'Content-Type': req.headers['content-type'],
-                'Content-Length': req.headers['content-length']
-            }
+                'Content-Type': contentType,
+                'Content-Length': contentLength
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            timeout: 0, // IMPORTANT: Disable timeout for large video uploads
+            responseType: 'json' 
         });
-        
+
+        console.log("Proxy: Upload completed successfully.");
         res.json(response.data);
+
     } catch (e) {
-        console.error("Binary Upload Proxy Error:", e.message);
-        // If it's a network error, it might be due to client disconnection
+        console.error("Proxy Upload Finish Error:", e.message);
         const status = e.response?.status || 500;
-        res.status(status).json(e.response?.data || { error: e.message });
+        const data = e.response?.data || { error: e.message };
+        res.status(status).json(data);
     }
 });
+
 
 app.get('/api/proxy/captions', async (req, res) => {
     const { token, videoId } = req.query;
@@ -292,9 +339,8 @@ const getCommonYtDlpArgs = () => {
         '--referer', 'https://www.youtube.com/'
     ];
 
-    const sysProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-    if (sysProxy) {
-        args.push('--proxy', sysProxy);
+    if (PROXY_URL) {
+        args.push('--proxy', PROXY_URL);
     }
 
     return args;
