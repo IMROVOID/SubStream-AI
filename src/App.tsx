@@ -866,15 +866,15 @@ const App = () => {
 
       <nav className="relative z-20 border-b border-neutral-900 bg-black/80 backdrop-blur-xl sticky top-0 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.reload()}>
+          <div className="flex items-center gap-2 cursor-pointer shrink-0" onClick={() => window.location.reload()}>
             <div className="w-8 h-8 bg-white text-black flex items-center justify-center font-bold text-xl rounded-lg font-display">S</div>
             <span className="font-display font-bold text-lg tracking-tight">SubStream <span className="text-neutral-600 font-sans font-normal text-sm ml-2">AI</span></span>
           </div>
           <div className="flex items-center gap-2 md:gap-6 text-sm font-medium text-neutral-400">
              <button onClick={() => setCurrentPage('DOCS')} className="hidden md:block hover:text-white transition-colors focus:outline-none">Documentation</button>
              <button onClick={() => setCurrentPage('DOCS')} className="p-2 rounded-full hover:bg-neutral-800 transition-colors group md:hidden" aria-label="Documentation"><BookText className="w-5 h-5 text-neutral-400 group-hover:text-white" /></button>
-             <button onClick={() => setActiveModal('CONFIG')} className={`flex items-center gap-3 pl-3 pr-2 py-1.5 rounded-xl border transition-all group ${hasProAccess ? 'bg-neutral-900/50 border-neutral-800 hover:border-white/30' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'}`}>
-                <div className="text-xs text-right">
+             <button onClick={() => setActiveModal('CONFIG')} className={`flex items-center gap-1.5 md:gap-3 pl-2 md:pl-3 pr-1.5 md:pr-2 py-1 md:py-1.5 rounded-xl border transition-all group ${hasProAccess ? 'bg-neutral-900/50 border-neutral-800 hover:border-white/30' : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'}`}>
+                <div className="text-xs text-right max-w-[110px] md:max-w-none leading-tight">
                    <div className="font-bold text-white">{activeModelData.name}</div>
                    <div className={`text-[10px] uppercase ${hasProAccess ? 'text-green-400' : 'text-neutral-500'}`}>{hasProAccess ? 'Pro Access' : `${remainingQuota} Credits`}</div>
                 </div>
