@@ -473,7 +473,8 @@ const App = () => {
           if (e.message.includes("Stale data")) {
               setError(e.message);
           } else {
-              setError("Failed to download captions: " + e.message);
+              // Changed: Do not prepend "Failed to download captions: " again
+              setError(e.message || "Failed to download captions");
           }
           setVideoProcessingStatus(VideoProcessingStatus.ERROR);
       }

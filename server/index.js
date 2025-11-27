@@ -11,7 +11,9 @@ const app = express();
 const PORT = 4000;
 
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+
+// Increase limit to handle large JSON payloads
+app.use(express.json({ limit: '50mb' })); 
 
 // --- CONFIGURATION ---
 const TEMP_DIR = path.join(__dirname, 'temp');
@@ -48,17 +50,17 @@ const createAxiosClient = () => {
     const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
     
     const config = {
-        timeout: 60000, // 60s timeout
-        headers: { 'Cache-Control': 'no-cache' }
+        timeout: 60000, // Default 60s timeout for normal requests
+        headers: { 'Cache-Control': 'no-cache' },
+        maxBodyLength: Infinity, 
+        maxContentLength: Infinity
     };
 
     if (proxyUrl) {
         console.log(`[Server] System Proxy detected: ${proxyUrl}. Using default Axios proxy handler.`);
     } else {
-        console.log(`[Server] No System Proxy detected. Using custom HTTPS Agent (IPv4 forced).`);
-        // When NO proxy is set, force IPv4 and disable keepAlive
         config.httpsAgent = new https.Agent({ 
-            keepAlive: false, 
+            keepAlive: true, // Keep connection alive for uploads
             family: 4 
         });
     }
@@ -91,7 +93,6 @@ const makeRequestWithRetry = async (config, retries = 3) => {
 
 // --- GENERAL FILE PROXY ---
 
-// 1. Check File Info (HEAD)
 app.get('/api/proxy/file-head', async (req, res) => {
     const { url } = req.query;
     const proxyAuth = req.headers['x-proxy-auth']; 
@@ -125,7 +126,6 @@ app.get('/api/proxy/file-head', async (req, res) => {
     }
 });
 
-// 2. Download File (GET Stream)
 app.get('/api/proxy/file-get', async (req, res) => {
     const { url, token } = req.query;
     let proxyAuth = req.headers['x-proxy-auth'];
@@ -140,7 +140,6 @@ app.get('/api/proxy/file-get', async (req, res) => {
         const headers = {};
         if (proxyAuth) headers['Authorization'] = proxyAuth;
 
-        // Use the configured client (with proxy or custom agent)
         const response = await axiosClient({
             method: 'get',
             url: url,
@@ -154,7 +153,6 @@ app.get('/api/proxy/file-get', async (req, res) => {
         if (contentType) res.setHeader('Content-Type', contentType);
         if (contentLength) res.setHeader('Content-Length', contentLength);
 
-        // FIX: Add header to allow embedding in COEP environments (fixes broken images)
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
         response.data.pipe(res);
@@ -165,7 +163,6 @@ app.get('/api/proxy/file-get', async (req, res) => {
     }
 });
 
-// 3. Google Drive API List Proxy
 app.get('/api/proxy/drive/list', async (req, res) => {
     const { token, query, fields, orderBy, pageSize } = req.query;
 
@@ -217,6 +214,35 @@ app.post('/api/proxy/upload-init', async (req, res) => {
     }
 });
 
+// NEW: Endpoint to handle the actual binary upload via proxy to bypass CORS
+app.put('/api/proxy/upload-binary', async (req, res) => {
+    const { url } = req.query;
+    
+    if (!url) return res.status(400).json({ error: "Missing upload URL" });
+
+    // req is the readable stream of the file from the browser
+    try {
+        // IMPORTANT: Disable timeout for this specific request because video uploads take time
+        const response = await axiosClient({
+            method: 'put',
+            url: url,
+            data: req, // Stream directly to Google
+            timeout: 0, // <--- DISABLED TIMEOUT
+            headers: {
+                'Content-Type': req.headers['content-type'],
+                'Content-Length': req.headers['content-length']
+            }
+        });
+        
+        res.json(response.data);
+    } catch (e) {
+        console.error("Binary Upload Proxy Error:", e.message);
+        // If it's a network error, it might be due to client disconnection
+        const status = e.response?.status || 500;
+        res.status(status).json(e.response?.data || { error: e.message });
+    }
+});
+
 app.get('/api/proxy/captions', async (req, res) => {
     const { token, videoId } = req.query;
 
@@ -255,7 +281,24 @@ app.get('/api/proxy/download-caption', async (req, res) => {
 });
 
 
-// --- EXISTING YT-DLP ENDPOINTS ---
+// --- YT-DLP ENDPOINTS ---
+
+const getCommonYtDlpArgs = () => {
+    const args = [
+        '--no-playlist',
+        '--no-check-certificates',
+        '--force-ipv4',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--referer', 'https://www.youtube.com/'
+    ];
+
+    const sysProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    if (sysProxy) {
+        args.push('--proxy', sysProxy);
+    }
+
+    return args;
+};
 
 app.get('/api/info', async (req, res) => {
     const url = req.query.url;
@@ -264,13 +307,14 @@ app.get('/api/info', async (req, res) => {
     await ensureBinary();
 
     try {
-        const metadata = await ytDlpWrap.execPromise([
+        const args = [
             url,
             '--dump-json',
-            '--no-playlist',
             '--skip-download',
-            '--force-ipv4'
-        ]);
+            ...getCommonYtDlpArgs()
+        ];
+
+        const metadata = await ytDlpWrap.execPromise(args);
         
         const info = JSON.parse(metadata);
         const videoUrl = info.webpage_url || url;
@@ -365,7 +409,7 @@ app.get('/api/caption', async (req, res) => {
             '--convert-subs', 'srt',
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath,
-            '--force-ipv4'
+            ...getCommonYtDlpArgs()
         ];
 
         if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
@@ -376,7 +420,9 @@ app.get('/api/caption', async (req, res) => {
         const files = fs.readdirSync(TEMP_DIR);
         const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
 
-        if (!generatedFile) throw new Error("Subtitle file not generated.");
+        if (!generatedFile) {
+            throw new Error(`Subtitle file not generated.`);
+        }
 
         const filePath = path.join(TEMP_DIR, generatedFile);
         const content = fs.readFileSync(filePath, 'utf-8');
@@ -389,7 +435,9 @@ app.get('/api/caption', async (req, res) => {
             const files = fs.readdirSync(TEMP_DIR);
             files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
         } catch (e) {}
-        res.status(500).send(`Failed to download captions: ${error.message.split('\n')[0]}`);
+
+        console.error("YT-DLP Caption Error:", error.message);
+        res.status(500).send(error.message || "Unknown error during subtitle download");
     }
 });
 
@@ -422,7 +470,7 @@ app.get('/api/download-video', async (req, res) => {
             '--embed-thumbnail',
             '--convert-subs', 'srt',
             '--merge-output-format', 'mp4',
-            '--force-ipv4'
+            ...getCommonYtDlpArgs()
         ];
 
         if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
@@ -459,6 +507,7 @@ app.get('/api/download-video', async (req, res) => {
              const files = fs.readdirSync(TEMP_DIR);
              files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
         } catch (e) {}
+        console.error("YT-DLP Video Error:", error.message);
         res.status(500).send(`Video processing failed: ${error.message}`);
     }
 });

@@ -63,7 +63,6 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
     });
     
     try {
-        // Use fetch to handle errors and completion
         const response = await fetch(`${BACKEND_URL}/download-video?${query.toString()}`);
         
         if (!response.ok) {
@@ -71,10 +70,8 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
              throw new Error(errorText || "Download failed on server.");
         }
 
-        // Convert to blob and trigger download
         const blob = await response.blob();
         
-        // Ensure the downloaded file has the correct extension
         const downloadName = fileName.endsWith('.mp4') ? fileName : `${fileName}.mp4`;
         downloadFile(downloadName, blob);
 
@@ -88,7 +85,6 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
 // --- GOOGLE OAUTH PROXY METHODS (Resolves COEP/CORS Issues) ---
 
 export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserVideo[]> {
-    // 1. Get Uploads Playlist ID
     const channelResp = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -104,7 +100,6 @@ export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserV
 
     if (!uploadsPlaylistId) return [];
 
-    // 2. Get Playlist Items (Max 50)
     const playlistResp = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&playlistId=${uploadsPlaylistId}&maxResults=50`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -118,7 +113,6 @@ export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserV
     const videoIds = playlistData.items.map((item: any) => item.contentDetails.videoId).join(',');
     if (!videoIds) return [];
 
-    // 3. Get Video Details
     const videosResp = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status,contentDetails&id=${videoIds}`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -153,8 +147,8 @@ function formatDuration(isoDuration: string): string {
 }
 
 /**
- * Uploads a video to YouTube using the Local Proxy for Init.
- * This completely bypasses the browser COEP/CORS restrictions for the initial request.
+ * Uploads a video to YouTube using the Local Proxy for Init and Binary Upload.
+ * This completely bypasses the browser COEP/CORS restrictions.
  */
 export async function uploadVideoToYouTube(accessToken: string, videoFile: File, title: string, onProgress?: (percent: number) => void): Promise<string> {
     
@@ -183,8 +177,6 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
     if (!initResp.ok) {
         const err = await initResp.json().catch(() => ({}));
         
-        // --- IMPROVED ERROR PARSING ---
-        // Google errors come as { error: { code: 403, message: "..." } }
         let errorMessage = "Unknown Error";
         if (err.error && typeof err.error === 'object' && err.error.message) {
              errorMessage = err.error.message;
@@ -194,7 +186,6 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
              errorMessage = err.message;
         }
 
-        // Clean up HTML tags if present (Google sometimes sends links in errors)
         errorMessage = errorMessage.replace(/<[^>]*>?/gm, '');
 
         console.error("YouTube Upload Init Failed Response:", err);
@@ -212,23 +203,32 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
     const { location: uploadUrl } = await initResp.json();
     if (!uploadUrl) throw new Error("Backend did not return an upload location.");
 
-    // 2. Upload binary to the Google URL provided by the proxy
-    // We use XMLHttpRequest here to allow progress tracking and better error handling.
+    // 2. Upload binary via Local Proxy to bypass CORS
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('PUT', uploadUrl, true);
+        
+        // POINT TO PROXY INSTEAD OF GOOGLE
+        const proxyUploadUrl = `${BACKEND_URL}/proxy/upload-binary?url=${encodeURIComponent(uploadUrl)}`;
+        
+        xhr.open('PUT', proxyUploadUrl, true);
         xhr.setRequestHeader('Content-Type', videoFile.type || 'video/mp4');
 
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable && onProgress) {
-                const percentComplete = Math.round((e.loaded / e.total) * 100);
-                onProgress(percentComplete);
+                // VISUAL FIX: Clamp progress to 90% because local transfer is instant.
+                // It will hang at 90% while the server uploads to YouTube, then jump to 100%.
+                const rawPercent = Math.round((e.loaded / e.total) * 100);
+                const visualPercent = Math.min(rawPercent, 90); 
+                onProgress(visualPercent);
             }
         };
 
         xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 try {
+                    // Update to 100% on success
+                    if (onProgress) onProgress(100);
+                    
                     const uploadData = JSON.parse(xhr.responseText);
                     resolve(uploadData.id);
                 } catch (e) {
@@ -239,7 +239,7 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
             }
         };
 
-        xhr.onerror = () => reject(new Error("Network Error during Binary Upload (Check AdBlocker/Firewall)."));
+        xhr.onerror = () => reject(new Error("Network Error during Binary Upload via Proxy."));
         
         xhr.send(videoFile);
     });
@@ -258,11 +258,9 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
         try {
             if (onProgress) onProgress(`Waiting for YouTube to generate captions... (${i + 1}/${MAX_ATTEMPTS})`, percent);
             
-            // Proxy this call to avoid CORS/COEP
             const response = await fetch(`${BACKEND_URL}/proxy/captions?token=${encodeURIComponent(accessToken)}&videoId=${videoId}`);
 
             if (!response.ok) {
-                // If 404/403/500 comes from proxy
                 console.warn(`Caption check failed (${response.status})`);
             } else {
                 const data = await response.json();
@@ -287,9 +285,6 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
     throw new Error('Timed out waiting for YouTube captions.');
 }
 
-/**
- * Downloads the caption via Proxy
- */
 export async function downloadYouTubeCaptionTrackOAuth(accessToken: string, captionId: string): Promise<string> {
     const response = await fetch(`${BACKEND_URL}/proxy/download-caption?token=${encodeURIComponent(accessToken)}&captionId=${captionId}`);
 
