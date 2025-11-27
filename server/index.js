@@ -3,6 +3,7 @@ const cors = require('cors');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 const ffmpegPath = require('ffmpeg-static'); 
 const axios = require('axios');
+const https = require('https'); 
 const path = require('path');
 const fs = require('fs');
 
@@ -10,7 +11,6 @@ const app = express();
 const PORT = 4000;
 
 app.use(cors());
-// Increase payload limit for metadata json
 app.use(express.json({ limit: '50mb' }));
 
 // --- CONFIGURATION ---
@@ -43,24 +43,77 @@ const ensureBinary = async () => {
 
 ensureBinary();
 
-// --- GENERAL FILE PROXY (Resolves CORS for Import URL) ---
+// --- AXIOS CLIENT CONFIGURATION ---
+const createAxiosClient = () => {
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+    
+    const config = {
+        timeout: 60000, // 60s timeout
+        headers: { 'Cache-Control': 'no-cache' }
+    };
+
+    if (proxyUrl) {
+        console.log(`[Server] System Proxy detected: ${proxyUrl}. Using default Axios proxy handler.`);
+    } else {
+        console.log(`[Server] No System Proxy detected. Using custom HTTPS Agent (IPv4 forced).`);
+        // When NO proxy is set, force IPv4 and disable keepAlive
+        config.httpsAgent = new https.Agent({ 
+            keepAlive: false, 
+            family: 4 
+        });
+    }
+
+    return axios.create(config);
+};
+
+const axiosClient = createAxiosClient();
+
+// Retry Helper
+const makeRequestWithRetry = async (config, retries = 3) => {
+    try {
+        return await axiosClient(config);
+    } catch (error) {
+        const isNetworkError = !error.response && (
+            error.code === 'ECONNRESET' || 
+            error.code === 'ETIMEDOUT' || 
+            (error.message && error.message.includes('socket disconnected')) ||
+            (error.message && error.message.includes('timeout'))
+        );
+        
+        if (isNetworkError && retries > 0) {
+            console.log(`[Proxy] Network error (${error.message}). Retrying... (${retries} left)`);
+            await new Promise(r => setTimeout(r, 1500)); // Wait 1.5s
+            return makeRequestWithRetry(config, retries - 1);
+        }
+        throw error;
+    }
+};
+
+// --- GENERAL FILE PROXY ---
 
 // 1. Check File Info (HEAD)
 app.get('/api/proxy/file-head', async (req, res) => {
     const { url } = req.query;
+    const proxyAuth = req.headers['x-proxy-auth']; 
+
     if (!url) return res.status(400).json({ error: "Missing URL" });
 
     try {
-        const response = await axios.head(url);
+        const headers = {};
+        if (proxyAuth) headers['Authorization'] = proxyAuth;
+
+        const response = await makeRequestWithRetry({ method: 'head', url, headers });
         res.json({
             contentType: response.headers['content-type'],
             contentLength: response.headers['content-length'],
             ok: true
         });
     } catch (e) {
-        // If HEAD fails (some servers block it), try GET with range 0-1
         try {
-            const response = await axios.get(url, { headers: { Range: 'bytes=0-1' } });
+            const headers = { Range: 'bytes=0-1' };
+            if (proxyAuth) headers['Authorization'] = proxyAuth;
+
+            const response = await makeRequestWithRetry({ method: 'get', url, headers });
             res.json({
                 contentType: response.headers['content-type'],
                 contentLength: response.headers['content-range'] ? response.headers['content-range'].split('/')[1] : null,
@@ -74,14 +127,25 @@ app.get('/api/proxy/file-head', async (req, res) => {
 
 // 2. Download File (GET Stream)
 app.get('/api/proxy/file-get', async (req, res) => {
-    const { url } = req.query;
+    const { url, token } = req.query;
+    let proxyAuth = req.headers['x-proxy-auth'];
+
     if (!url) return res.status(400).json({ error: "Missing URL" });
 
+    if (!proxyAuth && token) {
+        proxyAuth = `Bearer ${token}`;
+    }
+
     try {
-        const response = await axios({
+        const headers = {};
+        if (proxyAuth) headers['Authorization'] = proxyAuth;
+
+        // Use the configured client (with proxy or custom agent)
+        const response = await axiosClient({
             method: 'get',
             url: url,
-            responseType: 'stream'
+            responseType: 'stream',
+            headers: headers
         });
 
         const contentType = response.headers['content-type'];
@@ -89,6 +153,9 @@ app.get('/api/proxy/file-get', async (req, res) => {
 
         if (contentType) res.setHeader('Content-Type', contentType);
         if (contentLength) res.setHeader('Content-Length', contentLength);
+
+        // FIX: Add header to allow embedding in COEP environments (fixes broken images)
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
         response.data.pipe(res);
 
@@ -98,76 +165,91 @@ app.get('/api/proxy/file-get', async (req, res) => {
     }
 });
 
+// 3. Google Drive API List Proxy
+app.get('/api/proxy/drive/list', async (req, res) => {
+    const { token, query, fields, orderBy, pageSize } = req.query;
 
-// --- PROXY ENDPOINTS FOR YOUTUBE UPLOAD (Bypasses COOP/COEP) ---
+    if (!token) return res.status(401).json({ error: "Missing token" });
 
-// 1. Proxy for Upload Initialization
+    try {
+        const response = await makeRequestWithRetry({
+            method: 'get',
+            url: 'https://www.googleapis.com/drive/v3/files',
+            params: { q: query, fields, orderBy, pageSize },
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        res.json(response.data);
+    } catch (e) {
+        const errorData = e.response ? e.response.data : { error: e.message };
+        const status = e.response ? e.response.status : 500;
+        
+        console.error("Drive List Proxy Error:", JSON.stringify(errorData, null, 2));
+        res.status(status).json(errorData);
+    }
+});
+
+
+// --- PROXY ENDPOINTS FOR YOUTUBE UPLOAD ---
+
 app.post('/api/proxy/upload-init', async (req, res) => {
     const { token, metadata, fileType, fileSize } = req.body;
 
     if (!token) return res.status(401).json({ error: "No token provided" });
 
     try {
-        console.log("Proxy: Initiating Upload...");
-        // We call Google API from Node, bypassing browser CORS/COEP checks
-        const response = await axios.post(
-            'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
-            metadata,
-            {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                    'X-Upload-Content-Length': fileSize,
-                    'X-Upload-Content-Type': fileType
-                }
+        const response = await makeRequestWithRetry({
+            method: 'post',
+            url: 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
+            data: metadata,
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'X-Upload-Content-Length': fileSize,
+                'X-Upload-Content-Type': fileType
             }
-        );
-
-        // Return the 'location' header which is the actual upload URL
-        console.log("Proxy: Upload URL received.");
+        });
         res.json({ location: response.headers.location });
     } catch (e) {
         const status = e.response?.status || 500;
         const data = e.response?.data || { error: e.message };
-        
         console.error(`Proxy Upload Init Error (${status}):`, JSON.stringify(data, null, 2));
-        
-        // Pass the exact Google error back to frontend
         res.status(status).json(data);
     }
 });
 
-// 2. Proxy for Checking Captions Status
 app.get('/api/proxy/captions', async (req, res) => {
     const { token, videoId } = req.query;
 
     if (!token || !videoId) return res.status(400).json({ error: "Missing params" });
 
     try {
-        const response = await axios.get(`https://www.googleapis.com/youtube/v3/captions?part=snippet&videoId=${videoId}`, {
+        const response = await makeRequestWithRetry({
+            method: 'get',
+            url: 'https://www.googleapis.com/youtube/v3/captions',
+            params: { part: 'snippet', videoId },
             headers: { 'Authorization': `Bearer ${token}` }
         });
         res.json(response.data);
     } catch (e) {
-        console.error("Proxy Check Captions Error:", e.response?.data || e.message);
         res.status(e.response?.status || 500).json(e.response?.data || { error: e.message });
     }
 });
 
-// 3. Proxy for Downloading Auth Captions
 app.get('/api/proxy/download-caption', async (req, res) => {
     const { token, captionId } = req.query;
 
     if (!token || !captionId) return res.status(400).json({ error: "Missing params" });
 
     try {
-        const response = await axios.get(`https://www.googleapis.com/youtube/v3/captions/${captionId}?tfmt=srt`, {
+        const response = await makeRequestWithRetry({
+            method: 'get',
+            url: `https://www.googleapis.com/youtube/v3/captions/${captionId}`,
+            params: { tfmt: 'srt' },
             headers: { 'Authorization': `Bearer ${token}` },
-            responseType: 'text' // Important: we want the SRT text
+            responseType: 'text'
         });
         res.send(response.data);
     } catch (e) {
-        console.error("Proxy Download Caption Error:", e.response?.data || e.message);
         res.status(e.response?.status || 500).json(e.response?.data || { error: e.message });
     }
 });
@@ -201,18 +283,11 @@ app.get('/api/info', async (req, res) => {
             Object.keys(tracksObj).forEach(lang => {
                 const formats = tracksObj[lang];
                 const name = (formats[0] && formats[0].name) || lang;
-                
                 const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
                 
                 if (!seenKeys.has(uniqueKey)) {
                     seenKeys.add(uniqueKey);
-                    
-                    // Create token config
-                    const trackConfig = {
-                        lang: lang,
-                        isAuto: isAuto
-                    };
-                    // Base64 encode
+                    const trackConfig = { lang: lang, isAuto: isAuto };
                     const token = Buffer.from(JSON.stringify(trackConfig)).toString('base64');
 
                     captions.push({
@@ -231,11 +306,8 @@ app.get('/api/info', async (req, res) => {
         const thumbnail = info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : '');
         const durationSeconds = info.duration || 0;
         
-        // Format duration
         const date = new Date(durationSeconds * 1000);
-        const timeStr = durationSeconds < 3600 
-            ? date.toISOString().substr(14, 5) 
-            : date.toISOString().substr(11, 8);
+        const timeStr = durationSeconds < 3600 ? date.toISOString().substr(14, 5) : date.toISOString().substr(11, 8);
 
         res.json({
             meta: {
@@ -260,27 +332,17 @@ app.get('/api/caption', async (req, res) => {
     const rawToken = req.query.token || req.query.trackId;
     const url = req.query.url;
 
-    if (!url || !rawToken) {
-        return res.status(400).send("Missing required parameters (url, token)");
-    }
+    if (!url || !rawToken) return res.status(400).send("Missing required parameters");
 
-    // Legacy URL Handling
     if (rawToken.startsWith('http')) {
         try {
-            const response = await axios.get(rawToken, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                },
-                responseType: 'text'
-            });
+            const response = await axiosClient.get(rawToken, { responseType: 'text' });
             return res.send(response.data);
         } catch (e) {
-            console.error("Legacy URL download failed:", e.message);
             return res.status(500).send("Failed to download legacy caption URL.");
         }
     }
 
-    // New Token Handling
     let isAuto = false;
     let lang = '';
 
@@ -290,7 +352,6 @@ app.get('/api/caption', async (req, res) => {
         isAuto = decoded.isAuto;
         lang = decoded.lang;
     } catch (e) {
-        console.error("Token parse error:", e);
         return res.status(400).send("Invalid Caption Token");
     }
 
@@ -307,42 +368,31 @@ app.get('/api/caption', async (req, res) => {
             '--force-ipv4'
         ];
 
-        if (isAuto) {
-            args.push('--write-auto-sub', '--sub-lang', lang);
-        } else {
-            args.push('--write-sub', '--sub-lang', lang);
-        }
+        if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
+        else args.push('--write-sub', '--sub-lang', lang);
 
         await ytDlpWrap.execPromise(args);
 
         const files = fs.readdirSync(TEMP_DIR);
         const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
 
-        if (!generatedFile) {
-            throw new Error("Subtitle file not generated.");
-        }
+        if (!generatedFile) throw new Error("Subtitle file not generated.");
 
         const filePath = path.join(TEMP_DIR, generatedFile);
         const content = fs.readFileSync(filePath, 'utf-8');
-        
-        // Cleanup
         fs.unlinkSync(filePath);
 
         res.send(content);
 
     } catch (error) {
-        console.error("Caption download error:", error.message);
-        // Cleanup
         try {
             const files = fs.readdirSync(TEMP_DIR);
             files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
         } catch (e) {}
-        
         res.status(500).send(`Failed to download captions: ${error.message.split('\n')[0]}`);
     }
 });
 
-// Video Download Endpoint
 app.get('/api/download-video', async (req, res) => {
     const { url, token } = req.query;
 
@@ -360,14 +410,9 @@ app.get('/api/download-video', async (req, res) => {
     }
 
     const tempId = `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    // We use a simple output template. yt-dlp will append extension.
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
     
-    console.log(`Downloading video: ${url} [${lang}] ID: ${tempId}`);
-
     try {
-        // Use 'best' to minimize merging overhead, output MP4 for compatibility
-        // Embed thumbnails and subs. Convert subs to SRT first for cleanliness.
         let args = [
             url,
             '--format', 'best', 
@@ -380,67 +425,40 @@ app.get('/api/download-video', async (req, res) => {
             '--force-ipv4'
         ];
 
-        if (isAuto) {
-            args.push('--write-auto-sub', '--sub-lang', lang);
-        } else {
-            args.push('--write-sub', '--sub-lang', lang);
-        }
+        if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
+        else args.push('--write-sub', '--sub-lang', lang);
 
         await ytDlpWrap.execPromise(args);
 
-        // --- File Finding Logic ---
         const files = fs.readdirSync(TEMP_DIR);
-        
-        // Check for finished video files
-        let videoFile = files.find(f => 
-            f.startsWith(tempId) && 
-            (f.endsWith('.mp4') || f.endsWith('.mkv')) &&
-            !f.endsWith('.part')
-        );
+        let videoFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.mp4') || f.endsWith('.mkv')) && !f.endsWith('.part'));
 
-        // Fallback: Check for .part files. 
         if (!videoFile) {
             const partFile = files.find(f => f.startsWith(tempId) && f.endsWith('.part'));
             if (partFile) {
-                console.warn(`Found .part file: ${partFile}. Attempting to recover.`);
                 const newName = partFile.replace('.part', '');
                 fs.renameSync(path.join(TEMP_DIR, partFile), path.join(TEMP_DIR, newName));
                 videoFile = newName;
             }
         }
 
-        if (!videoFile) {
-            console.error(`Files in temp matching ${tempId}:`, files.filter(f => f.startsWith(tempId)));
-            throw new Error(`Video file not found after download.`);
-        }
+        if (!videoFile) throw new Error(`Video file not found after download.`);
 
         const filePath = path.join(TEMP_DIR, videoFile);
-        const stats = fs.statSync(filePath);
-        
-        console.log(`Sending file: ${filePath} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-
-        // Send file
         res.download(filePath, (err) => {
-            if (err) console.error("Send error:", err);
-            // Cleanup after sending
             setTimeout(() => {
                 try {
                     const leftovers = fs.readdirSync(TEMP_DIR).filter(f => f.startsWith(tempId));
-                    leftovers.forEach(f => {
-                         try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch(e) {}
-                    });
-                } catch (e) { console.error("Cleanup error:", e); }
+                    leftovers.forEach(f => { try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch(e) {} });
+                } catch (e) {}
             }, 10000); 
         });
 
     } catch (error) {
-        console.error("Video download failed DETAILED:", error.message);
-        // Immediate cleanup
         try {
              const files = fs.readdirSync(TEMP_DIR);
              files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
         } catch (e) {}
-        
         res.status(500).send(`Video processing failed: ${error.message}`);
     }
 });

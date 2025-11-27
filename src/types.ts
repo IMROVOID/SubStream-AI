@@ -81,6 +81,37 @@ export interface YouTubeUserVideo {
     duration: string;
 }
 
+// --- NEW DRIVE TYPES ---
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  thumbnailLink?: string;
+  iconLink?: string;
+  size?: string;
+  createdTime?: string;
+  modifiedTime?: string;
+  fileExtension?: string; // Added field for better filtering
+  videoMediaMetadata?: {
+    width: number;
+    height: number;
+    durationMillis: number;
+  };
+  shortcutDetails?: {
+      targetId: string;
+      targetMimeType: string;
+  };
+}
+
+export interface DriveFolder {
+  id: string;
+  name: string;
+  children: DriveFolder[]; // For hierarchy
+  filesLoaded: boolean; // Has this folder been fetched?
+}
+
+// -----------------------
+
 export const AVAILABLE_MODELS: AIModel[] = [
   // YouTube Integration
   {

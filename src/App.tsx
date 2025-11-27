@@ -15,6 +15,7 @@ import { VideoPlayer } from './components/VideoPlayer';
 import { TrackSelector } from './components/TrackSelector';
 import { YouTubeAuth } from './components/YouTubeAuth';
 import { ImportUrlModal } from './components/ImportUrlModal';
+import { CloudImportModal } from './components/CloudImportModal';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 type Page = 'HOME' | 'DOCS';
@@ -46,6 +47,7 @@ const App = () => {
   
   // Import Modal State
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [cloudModalOpen, setCloudModalOpen] = useState(false);
   const [importType, setImportType] = useState<'URL' | 'YOUTUBE' | 'GDRIVE' | 'SOCIAL' | null>(null);
 
   // Notification State
@@ -105,14 +107,20 @@ const App = () => {
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // --- 1. DETECT IF THIS IS THE POPUP (Auth Callback) ---
-  const isAuthCallback = useMemo(() => {
+  // --- 1. DETECT IF THIS IS THE POPUP (YouTube Auth Callback) ---
+  const isYouTubeAuthCallback = useMemo(() => {
     return window.location.hash.includes('access_token') && window.location.hash.includes('state=youtube_auth');
   }, []);
 
-  // --- 2. POPUP LOGIC: Broadcast & Close ---
+  // --- 2. DETECT IF THIS IS THE POPUP (Drive Auth Callback) ---
+  const isDriveAuthCallback = useMemo(() => {
+    return window.location.hash.includes('access_token') && window.location.hash.includes('state=drive_auth');
+  }, []);
+
+  // --- 3. POPUP LOGIC: Broadcast & Close ---
   useEffect(() => {
-    if (isAuthCallback) {
+    // Logic for YouTube Auth Popup
+    if (isYouTubeAuthCallback) {
         const hash = window.location.hash.substring(1);
         const params = new URLSearchParams(hash);
         const accessToken = params.get('access_token');
@@ -121,19 +129,42 @@ const App = () => {
             const channel = new BroadcastChannel('substream_auth_channel');
             channel.postMessage({ token: accessToken });
             channel.close();
-            window.close();
             
-            document.body.innerHTML = `
-                <div style="background:black; color:white; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif;">
-                    <div style="font-size:24px; font-weight:bold; margin-bottom:10px;">Authentication Successful</div>
-                    <div>You can now close this window.</div>
-                </div>
-            `;
+            // Attempt close
+            window.close();
         }
     }
-  }, [isAuthCallback]);
 
-  // --- 3. MAIN WINDOW LOGIC: Listen for Token ---
+    // Logic for Drive Auth Popup
+    if (isDriveAuthCallback) {
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const accessToken = params.get('access_token');
+
+        if (accessToken) {
+            // 1. Post Message to Opener (Standard)
+            if (window.opener) {
+                try {
+                    window.opener.postMessage({ type: 'DRIVE_AUTH_SUCCESS', token: accessToken }, '*');
+                } catch(e) { console.error(e); }
+            }
+
+            // 2. Broadcast Channel (Fallback for strict isolation)
+            const channel = new BroadcastChannel('substream_drive_auth_channel');
+            channel.postMessage({ token: accessToken });
+            channel.close();
+
+            // 3. Auto Close Window
+            setTimeout(() => {
+                window.close();
+                // Bruteforce close for stubborn browsers
+                window.open('','_self')?.close();
+            }, 1000); 
+        }
+    }
+  }, [isYouTubeAuthCallback, isDriveAuthCallback]);
+
+  // --- 4. MAIN WINDOW LOGIC: Listen for Token ---
   useEffect(() => {
     const channel = new BroadcastChannel('substream_auth_channel');
     channel.onmessage = (event) => {
@@ -638,10 +669,6 @@ const App = () => {
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
     }
   };
-
-  const handleGenerateWithYouTube = async () => {
-      // Legacy - Unused
-  };
   
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
@@ -787,8 +814,30 @@ const App = () => {
   
   const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
 
-  if (isAuthCallback) {
-      return null; 
+  // --- POPUP SUCCESS UI ---
+  // If this window is the OAuth popup, show success message instead of null
+  if (isYouTubeAuthCallback || isDriveAuthCallback) {
+      return (
+        <div className="h-screen w-screen bg-black flex flex-col items-center justify-center text-white space-y-6">
+             <div className="w-20 h-20 bg-green-900/20 rounded-full flex items-center justify-center border border-green-900/50 animate-pulse-slow">
+                <CheckCircle2 className="w-10 h-10 text-green-500" />
+             </div>
+             <div className="text-center space-y-2">
+                 <h2 className="text-2xl font-bold font-display">Authentication Successful</h2>
+                 <p className="text-neutral-400">You can safely close this window.</p>
+             </div>
+             <button 
+                onClick={() => {
+                    // Try robust closing
+                    window.close();
+                    try { window.open('','_self')?.close(); } catch(e){}
+                }} 
+                className="px-6 py-2 bg-neutral-800 border border-neutral-700 rounded-lg hover:bg-neutral-700 hover:text-white transition-colors text-neutral-300"
+             >
+                Close Window
+             </button>
+        </div>
+      );
   }
 
   if (currentPage === 'DOCS') {
@@ -899,7 +948,7 @@ const App = () => {
                            <button onClick={() => { setImportType('YOUTUBE'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-red-500/50 transition-all group/btn" title="Import from YouTube">
                              <Youtube className="w-5 h-5 text-neutral-400 group-hover/btn:text-red-500" />
                            </button>
-                           <button onClick={() => showToast("Google Drive Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn" title="Import from Google Drive">
+                           <button onClick={() => setCloudModalOpen(true)} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn" title="Import from Cloud Drive">
                              <HardDrive className="w-5 h-5 text-neutral-400 group-hover/btn:text-blue-500" />
                            </button>
                            <button onClick={() => showToast("Social Media Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-pink-500/50 transition-all group/btn" title="Other Sources">
@@ -1388,6 +1437,12 @@ const App = () => {
         onImportFile={handleImportFile}
         onImportYouTube={handleImportYouTube}
         googleAccessToken={googleAccessToken}
+      />
+      
+      <CloudImportModal
+        isOpen={cloudModalOpen}
+        onClose={() => setCloudModalOpen(false)}
+        onImportFile={handleImportFile}
       />
 
     </div>
