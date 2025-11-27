@@ -62,13 +62,13 @@ export interface YouTubeVideoMetadata {
   duration?: string;
   videoUrl: string; 
   availableCaptions?: YouTubeCaptionTrack[];
+  isOAuthFlow?: boolean; // To distinguish between yt-dlp and auto-caption flows
 }
 
 export interface YouTubeCaptionTrack {
-  id: string; // Base64 Encoded Token
+  id: string; // Can be a base64 token (yt-dlp) or an API ID (OAuth)
   language: string;
   name: string;
-  isAutoSynced: boolean;
 }
 
 export interface YouTubeUserVideo {

@@ -5,7 +5,7 @@ import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
-import { uploadVideoToYouTube, checkYouTubeCaptionStatus, downloadYouTubeCaptionTrackOAuth, downloadCaptionTrack, downloadYouTubeVideoWithSubs } from './services/youtubeService';
+import { uploadVideoToYouTube, pollForCaptionReady, downloadCaptionTrack, downloadYouTubeVideoWithSubs, getVideoDetails } from './services/youtubeService';
 import { Button } from './components/Button';
 import { SubtitleCard } from './components/SubtitleCard';
 import { StepIndicator } from './components/StepIndicator';
@@ -37,6 +37,44 @@ const AppWrapper = () => {
             <App />
         </GoogleOAuthProvider>
     );
+};
+
+const generateVideoThumbnail = (videoFile: File): Promise<string> => {
+    return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        
+        video.src = URL.createObjectURL(videoFile);
+        video.currentTime = 1; 
+
+        const cleanup = () => {
+            URL.revokeObjectURL(video.src);
+            video.remove();
+            canvas.remove();
+        };
+
+        video.onloadeddata = () => {
+            video.onseeked = () => {
+                if (!context) {
+                    cleanup();
+                    return resolve('');
+                }
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                context.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                cleanup();
+                resolve(dataUrl);
+            };
+            video.currentTime = 1; 
+        };
+        video.onerror = () => {
+            cleanup();
+            resolve(''); 
+        };
+    });
 };
 
 
@@ -78,6 +116,7 @@ const App = () => {
   const [ffmpegProgress, setFfmpegProgress] = useState<number>(0);
   const [extractedTracks, setExtractedTracks] = useState<ExtractedSubtitleTrack[]>([]);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [youtubeMeta, setYoutubeMeta] = useState<YouTubeVideoMetadata | null>(null);
   
   // API Key & Model Config State
@@ -107,19 +146,15 @@ const App = () => {
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // --- 1. DETECT IF THIS IS THE POPUP (YouTube Auth Callback) ---
   const isYouTubeAuthCallback = useMemo(() => {
     return window.location.hash.includes('access_token') && window.location.hash.includes('state=youtube_auth');
   }, []);
 
-  // --- 2. DETECT IF THIS IS THE POPUP (Drive Auth Callback) ---
   const isDriveAuthCallback = useMemo(() => {
     return window.location.hash.includes('access_token') && window.location.hash.includes('state=drive_auth');
   }, []);
 
-  // --- 3. POPUP LOGIC: Broadcast & Close ---
   useEffect(() => {
-    // Logic for YouTube Auth Popup
     if (isYouTubeAuthCallback) {
         const hash = window.location.hash.substring(1);
         const params = new URLSearchParams(hash);
@@ -129,12 +164,10 @@ const App = () => {
             const channel = new BroadcastChannel('substream_auth_channel');
             channel.postMessage({ token: accessToken });
             channel.close();
-            
             window.close();
         }
     }
 
-    // Logic for Drive Auth Popup
     if (isDriveAuthCallback) {
         const hash = window.location.hash.substring(1);
         const params = new URLSearchParams(hash);
@@ -146,11 +179,9 @@ const App = () => {
                     window.opener.postMessage({ type: 'DRIVE_AUTH_SUCCESS', token: accessToken }, '*');
                 } catch(e) { console.error(e); }
             }
-
             const channel = new BroadcastChannel('substream_drive_auth_channel');
             channel.postMessage({ token: accessToken });
             channel.close();
-
             setTimeout(() => {
                 window.close();
                 window.open('','_self')?.close();
@@ -159,7 +190,6 @@ const App = () => {
     }
   }, [isYouTubeAuthCallback, isDriveAuthCallback]);
 
-  // --- 4. MAIN WINDOW LOGIC: Listen for Token ---
   useEffect(() => {
     const channel = new BroadcastChannel('substream_auth_channel');
     channel.onmessage = (event) => {
@@ -170,7 +200,6 @@ const App = () => {
     return () => channel.close();
   }, []);
 
-  // --- LOAD PERSISTED SETTINGS ---
   useEffect(() => {
     const storedGoogleKey = localStorage.getItem('substream_google_api_key');
     const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
@@ -227,7 +256,7 @@ const App = () => {
 
     if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
         if (storedModel === 'youtube-auto' && !isValidAuth) {
-            setSelectedModelId(AVAILABLE_MODELS[1].id); // Fallback to Gemini
+            setSelectedModelId(AVAILABLE_MODELS[1].id);
         } else {
             setSelectedModelId(storedModel);
         }
@@ -286,15 +315,11 @@ const App = () => {
   }, [tempOpenAIApiKey, userOpenAIApiKey]);
 
 
-  // --- Helper Functions ---
-
   const showToast = (message: string) => {
     if (toastTimeoutRef.current) {
         clearTimeout(toastTimeoutRef.current);
     }
-    
     setToast({ message, isVisible: true });
-
     toastTimeoutRef.current = setTimeout(() => {
         setToast(prev => prev ? { ...prev, isVisible: false } : null);
         setTimeout(() => setToast(null), 500); 
@@ -319,9 +344,12 @@ const App = () => {
 
     const cleanBase = baseName.replace(/[^a-zA-Z0-9 \-_]/g, '').trim();
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId);
-    const isTranscribing = activeModel?.provider === 'youtube' || sourceLang === 'auto' || sourceLang === targetLang;
-    const action = isTranscribing ? 'Transcribed' : 'Translated';
-    const langName = isTranscribing ? 'Auto' : (LANGUAGES.find(l => l.name === targetLang)?.name || 'English');
+    
+    const isYouTubeTranscription = fileType === 'youtube';
+    const isAiTranscription = !isYouTubeTranscription && (sourceLang === 'auto' || sourceLang === targetLang);
+
+    const action = isYouTubeTranscription || isAiTranscription ? 'Transcribed' : 'Translated';
+    const langName = isYouTubeTranscription ? (LANGUAGES.find(l => l.code === selectedCaptionId)?.name || 'Unknown') : isAiTranscription ? 'Auto' : (LANGUAGES.find(l => l.name === targetLang)?.name || 'English');
     
     return `SubStream_${cleanBase}_${action}_${langName}.${extension}`;
   };
@@ -342,6 +370,7 @@ const App = () => {
     setDownloadProgress(undefined);
     setDownloadStatusText('');
     setIsDownloadComplete(false);
+    setVideoThumbnail(null);
     if (videoSrc) {
        if (videoSrc.startsWith('blob:')) {
            URL.revokeObjectURL(videoSrc);
@@ -378,7 +407,6 @@ const App = () => {
         const fallbackModel = AVAILABLE_MODELS.find(m => m.provider === 'google') || AVAILABLE_MODELS[1];
         setSelectedModelId(fallbackModel.id);
     }
-
     setGoogleUser(null);
     setGoogleAccessToken(null);
     localStorage.removeItem('substream_google_token');
@@ -417,33 +445,16 @@ const App = () => {
     setOpenAIApiKeyStatus('idle');
   };
 
-  const handleImportYouTube = (meta: YouTubeVideoMetadata) => {
-      setFile(null);
-      setSubtitles([]);
-      setStatus(TranslationStatus.IDLE);
-      setProgress(0);
-      setError(null);
-      setVideoProcessingStatus(VideoProcessingStatus.IDLE);
-      setVideoProcessingMessage('');
-      setFfmpegProgress(0);
-      setExtractedTracks([]);
-      setSelectedCaptionId('');
-      setDownloadProgress(undefined);
-      setDownloadStatusText('');
-      setIsDownloadComplete(false);
-      
-      if (videoSrc && videoSrc.startsWith('blob:')) {
-           URL.revokeObjectURL(videoSrc);
-      }
-
+  const handleImportYouTube = async (meta: YouTubeVideoMetadata) => {
+      resetState();
       setFileType('youtube');
-      setYoutubeMeta(meta);
+      setYoutubeMeta({ ...meta, isOAuthFlow: false });
       setVideoSrc(`https://www.youtube.com/embed/${meta.id}`);
       const mockFile = new File([""], meta.title, { type: 'video/youtube' });
       setFile(mockFile);
   };
 
-  const handleYouTubeDownload = async () => {
+  const handleYouTubeCaptionDownload = async () => {
       if (!selectedCaptionId || !youtubeMeta?.videoUrl) {
           setError("Please select a caption track first.");
           return;
@@ -451,24 +462,27 @@ const App = () => {
       
       setError(null);
       setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
-      setVideoProcessingMessage('Downloading caption track...');
+      setVideoProcessingMessage('Downloading caption track from YouTube...');
       
       try {
-          const captionText = await downloadCaptionTrack(youtubeMeta.videoUrl, selectedCaptionId);
+          const trackConfig = { lang: selectedCaptionId, isAuto: true };
+          const token = btoa(JSON.stringify(trackConfig));
+          const captionText = await downloadCaptionTrack(youtubeMeta.videoUrl, token);
+
           const parsed = parseSRT(captionText);
-          if (parsed.length === 0) throw new Error("Parsed subtitle file is empty.");
+          if (parsed.length === 0) throw new Error("Downloaded caption file is empty or in an unsupported format.");
+          
           setSubtitles(parsed);
           setStatus(TranslationStatus.COMPLETED); 
           setVideoProcessingStatus(VideoProcessingStatus.DONE);
+          setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+
       } catch (e: any) {
-          if (e.message.includes("Stale data")) {
-              setError(e.message);
-          } else {
-              setError(e.message || "Failed to download captions");
-          }
+          setError(e.message || "Failed to download captions");
           setVideoProcessingStatus(VideoProcessingStatus.ERROR);
       }
   };
+
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -529,6 +543,7 @@ const App = () => {
       setExtractedTracks(tracks);
       
       setVideoSrc(URL.createObjectURL(videoFile));
+      generateVideoThumbnail(videoFile).then(setVideoThumbnail);
 
       setVideoProcessingStatus(VideoProcessingStatus.IDLE);
     } catch (e: any) {
@@ -547,6 +562,7 @@ const App = () => {
         const parsed = parseSRT(srtContent);
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
+        setStatus(TranslationStatus.COMPLETED);
     } catch(e: any) {
         setError(`Failed to extract subtitle track: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
@@ -557,25 +573,20 @@ const App = () => {
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
     
     if (fileType === 'youtube') {
-         setError("AI Audio transcription for YouTube links is currently limited. Please select a caption track.");
+         setError("This action is for local video files. Please select a language to generate captions for your YouTube import.");
          return;
     }
 
     if (activeModel.provider === 'youtube') {
         if (!googleAccessToken || !googleUser || !file) {
-            if (!file) {
-                setError("No file loaded to upload.");
-            } else {
-                setActiveModal('CONFIG');
-                setError("Please authenticate with YouTube to use Auto-Caption.");
-            }
+            setError("Please authenticate with YouTube in Settings to use this feature.");
+            if (!file) setError("No file loaded to upload.");
+            setActiveModal('CONFIG');
             return;
         }
 
         try {
             setError(null);
-            
-            // 1. Upload (with progress)
             setVideoProcessingStatus(VideoProcessingStatus.UPLOADING_TO_YOUTUBE);
             setVideoProcessingMessage('Uploading video to YouTube (Unlisted)...');
             setFfmpegProgress(0);
@@ -585,47 +596,38 @@ const App = () => {
                 googleAccessToken, 
                 file, 
                 uploadTitle,
-                (percent) => {
-                    setFfmpegProgress(percent);
-                    // UX Improvement: If 100% but strictly waiting for response
-                    if (percent >= 100) {
-                        setVideoProcessingMessage('Finalizing on server... Forwarding to YouTube (This may take a moment)');
-                    }
-                }
+                (percent) => setFfmpegProgress(percent / 2) // Upload is first 50%
             );
             
-            // 2. Poll for Captions (with progress)
             setVideoProcessingStatus(VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS);
-            const captionId = await checkYouTubeCaptionStatus(
+            await pollForCaptionReady(
                 googleAccessToken, 
                 videoId, 
                 (msg, percent) => {
                     setVideoProcessingMessage(msg);
-                    setFfmpegProgress(percent);
+                    setFfmpegProgress(50 + (percent / 2)); // Polling is second 50%
                 }
             );
             
-            // 3. Download Caption
-            setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_SUBTITLES);
-            setVideoProcessingMessage('Downloading generated captions...');
-            const captionText = await downloadYouTubeCaptionTrackOAuth(googleAccessToken, captionId);
-            
-            const parsed = parseSRT(captionText);
-            if (parsed.length === 0) throw new Error("Downloaded caption file is empty.");
-            
-            setSubtitles(parsed);
-            setStatus(TranslationStatus.COMPLETED); // Mark as effectively done since it's an auto-gen
-            setVideoProcessingStatus(VideoProcessingStatus.DONE);
+            setYoutubeMeta({
+                id: videoId,
+                title: file.name,
+                description: 'Uploaded by SubStream AI for transcription.',
+                thumbnailUrl: videoThumbnail || '',
+                channelTitle: googleUser.name,
+                videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+                isOAuthFlow: true
+            });
+
+            setVideoProcessingStatus(VideoProcessingStatus.DONE); 
+            setFileType('youtube');
 
         } catch (e: any) {
             console.error("YouTube Auto-Caption Error:", e);
-            
             const msg = e.message || "";
-            const lowerMsg = msg.toLowerCase();
-
-            if (lowerMsg.includes("quota")) {
+            if (msg.toLowerCase().includes("quota")) {
                  setError("Daily YouTube Upload Quota Exceeded. Please try again tomorrow or use a Gemini/OpenAI model.");
-            } else if (lowerMsg.includes("401") || lowerMsg.includes("invalid authentication") || lowerMsg.includes("session expired")) {
+            } else if (msg.includes("401")) {
                 setError(`Session expired. Please click "Authenticate YouTube" again.`);
                 handleGoogleLogout(); 
             } else {
@@ -637,16 +639,12 @@ const App = () => {
     }
 
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
-    const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
-
-    if (!ffmpegRef.current || (!apiKey && !hasDefaultKey)) {
+    if (!ffmpegRef.current || !apiKey) {
         setActiveModal('CONFIG');
         setError(`Please provide an API Key for ${activeModel.provider} to generate subtitles.`);
         setVideoProcessingStatus(VideoProcessingStatus.IDLE);
         return;
     }
-    const keyToUse = apiKey || (hasDefaultKey ? process.env.GEMINI_API_KEY as string : '');
-    if (!keyToUse) return;
 
     try {
         setFfmpegProgress(0);
@@ -656,11 +654,13 @@ const App = () => {
 
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
         setVideoProcessingMessage(`Generating subtitles with ${activeModel.name}, this may take a moment...`);
-        const srtContent = await transcribeAudio(audioBlob, sourceLang, keyToUse, activeModel);
+        const srtContent = await transcribeAudio(audioBlob, sourceLang, apiKey, activeModel);
 
         const parsed = parseSRT(srtContent);
         setSubtitles(parsed);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
+        setStatus(TranslationStatus.COMPLETED);
+        setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch(e: any) {
         setError(`Failed to generate subtitles: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
@@ -671,21 +671,12 @@ const App = () => {
     if (subtitles.length === 0) return;
     
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
-    
-    if (activeModel.provider === 'youtube') {
-        setError("YouTube Auto-Caption is for transcription only. To translate, please switch to a Gemini or OpenAI model.");
-        return;
-    }
-
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
-    const hasDefaultKey = activeModel.provider === 'google' ? !!process.env.GEMINI_API_KEY : false;
-
-    if (!apiKey && !hasDefaultKey) {
+    if (!apiKey) {
       setActiveModal('CONFIG');
       setError(`Please Provide an API Key for ${activeModel.provider} to continue.`);
       return;
     }
-    const keyToUse = apiKey || (hasDefaultKey ? process.env.GEMINI_API_KEY as string : '');
 
     setStatus(TranslationStatus.TRANSLATING);
     setProgress(0);
@@ -696,7 +687,7 @@ const App = () => {
         subtitles,
         sourceLang,
         targetLang,
-        keyToUse,
+        apiKey,
         activeModel,
         (count) => setProgress(Math.round((count / subtitles.length) * 100)),
         (updatedSubtitles) => setSubtitles(updatedSubtitles)
@@ -733,16 +724,15 @@ const App = () => {
         progressInterval.current = setInterval(() => {
             setDownloadProgress(prev => {
                 if (prev === undefined) return 0;
-                if (prev < 30) setDownloadStatusText('Fetching stream...');
-                else if (prev < 60) setDownloadStatusText('Embedding subs...');
-                else if (prev < 90) setDownloadStatusText('Finalizing...');
                 if (prev >= 90) return 90;
                 return prev + Math.random() * 4;
             });
         }, 600);
 
         try {
-             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, selectedCaptionId, fileName);
+             const trackConfig = { lang: selectedCaptionId, isAuto: true };
+             const token = btoa(JSON.stringify(trackConfig));
+             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, token, fileName);
              
              if (progressInterval.current) clearInterval(progressInterval.current);
              setDownloadProgress(100);
@@ -764,7 +754,7 @@ const App = () => {
         return;
     }
     
-    if (!file || !ffmpegRef.current) return;
+    if (!file || !ffmpegRef.current || status !== TranslationStatus.COMPLETED) return;
     try {
         setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.MUXING);
@@ -811,6 +801,11 @@ const App = () => {
   
   const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
 
+  const isTranslationInProgress = status === TranslationStatus.TRANSLATING;
+  const isTranslationComplete = status === TranslationStatus.COMPLETED;
+  const isConfigureStepActive = !!file && !isTranslationInProgress && !isTranslationComplete;
+  const isYouTubeWorkflow = fileType === 'youtube';
+
   if (isYouTubeAuthCallback || isDriveAuthCallback) {
       return (
         <div className="h-screen w-screen bg-black flex flex-col items-center justify-center text-white space-y-6">
@@ -821,7 +816,10 @@ const App = () => {
                  <h2 className="text-2xl font-bold font-display">Authentication Successful</h2>
                  <p className="text-neutral-400">You can safely close this window.</p>
              </div>
-             <button onClick={() => { window.close(); try { window.open('','_self')?.close(); } catch(e){} }} className="px-6 py-2 bg-neutral-800 border border-neutral-700 rounded-lg hover:bg-neutral-700 hover:text-white transition-colors text-neutral-300">
+             <button 
+                onClick={() => { window.close(); try { window.open('','_self')?.close(); } catch(e){} }} 
+                className="px-6 py-2 bg-neutral-800 border border-neutral-700 rounded-lg hover:bg-neutral-700 hover:text-white transition-colors text-neutral-300"
+             >
                 Close Window
              </button>
         </div>
@@ -832,16 +830,21 @@ const App = () => {
     return <Documentation onBack={() => setCurrentPage('HOME')} />;
   }
 
-  const isYoutubeAutoModel = activeModelData.id === 'youtube-auto';
-
   return (
     <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black flex flex-col">
+      
       <div className="fixed inset-0 pointer-events-none z-0">
          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-neutral-900/30 blur-[120px] rounded-full mix-blend-screen" />
          <div className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-neutral-800/20 blur-[100px] rounded-full mix-blend-screen" />
       </div>
 
-      <div className={`fixed bottom-10 left-1/2 transform -translate-x-1/2 z-50 flex items-center gap-3 px-6 py-3.5 rounded-full min-w-[320px] justify-center bg-neutral-900/30 border border-white/10 text-white shadow-[0_0_30px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${toast?.isVisible ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-8 opacity-0 scale-95 pointer-events-none'}`}>
+      <div className={`
+          fixed bottom-10 left-1/2 transform -translate-x-1/2 z-50 
+          flex items-center gap-3 px-6 py-3.5 rounded-full min-w-[320px] justify-center
+          bg-neutral-900/30 border border-white/10 text-white shadow-[0_0_30px_rgba(0,0,0,0.3)] backdrop-blur-xl
+          transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1)
+          ${toast?.isVisible ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-8 opacity-0 scale-95 pointer-events-none'}
+      `}>
          <Sparkles className="w-5 h-5 text-indigo-400 drop-shadow-[0_0_8px_rgba(129,140,248,0.5)]" />
          <span className="text-sm font-medium tracking-wide">{toast?.message}</span>
       </div>
@@ -886,38 +889,31 @@ const App = () => {
                  <div className="lg:sticky lg:top-32 h-full">
                     <div className="h-full flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm lg:flex-col lg:p-6 lg:justify-between">
                         <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
-                        <StepIndicator number={2} title="Configure" isActive={!!file && (subtitles.length > 0 || fileType === 'youtube') && status !== TranslationStatus.TRANSLATING && status !== TranslationStatus.COMPLETED} isCompleted={status === TranslationStatus.TRANSLATING || status === TranslationStatus.COMPLETED} />
-                        <StepIndicator number={3} title="Translate" isActive={status === TranslationStatus.TRANSLATING} isCompleted={status === TranslationStatus.COMPLETED} />
-                        <StepIndicator number={4} title="Download" isActive={status === TranslationStatus.COMPLETED} isCompleted={false} />
+                        <StepIndicator number={2} title="Configure" isActive={isConfigureStepActive} isCompleted={isTranslationInProgress || isTranslationComplete} />
+                        <StepIndicator number={3} title="Translate" isActive={isTranslationInProgress} isCompleted={isTranslationComplete} />
+                        <StepIndicator number={4} title="Download" isActive={isTranslationComplete} isCompleted={false} />
                     </div>
                  </div>
               </div>
 
               <div className="lg:col-span-9 space-y-8">
                 {(fileType === 'video' || fileType === 'youtube') && videoSrc && (
-                    fileType === 'youtube' && youtubeMeta ? (
-                        <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
-                            <img src={youtubeMeta.thumbnailUrl} alt={youtubeMeta.title} className="w-full h-full object-cover opacity-50 group-hover:opacity-70 transition-opacity" />
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="px-4 py-2 bg-black/70 rounded-xl backdrop-blur border border-white/10 text-sm text-white font-medium flex items-center gap-2">
-                                    <Youtube className="w-4 h-4 text-red-500" /> YouTube Import
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} isYouTube={false} />
-                    )
+                    <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} isYouTube={fileType === 'youtube'} />
                 )}
 
                 <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-6 hover:bg-neutral-900/30 transition-all duration-300">
                    {!file ? (
-                     <div className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+                     <div className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
+                       onDragOver={(e) => e.preventDefault()}
+                       onDrop={handleDrop}
+                     >
                         <input type="file" ref={fileInputRef} className="hidden" accept={`.srt, ${SUPPORTED_VIDEO_FORMATS.join(',')}`} onChange={handleFileChange} />
                         <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform" onClick={() => fileInputRef.current?.click()}>
                           <Upload className="text-white w-8 h-8" />
                         </div>
                         <h2 className="text-xl font-bold text-white mb-2" onClick={() => fileInputRef.current?.click()}>Drop your SRT or Video file here</h2>
                         <p className="text-neutral-500 mb-8" onClick={() => fileInputRef.current?.click()}>or click to browse local files</p>
+                        
                         <div className="flex gap-4 z-20">
                            <button onClick={() => { setImportType('URL'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-neutral-500 transition-all group/btn" title="Import from URL">
                              <LinkIcon className="w-5 h-5 text-neutral-400 group-hover/btn:text-white" />
@@ -933,7 +929,7 @@ const App = () => {
                            </button>
                         </div>
                      </div>
-                   ) : (fileType === 'video' && videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
+                   ) : (videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
                      <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
                         <Loader2 className="w-12 h-12 text-white animate-spin" />
                         <div>
@@ -961,28 +957,28 @@ const App = () => {
                      <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between gap-6">
                             <div className="flex items-center gap-4 flex-1 min-w-0">
-                              <div className="w-24 aspect-video rounded-xl bg-neutral-800 text-black flex items-center justify-center overflow-hidden shrink-0 border border-neutral-700">
+                               <div className="w-24 aspect-video rounded-xl bg-neutral-800 text-black flex items-center justify-center overflow-hidden shrink-0 border border-neutral-700">
                                 {fileType === 'srt' ? (
-                                    <FileText className="w-6 h-6 text-white" /> 
+                                    <FileText className="w-6 h-6 text-white" />
                                 ) : fileType === 'youtube' && youtubeMeta ? (
-                                    <img src={youtubeMeta.thumbnailUrl} className="w-full h-full object-cover"/> 
-                                ) : videoSrc ? (
-                                    <video src={videoSrc} className="w-full h-full object-cover" muted preload="metadata" />
+                                    <img src={youtubeMeta.thumbnailUrl} className="w-full h-full object-cover" alt="YouTube thumbnail"/>
+                                ) : fileType === 'video' && videoThumbnail ? (
+                                    <img src={videoThumbnail} className="w-full h-full object-cover" alt="Video thumbnail"/>
                                 ) : (
                                     <Clapperboard className="w-6 h-6 text-white" />
                                 )}
                               </div>
                               <div className="min-w-0">
-                                <h3 className="text-lg font-bold text-white truncate">{file.name}</h3>
+                                <h3 className="text-lg font-bold text-white truncate">{file?.name}</h3>
                                 <p className="text-neutral-500 text-sm">
-                                    {subtitles.length > 0 ? `${subtitles.length} lines loaded` : fileType === 'youtube' ? 'Select a caption track below' : 'Ready to configure'}
+                                    {subtitles.length > 0 ? `${subtitles.length} lines loaded` : isYouTubeWorkflow ? 'Select a caption track below' : 'Ready to configure'}
                                 </p>
                               </div>
                             </div>
                             <Button variant="outline" onClick={resetState} className="shrink-0">Change File</Button>
                         </div>
 
-                        {subtitles.length > 0 && fileType !== 'youtube' && !isYoutubeAutoModel && (
+                        {!isYouTubeWorkflow && subtitles.length > 0 && status === TranslationStatus.IDLE && (
                           <div className="flex items-center gap-3 p-3 rounded-lg bg-indigo-900/20 border border-indigo-900/40 text-indigo-300 text-sm">
                               <Info className="w-4 h-4 shrink-0" />
                               <span>Processing this file will require approximately <strong>{estimatedRequests} API requests</strong>.</span>
@@ -992,90 +988,72 @@ const App = () => {
                    )}
                 </div>
 
-                {(subtitles.length > 0 || fileType === 'youtube') && (
-                   <div className="animate-fade-in">
-                       {/* If using YouTube Auto Model, hide the standard translation controls */}
-                       {isYoutubeAutoModel && subtitles.length > 0 ? (
-                           <div className="p-6 rounded-2xl border border-green-900/40 bg-green-900/10 flex items-center gap-4">
-                               <div className="w-12 h-12 bg-green-900/20 rounded-xl flex items-center justify-center shrink-0">
-                                   <CheckCircle2 className="w-6 h-6 text-green-400" />
-                               </div>
-                               <div>
-                                   <h3 className="font-bold text-white text-lg">Caption Generation Complete</h3>
-                                   <p className="text-neutral-400 text-sm">
-                                       Your captions have been generated by YouTube. You can download the SRT or the embedded video below. 
-                                       To translate these captions, please switch the AI Model to <strong>Gemini</strong> or <strong>OpenAI</strong> in settings.
-                                   </p>
-                               </div>
-                           </div>
-                       ) : (
-                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                               <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
-                                   {fileType === 'youtube' ? (
-                                       <>
-                                           <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">YouTube Caption Track</label>
-                                           <div className="relative">
-                                               <select 
-                                                   className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors"
-                                                   onChange={(e) => setSelectedCaptionId(e.target.value)}
-                                                   value={selectedCaptionId}
-                                                   disabled={videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
-                                               >
-                                                   <option value="">-- Select Caption to Import --</option>
-                                                   {youtubeMeta?.availableCaptions?.map((c, index) => (
-                                                       <option key={index} value={c.id}>
-                                                           {c.name}
-                                                       </option>
-                                                   ))}
-                                               </select>
-                                               <ChevronDown className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-                                           </div>
-                                       </>
-                                   ) : (
-                                       <>
-                                           <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Source Language</label>
-                                           <div className="relative">
-                                           <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} disabled={status === TranslationStatus.TRANSLATING}>
-                                               <option value="auto">✨ Auto Detect</option>
-                                               {LANGUAGES.map(l => <option key={`source-${l.code}`} value={l.name}>{l.name}</option>)}
-                                           </select>
-                                           <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-                                           </div>
-                                       </>
-                                   )}
-                               </div>
-                               <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20 flex flex-col justify-end">
-                                   {fileType === 'youtube' ? (
-                                        <div className="h-full flex items-end">
-                                           <Button 
-                                               className="w-full py-3.5 text-base" 
-                                               onClick={handleYouTubeDownload}
-                                               disabled={!selectedCaptionId || videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
-                                               icon={videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-                                           >
-                                               {videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES ? 'Downloading...' : 'Download & Process'}
-                                           </Button>
-                                        </div>
-                                   ) : (
-                                       <>
-                                           <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Target Language</label>
-                                           <div className="relative">
-                                           <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={targetLang} onChange={(e) => setTargetLang(e.target.value)} disabled={status === TranslationStatus.TRANSLATING}>
-                                               {LANGUAGES.map(l => <option key={`target-${l.code}`} value={l.name}>{l.name}</option>)}
-                                           </select>
-                                           <ArrowRight className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-                                           </div>
-                                       </>
-                                   )}
-                               </div>
-                           </div>
-                       )}
-                   </div>
+                {isConfigureStepActive && (
+                    <>
+                        {isYouTubeWorkflow && subtitles.length === 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+                                <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
+                                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Transcription Language</label>
+                                    <div className="relative">
+                                        <select
+                                            className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors"
+                                            onChange={(e) => setSelectedCaptionId(e.target.value)}
+                                            value={selectedCaptionId}
+                                            disabled={videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
+                                        >
+                                            <option value="">-- Select a Language --</option>
+                                            {LANGUAGES.map((l) => (
+                                                <option key={l.code} value={l.code}>
+                                                    {l.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
+                                    </div>
+                                </div>
+                                <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20 flex flex-col justify-end">
+                                    <div className="h-full flex items-end">
+                                        <Button
+                                            className="w-full py-3.5 text-base"
+                                            onClick={handleYouTubeCaptionDownload}
+                                            disabled={!selectedCaptionId || videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES}
+                                            icon={videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                                        >
+                                            {videoProcessingStatus === VideoProcessingStatus.EXTRACTING_SUBTITLES ? 'Downloading...' : 'Generate & Process'}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : !isYouTubeWorkflow && subtitles.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+                                <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
+                                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Source Language</label>
+                                    <div className="relative">
+                                        <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={sourceLang} onChange={(e) => setSourceLang(e.target.value)} disabled={isTranslationInProgress}>
+                                            <option value="auto">✨ Auto Detect</option>
+                                            {LANGUAGES.map(l => <option key={`source-${l.code}`} value={l.name}>{l.name}</option>)}
+                                        </select>
+                                        <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
+                                    </div>
+                                </div>
+                                <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20 flex flex-col justify-end">
+                                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Target Language</label>
+                                    <div className="relative">
+                                        <select className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" value={targetLang} onChange={(e) => setTargetLang(e.target.value)} disabled={isTranslationInProgress}>
+                                            {LANGUAGES.map(l => <option key={`target-${l.code}`} value={l.name}>{l.name}</option>)}
+                                        </select>
+                                        <ArrowRight className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+                    </>
                 )}
 
-                {(subtitles.length > 0 && fileType !== 'youtube' && !isYoutubeAutoModel) && (
+
+                {!isYouTubeWorkflow && subtitles.length > 0 && (
                   <div className="flex justify-end gap-4 animate-fade-in">
-                    {status === TranslationStatus.TRANSLATING ? (
+                    {isTranslationInProgress ? (
                       <div className="flex-1 p-4 rounded-xl border border-neutral-800 bg-neutral-900/50 flex items-center gap-4">
                         <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
                         <div className="flex-1">
@@ -1088,11 +1066,11 @@ const App = () => {
                            </div>
                         </div>
                       </div>
-                    ) : (
+                    ) : status === TranslationStatus.IDLE ? (
                       <Button onClick={handleTranslate} className="w-full md:w-auto text-lg" icon={<Zap className="w-5 h-5" />}>
                         Start Translation
                       </Button>
-                    )}
+                    ) : null}
                   </div>
                 )}
                 
@@ -1110,8 +1088,12 @@ const App = () => {
           <section ref={resultsRef} className="mt-24 border-t border-neutral-900 pt-12 animate-slide-up pb-24">
             <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
               <div>
-                <h2 className="text-3xl font-display font-bold text-white mb-2">Live Preview</h2>
-                <p className="text-neutral-500">Comparing original vs output.</p>
+                <h2 className="text-3xl font-display font-bold text-white mb-2">
+                    {isYouTubeWorkflow ? 'Transcription Preview' : 'Live Preview'}
+                </h2>
+                <p className="text-neutral-500">
+                    {isYouTubeWorkflow ? 'Review the generated transcription below.' : 'Comparing original vs translated output.'}
+                </p>
               </div>
               <div className="flex items-center gap-4">
                   {(fileType === 'video' || fileType === 'youtube') && (
@@ -1122,7 +1104,7 @@ const App = () => {
                             progress={downloadProgress}
                             statusText={downloadStatusText}
                             completed={isDownloadComplete}
-                            disabled={downloadProgress !== undefined}
+                            disabled={downloadProgress !== undefined || isTranslationInProgress}
                             icon={<Film className="w-4 h-4" />}
                             className=""
                         >
@@ -1130,19 +1112,19 @@ const App = () => {
                         </Button>
                       </div>
                   )}
-                  <Button variant="primary" onClick={handleDownloadSrt} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>
+                  <Button variant="primary" onClick={handleDownloadSrt} disabled={isTranslationInProgress} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>
               </div>
             </div>
             <div className="rounded-3xl border border-neutral-800 bg-black/50 backdrop-blur overflow-hidden min-h-[400px]">
-              <div className={`grid ${fileType === 'youtube' || isYoutubeAutoModel ? 'grid-cols-1' : 'grid-cols-[100px_1fr]'} border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
-                {fileType !== 'youtube' && !isYoutubeAutoModel && <div className="pl-2">Timestamp</div>}
-                <div className={`grid ${fileType === 'youtube' || isYoutubeAutoModel ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
-                   <span>Original ({sourceLang})</span>
-                   {fileType !== 'youtube' && !isYoutubeAutoModel && <span className="text-white">Translated ({targetLang})</span>}
+              <div className={`grid grid-cols-[100px_1fr] border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
+                <div className="pl-2">Timestamp</div>
+                <div className={`grid ${isYouTubeWorkflow ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
+                   <span>Original ({isYouTubeWorkflow ? LANGUAGES.find(l=>l.code === selectedCaptionId)?.name || 'Selected Language' : sourceLang})</span>
+                   {!isYouTubeWorkflow && <span className="text-white">Translated ({targetLang})</span>}
                 </div>
               </div>
               <div className="max-h-[800px] overflow-y-auto">
-                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={fileType === 'youtube' || isYoutubeAutoModel} /> ))}
+                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} /> ))}
               </div>
             </div>
             <div className="mt-8 flex justify-center">
@@ -1154,7 +1136,6 @@ const App = () => {
         )}
       </main>
 
-      {/* FOOTER & MODALS (Kept same as before) */}
       <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
         <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8">
             <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
@@ -1171,11 +1152,18 @@ const App = () => {
                     <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
                 </div>
             </div>
+            <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-xs text-neutral-500 w-full">
+                <span>Developed by <a href="https://rovoid.ir" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
+                <span className="hidden md:block w-1 h-1 rounded-full bg-neutral-800"></span>
+                <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
+                    <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
+                </button>
+            </div>
         </div>
       </footer>
 
-      {/* ... Modals (Config, Privacy, TOS - Included implicitly or can be pasted if needed, but unchanged logic) ... */}
-       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
+      {/* ... Modals ... */}
+      <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
            <div className="flex flex-col gap-4">
               <label className="block text-sm font-bold text-white flex items-center gap-2"><Cpu className="w-4 h-4" /> Select AI Model</label>
@@ -1195,13 +1183,26 @@ const App = () => {
                       {youtubeModel.map((model) => {
                         const isDisabled = !googleUser;
                         return (
-                            <div key={model.id} onClick={() => !isDisabled && setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
+                            <div 
+                                key={model.id} 
+                                onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                                className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 
+                                    ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                                      selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}
+                                `}
+                            >
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">{model.name} {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}</h4>
+                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                      {model.name}
+                                      {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
+                                  </h4>
                                   <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                                 </div>
                                 {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
                               </div>
                             </div>
                         );
@@ -1220,8 +1221,14 @@ const App = () => {
                       {filteredGoogleModels.map((model) => (
                         <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
                           <div className="flex items-start justify-between">
-                            <div><h4 className="font-bold text-white mb-1">{model.name}</h4><p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p></div>
+                            <div>
+                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                            </div>
                             {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
                           </div>
                         </div>
                       ))}
@@ -1238,8 +1245,14 @@ const App = () => {
                       {filteredOpenAIModels.map((model) => (
                         <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
                           <div className="flex items-start justify-between">
-                            <div><h4 className="font-bold text-white mb-1">{model.name}</h4><p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p></div>
+                            <div>
+                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                            </div>
                             {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
                           </div>
                         </div>
                       ))}
@@ -1258,7 +1271,13 @@ const App = () => {
                      </div>
                     <div className="relative">
                        <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-3.5">
+                          {googleApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                          {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                          {googleApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       </div>
                     </div>
+                    <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
                   </div>
                   
                   <div className="space-y-2">
@@ -1268,12 +1287,36 @@ const App = () => {
                      </div>
                     <div className="relative">
                        <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-3.5">
+                          {openAIApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                          {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                          {openAIApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       </div>
                     </div>
+                    <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
+                  </div>
+    
+                  <div className="space-y-2">
+                     <div className="flex items-center justify-between mb-2">
+                        <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
+                        <p className="font-medium text-white text-sm">{selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}</p>
+                     </div>
+                      <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
+                          <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${selectedRpmIndex * 100}%)` }} />
+                          {RPM_OPTIONS.map((option) => (
+                              <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
+                          ))}
+                      </div>
+                       <p className="text-xs text-neutral-500 text-center mt-2">{RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
                   </div>
               </div>
               
               <div className="flex items-center justify-between w-full pt-6 mt-8 border-t border-neutral-800">
-                <YouTubeAuth onLoginSuccess={handleGoogleLoginSuccess} onLogout={handleGoogleLogout} userInfo={googleUser} />
+                <YouTubeAuth 
+                    onLoginSuccess={handleGoogleLoginSuccess} 
+                    onLogout={handleGoogleLogout} 
+                    userInfo={googleUser} 
+                />
                 <Button onClick={saveSettings} disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating'}>Save Settings</Button>
               </div>
            </div>
@@ -1282,13 +1325,69 @@ const App = () => {
 
       <Modal isOpen={activeModal === 'PRIVACY'} onClose={() => setActiveModal('NONE')} title="Privacy Policy">
          <div className="space-y-6 text-sm text-neutral-300 leading-relaxed">
-            <p>SubStream AI is a "Client-Side" application. We do not store your API keys, subtitle files, or personal data on our servers.</p>
+            <p className="text-xs text-neutral-500">Last Updated: November 2025</p>
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                <Shield className="w-4 h-4 text-green-400" /> Data Handling & Storage
+              </h3>
+              <p>
+                <strong>SubStream AI</strong> is a "Client-Side" application. We do not store your API keys, subtitle files, or personal data on our servers.
+                All API keys are stored locally in your browser's <code>localStorage</code>.
+              </p>
+            </div>
+            <div className="space-y-3 pt-4 border-t border-neutral-800">
+              <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                <Youtube className="w-4 h-4 text-red-500" /> YouTube API Services
+              </h3>
+              <p>
+                This application uses YouTube API Services to provide features such as importing videos from your channel and uploading videos for auto-captioning.
+                By using these features, you agree to be bound by the <a href="https://www.youtube.com/t/terms" target="_blank" className="text-white underline">YouTube Terms of Service</a>.
+              </p>
+              <p>We access the following data only when you explicitly authenticate:</p>
+              <ul className="list-disc list-inside pl-2 mt-1 space-y-1 text-neutral-400">
+                  <li><strong>Uploads:</strong> To upload videos as "Unlisted" for transcription purposes.</li>
+                  <li><strong>Channel List:</strong> To display your videos in the import selector.</li>
+              </ul>
+              <p>
+                Please refer to the <a href="http://www.google.com/policies/privacy" target="_blank" className="text-white underline">Google Privacy Policy</a> for more information on how Google handles your data.
+              </p>
+            </div>
+            <div className="space-y-3 pt-4 border-t border-neutral-800">
+              <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                 <LinkIcon className="w-4 h-4 text-blue-400" /> Proxy Usage
+              </h3>
+              <p>
+                When importing files from external URLs, data is streamed through a temporary local proxy to bypass CORS restrictions. The data is not persisted on the server.
+              </p>
+            </div>
          </div>
       </Modal>
 
       <Modal isOpen={activeModal === 'TOS'} onClose={() => setActiveModal('NONE')} title="Terms of Service">
          <div className="space-y-6 text-sm text-neutral-300 leading-relaxed">
-            <p>By accessing and using SubStream AI, you accept and agree to be bound by the terms and provision of this agreement.</p>
+            <p className="text-xs text-neutral-500">Last Updated: November 2025</p>
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">1. Acceptance of Terms</h3>
+              <p>By accessing and using SubStream AI, you accept and agree to be bound by the terms and provision of this agreement.</p>
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">2. YouTube Integration</h3>
+              <p>
+                Our service integrates with YouTube. By using the YouTube features (Import, Auto-Caption), you agree to the <a href="https://www.youtube.com/t/terms" target="_blank" className="text-white underline">YouTube Terms of Service</a>.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">3. User Responsibility</h3>
+              <p>
+                You are solely responsible for the content you process using this tool. You agree not to upload content that violates copyright laws, contains illegal material, or infringes on the rights of others.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-white font-bold text-lg">4. Disclaimer</h3>
+              <p>
+                This software is provided "as is", without warranty of any kind, express or implied. The developers are not liable for any damages or data loss arising from the use of this software.
+              </p>
+            </div>
          </div>
       </Modal>
       
@@ -1306,6 +1405,7 @@ const App = () => {
         onClose={() => setCloudModalOpen(false)}
         onImportFile={handleImportFile}
       />
+
     </div>
   );
 };

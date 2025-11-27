@@ -22,9 +22,16 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
         }
         
         const data = await response.json();
+        // The yt-dlp response has a different structure for captions, so we map it.
+        const mappedCaptions = data.captions.map((c: any) => ({
+            id: c.id,
+            language: c.language,
+            name: c.name,
+        }));
+        
         data.meta.videoUrl = data.meta.videoUrl || videoUrl;
         
-        return { meta: data.meta, captions: data.captions };
+        return { meta: data.meta, captions: mappedCaptions };
 
     } catch (e: any) {
         console.error("Backend API Error:", e);
@@ -147,8 +154,7 @@ function formatDuration(isoDuration: string): string {
 }
 
 /**
- * Uploads a video to YouTube using the Local Proxy for Init and Direct Browser Upload for Binary.
- * This prevents the local server from handling heavy video data.
+ * Uploads a video to YouTube using the Local Proxy for Init and the binary stream.
  */
 export async function uploadVideoToYouTube(accessToken: string, videoFile: File, title: string, onProgress?: (percent: number) => void): Promise<string> {
     
@@ -204,14 +210,11 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
     if (!uploadUrl) throw new Error("Backend did not return an upload location.");
 
     // 2. Upload binary VIA LOCAL PROXY to avoid CORS
-    // Browser -> LocalHost:4000 -> Google
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         
-        // Point to our local proxy endpoint
         xhr.open('PUT', `${BACKEND_URL}/proxy/upload-finish`, true);
         
-        // Pass the actual Google Upload URL in a custom header
         xhr.setRequestHeader('x-upload-url', uploadUrl);
         xhr.setRequestHeader('Content-Type', videoFile.type || 'video/mp4');
 
@@ -231,7 +234,8 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
                     reject(new Error("Failed to parse YouTube response after upload."));
                 }
             } else {
-                reject(new Error(`Binary Upload Failed (${xhr.status}): ${xhr.statusText}`));
+                 const errorText = xhr.responseText || xhr.statusText;
+                 reject(new Error(`Binary Upload Failed (${xhr.status}): ${errorText}`));
             }
         };
 
@@ -242,9 +246,9 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
 }
 
 /**
- * Polls the YouTube API via Local Proxy to check if the ASR track is ready.
+ * Polls the YouTube API via Local Proxy to check if any caption tracks are ready.
  */
-export async function checkYouTubeCaptionStatus(accessToken: string, videoId: string, onProgress?: (msg: string, percent: number) => void): Promise<string> {
+export async function pollForCaptionReady(accessToken: string, videoId: string, onProgress?: (msg: string, percent: number) => void): Promise<boolean> {
     const MAX_ATTEMPTS = 120; // 20 minutes
     const INTERVAL_MS = 10000; // 10 seconds
 
@@ -252,25 +256,21 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
         const percent = Math.round((i / MAX_ATTEMPTS) * 100);
         
         try {
-            if (onProgress) onProgress(`Waiting for YouTube to generate captions... (${i + 1}/${MAX_ATTEMPTS})`, percent);
+            if (onProgress) onProgress(`Waiting for YouTube to process video... (${i + 1}/${MAX_ATTEMPTS})`, percent);
             
-            // Proxy this call to avoid CORS/COEP
             const response = await fetch(`${BACKEND_URL}/proxy/captions?token=${encodeURIComponent(accessToken)}&videoId=${videoId}`);
 
-            if (!response.ok) {
-                console.warn(`Caption check failed (${response.status})`);
-            } else {
+            if (response.ok) {
                 const data = await response.json();
                 
+                // We just need to know if ANY track is ready. That means processing is done.
                 if (data.items && data.items.length > 0) {
-                    const asrTrack = data.items.find((item: any) => item.snippet.trackKind === 'ASR');
-                    const trackToUse = asrTrack || data.items[0];
-
-                    if (trackToUse && trackToUse.id) {
-                        if (onProgress) onProgress("Captions generated successfully!", 100);
-                        return trackToUse.id;
-                    }
+                    if (onProgress) onProgress("Video processing complete!", 100);
+                    return true;
                 }
+            } else {
+                 const errText = await response.text();
+                 console.warn(`Caption check failed (${response.status}): ${errText}`);
             }
         } catch (e: any) {
             console.warn("Polling error:", e);
@@ -279,16 +279,5 @@ export async function checkYouTubeCaptionStatus(accessToken: string, videoId: st
         await delay(INTERVAL_MS);
     }
 
-    throw new Error('Timed out waiting for YouTube captions.');
-}
-
-export async function downloadYouTubeCaptionTrackOAuth(accessToken: string, captionId: string): Promise<string> {
-    const response = await fetch(`${BACKEND_URL}/proxy/download-caption?token=${encodeURIComponent(accessToken)}&captionId=${captionId}`);
-
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(`Failed to download caption: ${err.error || response.statusText}`);
-    }
-
-    return await response.text();
+    throw new Error('Timed out waiting for YouTube to process the video.');
 }
