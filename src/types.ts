@@ -147,6 +147,13 @@ export const AVAILABLE_MODELS: AIModel[] = [
     provider: 'google',
   },
   {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    description: 'Cost-optimized version of 2.5 Flash. Extremely fast and affordable for high volume.',
+    tags: ['Lite', 'Economy'],
+    provider: 'google',
+  },
+  {
     id: 'gemini-2.0-pro',
     name: 'Gemini 2.0 Pro',
     description: 'Previous generation high-intelligence model. Reliable for standard translation tasks.',
@@ -161,17 +168,10 @@ export const AVAILABLE_MODELS: AIModel[] = [
     provider: 'google',
   },
   {
-    id: 'gemini-1.5-pro',
-    name: 'Gemini 1.5 Pro',
-    description: 'Legacy gold standard for reasoning and long context.',
-    tags: ['Stable', 'Reliable'],
-    provider: 'google',
-  },
-  {
-    id: 'gemini-1.5-flash',
-    name: 'Gemini 1.5 Flash',
-    description: 'Legacy high speed, low latency model.',
-    tags: ['Stable', 'Fast'],
+    id: 'gemini-2.0-flash-lite-preview-02-05',
+    name: 'Gemini 2.0 Flash Lite',
+    description: 'The most cost-effective model in the 2.0 family. Good balance of speed and quality.',
+    tags: ['Preview', 'Lite', 'Budget'],
     provider: 'google',
   },
 
