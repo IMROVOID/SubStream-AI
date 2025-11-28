@@ -52,26 +52,37 @@ function arrayBufferToBase64(buffer: ArrayBuffer) {
   return window.btoa(binary);
 }
 
+// --- Time Helpers for Logic Fixes ---
+
+const timeToMs = (timeStr: string): number => {
+    const [hms, ms] = timeStr.split(',');
+    const [h, m, s] = hms.split(':').map(Number);
+    return (h * 3600000) + (m * 60000) + (s * 1000) + parseInt(ms);
+};
+
+const msToTime = (ms: number): string => {
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const mil = Math.floor(ms % 1000);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(mil).padStart(3, '0')}`;
+};
+
 // --- API Key Validation ---
 
 export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => {
     if (!apiKey || !apiKey.startsWith('AIzaSy')) return false;
 
-    // A list of stable models to try for validation in sequence.
     const modelsToTry = ['gemini-2.0-flash', 'gemini-2.5-flash'];
     const ai = new GoogleGenAI({ apiKey });
 
     for (const model of modelsToTry) {
         try {
-            await enforceRateLimit(); // Check limit before validation
-            // Attempt a lightweight call to check for model accessibility.
+            await enforceRateLimit(); 
             await ai.models.countTokens({ model, contents: [{ role: "user", parts: [{ text: "test" }] }] });
-            // If the call succeeds, the key is valid.
             return true;
         } catch (error: any) {
-            // Check if it's specifically a 'NOT_FOUND' error for the model.
             const isNotFoundError = error?.status === 'NOT_FOUND' || (error?.message && error.message.includes('NOT_FOUND'));
-            
             if (isNotFoundError) {
                 console.warn(`Validation with model "${model}" failed (Not Found). Trying next model...`);
             } else {
@@ -80,8 +91,6 @@ export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => 
             }
         }
     }
-
-    console.error("All fallback models for Google API Key validation failed.");
     return false;
 };
 
@@ -89,17 +98,16 @@ export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => 
 export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => {
     if (!apiKey || !apiKey.startsWith('sk-')) return false;
     try {
-        await enforceRateLimit(); // Check limit before validation
+        await enforceRateLimit();
         const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-        await openai.models.list(); // Simple API call to verify the key
+        await openai.models.list();
         return true;
     } catch (error) {
-        console.error("OpenAI API Key validation failed:", error);
         return false;
     }
 };
 
-// --- Transcription ---
+// --- Transcription Logic ---
 
 // Helper to convert JSON response to SRT String
 const jsonToSRT = (segments: { start: string; end: string; text: string }[]): string => {
@@ -108,38 +116,141 @@ const jsonToSRT = (segments: { start: string; end: string; text: string }[]): st
     }).join('\n\n');
 };
 
+// Robust JSON Cleaner & Repairer
+const cleanAndRepairJSON = (text: string): string => {
+    let cleaned = text.replace(/```json|```/g, '').trim();
+    const firstBracket = cleaned.indexOf('[');
+    if (firstBracket === -1) return '[]';
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (lastBrace === -1) return '[]';
+    return cleaned.substring(firstBracket, lastBrace + 1) + ']';
+};
+
+/**
+ * Splits a long segment into smaller chunks based on character length.
+ * Interpolates timestamps linearly.
+ */
+const splitLongSegment = (segment: { start: string; end: string; text: string }) => {
+    const MAX_CHARS = 55; // Preferred max characters per line
+    const TEXT = segment.text.trim();
+    
+    // If short enough, return as is
+    if (TEXT.length <= MAX_CHARS) return [segment];
+
+    const startMs = timeToMs(segment.start);
+    const endMs = timeToMs(segment.end);
+    const totalDuration = endMs - startMs;
+    
+    // Split text into word-aware chunks
+    const words = TEXT.split(' ');
+    const chunks: string[] = [];
+    let currentChunk: string[] = [];
+    let currentLength = 0;
+
+    for (const word of words) {
+        if (currentLength + word.length + 1 > MAX_CHARS) {
+            chunks.push(currentChunk.join(' '));
+            currentChunk = [word];
+            currentLength = word.length;
+        } else {
+            currentChunk.push(word);
+            currentLength += word.length + 1;
+        }
+    }
+    if (currentChunk.length > 0) chunks.push(currentChunk.join(' '));
+
+    // Distribute time based on character count ratio (Linear Interpolation)
+    const resultSegments: { start: string; end: string; text: string }[] = [];
+    let currentStart = startMs;
+    const totalChars = TEXT.length; // Use raw length for ratio
+
+    chunks.forEach((chunkText, idx) => {
+        // Calculate duration share: (chunkLen / totalLen) * totalDuration
+        let share = Math.floor((chunkText.length / totalChars) * totalDuration);
+        
+        // Ensure last segment aligns perfectly with end time
+        if (idx === chunks.length - 1) {
+            share = endMs - currentStart; 
+        }
+
+        const chunkEnd = currentStart + share;
+
+        resultSegments.push({
+            start: msToTime(currentStart),
+            end: msToTime(chunkEnd),
+            text: chunkText
+        });
+
+        currentStart = chunkEnd;
+    });
+
+    return resultSegments;
+};
+
+// Fix overlapping timestamps AND Split long segments
+const fixTimestampIssues = (segments: { start: string; end: string; text: string }[]) => {
+    if (!segments || segments.length === 0) return [];
+
+    // 1. Sort strictly by Start Time
+    segments.sort((a, b) => timeToMs(a.start) - timeToMs(b.start));
+
+    // 2. Split long segments first (Pre-processing)
+    let splitSegments: { start: string; end: string; text: string }[] = [];
+    for (const seg of segments) {
+        const subSegments = splitLongSegment(seg);
+        splitSegments = splitSegments.concat(subSegments);
+    }
+
+    // 3. Fix Overlaps (Post-processing)
+    for (let i = 0; i < splitSegments.length - 1; i++) {
+        const current = splitSegments[i];
+        const next = splitSegments[i + 1];
+
+        const currentEndMs = timeToMs(current.end);
+        const nextStartMs = timeToMs(next.start);
+
+        // If Current overlaps into Next, CUT Current short.
+        if (currentEndMs > nextStartMs) {
+            // Buffer: Leave a 50ms gap between lines
+            const newEndMs = Math.max(timeToMs(current.start) + 300, nextStartMs - 50); 
+            current.end = msToTime(newEndMs);
+        }
+    }
+
+    return splitSegments;
+};
+
 async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey: string, modelId: string): Promise<string> {
     const ai = new GoogleGenAI({ apiKey });
     const audioBuffer = await audioBlob.arrayBuffer();
     const base64Audio = arrayBufferToBase64(audioBuffer);
-    const audioParts = [{ inlineData: { data: base64Audio, mimeType: audioBlob.type } }];
+    
+    // WAV Mime Type
+    const audioParts = [{ inlineData: { data: base64Audio, mimeType: 'audio/wav' } }];
 
-    // AGGRESSIVE SEGMENTATION & SYNC PROMPT
-    const prompt = `You are an expert subtitle timer.
+    // PROMPT: Optimized for short lines
+    const prompt = `You are a professional subtitle timer for TikTok/Reels.
     
     TASK:
-    Transcribe the audio into precise JSON segments.
+    Transcribe the audio into short, punchy JSON segments.
     ${sourceLang !== 'auto' ? `LANGUAGE: Strictly ${sourceLang}. Do NOT translate.` : 'LANGUAGE: Detect automatically.'}
 
-    STRICT TIMING RULES (CRITICAL):
-    1. **SYNC ACCURACY**: The 'start' timestamp must match the EXACT millisecond the voice begins. Do NOT estimate.
-    2. **NO DELAY**: Do NOT add buffer time to the start. If speech starts at 00:00:02,500, the timestamp must be 00:00:02,500.
-    3. **MICRO-SEGMENTATION**: Keep segments short (max 10-12 words). Break long sentences into natural pauses.
-    4. **DURATION**: Segments should be 2-4 seconds long.
-    5. **FORMAT**: Return ONLY a JSON array.
-
-    Example Output:
-    [
-        {"start": "00:00:00,000", "end": "00:00:02,100", "text": "This is the first precise segment."},
-        {"start": "00:00:02,100", "end": "00:00:04,500", "text": "And this follows immediately without drift."}
-    ]
+    RULES:
+    1. **ONE PHRASE PER BLOCK**: Never put more than 8-10 words in one block.
+    2. **SHORT DURATION**: Max duration per block is 3-4 seconds.
+    3. **SYNC**: Start time must be exact.
+    4. **NO PARAGRAPHS**: Split long sentences into multiple entries immediately.
+    
+    Format:
+    [{"start": "00:00:00,000", "end": "00:00:02,000", "text": "Short line 1"}, {"start": "00:00:02,000", "end": "00:00:04,500", "text": "Short line 2"}]
     `;
 
     const generationConfig: GenerationConfig = { 
-        responseMimeType: 'application/json' 
+        responseMimeType: 'application/json',
+        maxOutputTokens: 8192 
     };
 
-    await enforceRateLimit(); // Check limit
+    await enforceRateLimit();
     
     const result = await ai.models.generateContent({ 
         model: modelId, 
@@ -151,11 +262,15 @@ async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey:
     if (!responseText) throw new Error("No transcription generated.");
     
     try {
-        const jsonSegments = JSON.parse(responseText);
+        const safeJsonStr = cleanAndRepairJSON(responseText);
+        const jsonSegments = JSON.parse(safeJsonStr);
+        
         if (!Array.isArray(jsonSegments)) throw new Error("AI returned invalid JSON structure.");
         
-        // Convert the strict JSON back to SRT string for the App to parse
-        return jsonToSRT(jsonSegments);
+        // APPLY SPLITTING & SYNC LOGIC
+        const finalizedSegments = fixTimestampIssues(jsonSegments);
+
+        return jsonToSRT(finalizedSegments);
     } catch (e) {
         console.error("Failed to parse AI JSON response:", responseText);
         throw new Error("AI generated invalid transcription data. Please try again.");
@@ -165,13 +280,12 @@ async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey:
 async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey: string, modelId: string): Promise<string> {
     const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
     // OpenAI requires a File object with a name and type
-    const audioFile = new File([audioBlob], "audio.mp3", { type: audioBlob.type });
+    const audioFile = new File([audioBlob], "audio.wav", { type: 'audio/wav' });
 
-    // OpenAI Whisper is an ASR model, it handles timestamps natively.
     const options: OpenAI.Audio.Transcriptions.TranscriptionCreateParams = {
         file: audioFile,
-        model: modelId, // Usually 'whisper-1'
-        response_format: 'srt', // Whisper outputs valid SRT natively
+        model: modelId, 
+        response_format: 'srt', 
     };
 
     if (sourceLang !== 'auto') {
@@ -179,9 +293,11 @@ async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey:
         if (langData) options.language = langData.code;
     }
     
-    await enforceRateLimit(); // Check limit
+    await enforceRateLimit();
     const transcription = await openai.audio.transcriptions.create(options) as any;
     
+    // Whisper returns SRT directly. We can apply text splitting logic here too if needed, 
+    // but Whisper usually handles segmentation better. For consistency, we return raw SRT.
     if (typeof transcription !== 'string') throw new Error('OpenAI transcription returned an invalid result.');
     return transcription;
 }
@@ -202,14 +318,12 @@ const getTranslationPrompt = (sourceLang: string, targetLang: string, contentToT
     Your task is to translate subtitles from ${sourceLang === 'auto' ? 'the detected language' : sourceLang} to ${targetLang}.
     
     CRITICAL RULES:
-    1. Maintain the context of the dialogue. Look at surrounding lines in the batch to understand incomplete sentences.
-    2. Keep the translation concise to fit within subtitle timing constraints.
-    3. Do NOT translate proper nouns or technical terms if they are standard in the target region.
-    4. Return ONLY a JSON array containing objects with 'id' and 'text' (the translated text).
-    5. The 'id' must match the input 'id' exactly.
-    6. Do not include timestamps in the output, only the ID and the translated text.
+    1. Maintain the context of the dialogue.
+    2. Keep the translation concise.
+    3. Return ONLY a JSON array containing objects with 'id' and 'text'.
+    4. The 'id' must match the input 'id' exactly.
     
-    The JSON to translate is below:
+    JSON:
     ${JSON.stringify(contentToTranslate)}`;
 };
 
@@ -219,7 +333,7 @@ async function translateWithGoogle(subtitles: SubtitleNode[], sourceLang: string
     const systemInstruction = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
     const generationConfig: GenerationConfig = { responseMimeType: 'application/json' };
 
-    await enforceRateLimit(); // Check limit
+    await enforceRateLimit(); 
     const result = await ai.models.generateContent({ model: modelId, contents: [{ role: "user", parts: [{ text: systemInstruction }] }], config: generationConfig });
     const responseText = result.text;
     if (!responseText) throw new Error("Received empty response from Google AI.");
@@ -233,7 +347,7 @@ async function translateWithOpenAI(subtitles: SubtitleNode[], sourceLang: string
     const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
     const systemPrompt = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
 
-    await enforceRateLimit(); // Check limit
+    await enforceRateLimit();
     const response = await openai.chat.completions.create({
         model: modelId,
         messages: [{ role: 'system', content: systemPrompt }],
@@ -246,7 +360,7 @@ async function translateWithOpenAI(subtitles: SubtitleNode[], sourceLang: string
     const parsed = JSON.parse(responseText);
     const arrayResult = Array.isArray(parsed) ? parsed : Object.values(parsed).find(Array.isArray);
 
-    if (!arrayResult) throw new Error("Invalid JSON format from OpenAI: could not find a JSON array in the response.");
+    if (!arrayResult) throw new Error("Invalid JSON format from OpenAI.");
     return arrayResult;
 }
 
@@ -286,7 +400,7 @@ export const processFullSubtitleFile = async (
   onBatchComplete: (updatedSubtitles: SubtitleNode[]) => void
 ): Promise<SubtitleNode[]> => {
   
-  if (!apiKey) throw new Error(`API Key for ${model.provider} is missing. Please add the appropriate key in Settings.`);
+  if (!apiKey) throw new Error(`API Key for ${model.provider} is missing.`);
 
   const results: SubtitleNode[] = [...subtitles];
   let processedCount = 0;
@@ -310,7 +424,7 @@ export const processFullSubtitleFile = async (
       
     } catch (e) {
       console.error(`Batch starting at ${i} failed after retries`, e);
-      throw new Error(`Translation failed at subtitle #${batch[0].id}. The server might be busy or the content too complex. Please try again.`);
+      throw new Error(`Translation failed at subtitle #${batch[0].id}. The server might be busy.`);
     }
   }
 

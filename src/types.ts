@@ -42,6 +42,7 @@ export enum VideoProcessingStatus {
 export interface LanguageOption {
   code: string;
   name: string;
+  font?: string; // New property for font class
 }
 
 export interface AIModel {
@@ -114,7 +115,7 @@ export interface DriveFolder {
 // -----------------------
 
 export const AVAILABLE_MODELS: AIModel[] = [
-  // YouTube Integration
+  // --- SPECIAL TOOLS ---
   {
     id: 'youtube-auto',
     name: 'YouTube Auto-Caption',
@@ -122,43 +123,59 @@ export const AVAILABLE_MODELS: AIModel[] = [
     tags: ['Free', 'Cloud', 'Transcription Only'],
     provider: 'youtube',
   },
-  // Google Models
+
+  // --- GOOGLE MODELS (Version Descending) ---
   {
     id: 'gemini-3-pro-preview',
-    name: 'Gemini 3 Pro',
+    name: 'Gemini 3.0 Pro',
     description: 'Highest reasoning capability. Best for complex dialogue, cultural nuances, and context retention.',
-    tags: ['Best Quality', 'Slower'],
+    tags: ['Preview', 'Slower', 'Most Powerful'],
     provider: 'google',
   },
   {
-    id: 'gemini-2.5-pro-preview',
+    id: 'gemini-2.5-pro',
     name: 'Gemini 2.5 Pro',
     description: 'Balanced performance with advanced reasoning capabilities. Great for most subtitles.',
-    tags: ['Balanced', 'High Quality'],
+    tags: ['Stable', 'High Quality'],
     provider: 'google',
   },
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
     description: 'Next-generation high-speed model. Ideal for large files and quick turnaround.',
-    tags: ['Ultra Fast', 'New'],
+    tags: ['Stable', 'Ultra Fast'],
     provider: 'google',
   },
   {
-    id: 'gemini-2.0-pro-exp-02-05',
+    id: 'gemini-2.0-pro',
     name: 'Gemini 2.0 Pro',
     description: 'Previous generation high-intelligence model. Reliable for standard translation tasks.',
-    tags: ['Reliable', 'Smart'],
+    tags: ['Stable', 'Smart'],
     provider: 'google',
   },
   {
     id: 'gemini-2.0-flash',
     name: 'Gemini 2.0 Flash',
     description: 'Optimized for speed and efficiency. Good for straightforward content and quick results.',
-    tags: ['Fast', 'Efficient'],
+    tags: ['Stable', 'Efficient'],
     provider: 'google',
   },
-  // OpenAI Models
+  {
+    id: 'gemini-1.5-pro',
+    name: 'Gemini 1.5 Pro',
+    description: 'Legacy gold standard for reasoning and long context.',
+    tags: ['Stable', 'Reliable'],
+    provider: 'google',
+  },
+  {
+    id: 'gemini-1.5-flash',
+    name: 'Gemini 1.5 Flash',
+    description: 'Legacy high speed, low latency model.',
+    tags: ['Stable', 'Fast'],
+    provider: 'google',
+  },
+
+  // --- OPENAI MODELS (Version Descending) ---
   {
     id: 'gpt-5.1',
     name: 'GPT-5.1',
@@ -263,7 +280,7 @@ export const LANGUAGES: LanguageOption[] = [
   { code: 'ja', name: 'Japanese' },
   { code: 'ko', name: 'Korean' },
   { code: 'no', name: 'Norwegian' },
-  { code: 'fa', name: 'Persian' },
+  { code: 'fa', name: 'Persian', font: 'font-vazirmatn' }, 
   { code: 'pl', name: 'Polish' },
   { code: 'pt', name: 'Portuguese' },
   { code: 'ro', name: 'Romanian' },

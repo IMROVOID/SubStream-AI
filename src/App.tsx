@@ -111,7 +111,7 @@ const App = () => {
 
   // Language & Translation Settings
   const [sourceLang, setSourceLang] = useState<string>('auto');
-  const [targetLang, setTargetLang] = useState<string>('es');
+  const [targetLang, setTargetLang] = useState<string>('Persian'); // Changed default to Persian based on context
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>('');
 
   // Video-specific State
@@ -399,6 +399,7 @@ const App = () => {
     setVideoSrc(null);
   };
 
+  // ... (Login handlers same as before) ...
   const handleGoogleLoginSuccess = (tokenResponse: TokenResponse) => {
     if (!tokenResponse || !tokenResponse.access_token) return;
     
@@ -465,6 +466,7 @@ const App = () => {
     setOpenAIApiKeyStatus('idle');
   };
 
+  // ... (Other handlers same as before) ...
   const handleImportYouTube = async (meta: YouTubeVideoMetadata) => {
       resetState();
       setFileType('youtube');
@@ -589,6 +591,7 @@ const App = () => {
     }
   };
 
+  // ... (Generation and Translation logic using new structure) ...
   const handleGenerateSubtitles = async () => {
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
     
@@ -597,7 +600,6 @@ const App = () => {
          return;
     }
 
-    // --- YOUTUBE AUTO MODEL FLOW ---
     if (activeModel.provider === 'youtube') {
         if (!googleAccessToken || !googleUser || !file) {
             setError("Please authenticate with YouTube in Settings to use this feature.");
@@ -639,7 +641,6 @@ const App = () => {
                 console.warn("Could not fetch resolutions for fresh video, using defaults.");
             }
 
-            // Fallback for fresh uploads if resolutions array is empty
             if (resolutions.length === 0) {
                 resolutions = [1080, 720, 480, 360];
             }
@@ -674,7 +675,6 @@ const App = () => {
         return;
     }
 
-    // --- GEMINI / OPENAI MODEL FLOW ---
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     if (!ffmpegRef.current || !apiKey) {
         setActiveModal('CONFIG');
@@ -684,26 +684,20 @@ const App = () => {
     }
 
     try {
-        // 1. EXTRACT AUDIO
         setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_AUDIO);
         setVideoProcessingMessage('Extracting audio from video...');
         const audioBlob = await extractAudio(ffmpegRef.current);
 
-        // 2. TRANSCRIBE (SOURCE)
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
         setVideoProcessingMessage(`Transcribing audio in ${sourceLang === 'auto' ? 'detected language' : sourceLang} with ${activeModel.name}...`);
         
-        // Pass sourceLang to transcribeAudio to ensure correct transcription (not translation)
         const srtContent = await transcribeAudio(audioBlob, sourceLang, apiKey, activeModel);
         const parsed = parseSRT(srtContent);
         
-        // 3. SHOW PREVIEW
         setSubtitles(parsed);
         setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
 
-        // 4. AUTO-START TRANSLATION (TARGET)
-        // We call the translation logic immediately for the workflow
         setVideoProcessingStatus(VideoProcessingStatus.DONE); 
         runTranslationSequence(parsed, apiKey, activeModel);
 
@@ -714,7 +708,6 @@ const App = () => {
     }
   };
   
-  // Decoupled Translation Function
   const runTranslationSequence = async (
       subtitlesToTranslate: SubtitleNode[], 
       apiKey: string, 
@@ -826,7 +819,6 @@ const App = () => {
         
         const mkvFileName = fileName.replace('.mp4', '.mkv');
         
-        // Pass both translated and original SRT to FFmpeg
         const newVideoBlob = await addSrtToVideo(
             ffmpegRef.current, 
             file, 
@@ -844,11 +836,13 @@ const App = () => {
     }
   };
 
+  // ... (Other helpers and variables) ...
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
   const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
   const hasProAccess = userGoogleApiKey || userOpenAIApiKey;
 
+  // Memoized lists...
   const filteredGoogleModels = useMemo(() => {
     return AVAILABLE_MODELS.filter(model => model.provider === 'google' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
   }, [modelSearchQuery]);
@@ -876,6 +870,9 @@ const App = () => {
   const isTranslationComplete = status === TranslationStatus.COMPLETED;
   const isConfigureStepActive = !!file && !isTranslationInProgress && !isTranslationComplete;
   const isYouTubeWorkflow = fileType === 'youtube';
+
+  const sourceLangFont = useMemo(() => LANGUAGES.find(l => l.name === sourceLang)?.font, [sourceLang]);
+  const targetLangFont = useMemo(() => LANGUAGES.find(l => l.name === targetLang)?.font, [targetLang]);
 
   if (isYouTubeAuthCallback || isDriveAuthCallback) {
       return (
@@ -1238,7 +1235,7 @@ const App = () => {
                 </div>
               </div>
               <div className="max-h-[800px] overflow-y-auto">
-                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} /> ))}
+                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} sourceFont={sourceLangFont} targetFont={targetLangFont} /> ))}
               </div>
             </div>
             <div className="mt-8 flex justify-center">

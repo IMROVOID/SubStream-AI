@@ -102,24 +102,25 @@ export async function extractSrt(ffmpeg: FFmpeg, trackIndex: number): Promise<st
 
 
 export async function extractAudio(ffmpeg: FFmpeg): Promise<Blob> {
-    // Switch to CBR (Constant Bit Rate) MP3 to prevent timestamp drift in AI models.
-    // -b:a 192k : Constant 192kbps
-    // -ar 44100 : Standard sample rate
+    // SYNC FIX: WAV @ 16kHz + aresample filter
+    // aresample=async=1 fills gap/drift issues.
+    // pcm_s16le is raw uncompressed, ensuring AI reads precise samples.
     const command = [
         '-i', 'input.video', 
         '-vn', 
-        '-acodec', 'libmp3lame', 
-        '-b:a', '192k', 
-        '-ar', '44100', 
-        'output.mp3'
+        '-af', 'aresample=async=1', 
+        '-acodec', 'pcm_s16le', 
+        '-ar', '16000', 
+        '-ac', '1', 
+        'output.wav'
     ];
     
     await ffmpeg.exec(command);
-    const data = await ffmpeg.readFile('output.mp3');
+    const data = await ffmpeg.readFile('output.wav');
 
     if (data instanceof Uint8Array) {
         const dataCopy = new Uint8Array(data);
-        return new Blob([dataCopy], { type: 'audio/mp3' });
+        return new Blob([dataCopy], { type: 'audio/wav' });
     }
     throw new Error('FFmpeg did not return a valid binary file for audio extraction.');
 }
