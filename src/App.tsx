@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield, Check } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
@@ -104,6 +104,10 @@ const App = () => {
   const [downloadProgress, setDownloadProgress] = useState<number | undefined>(undefined);
   const [downloadStatusText, setDownloadStatusText] = useState<string>('');
   const [isDownloadComplete, setIsDownloadComplete] = useState(false);
+  
+  // Resolution Dropdown State
+  const [showResolutionMenu, setShowResolutionMenu] = useState(false);
+  const resolutionMenuRef = useRef<HTMLDivElement>(null);
 
   // Language & Translation Settings
   const [sourceLang, setSourceLang] = useState<string>('auto');
@@ -199,6 +203,21 @@ const App = () => {
     };
     return () => channel.close();
   }, []);
+
+  // Close resolution menu on outside click
+  useEffect(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+          if (resolutionMenuRef.current && !resolutionMenuRef.current.contains(event.target as Node)) {
+              setShowResolutionMenu(false);
+          }
+      };
+      if (showResolutionMenu) {
+          document.addEventListener('mousedown', handleClickOutside);
+      }
+      return () => {
+          document.removeEventListener('mousedown', handleClickOutside);
+      };
+  }, [showResolutionMenu]);
 
   useEffect(() => {
     const storedGoogleKey = localStorage.getItem('substream_google_api_key');
@@ -371,6 +390,7 @@ const App = () => {
     setDownloadStatusText('');
     setIsDownloadComplete(false);
     setVideoThumbnail(null);
+    setShowResolutionMenu(false);
     if (videoSrc) {
        if (videoSrc.startsWith('blob:')) {
            URL.revokeObjectURL(videoSrc);
@@ -449,7 +469,7 @@ const App = () => {
       resetState();
       setFileType('youtube');
       setYoutubeMeta({ ...meta, isOAuthFlow: false });
-      setVideoSrc(`https://www.youtube.com/embed/${meta.id}`);
+      // We do not use the videoSrc for youtube type anymore in the preview box
       const mockFile = new File([""], meta.title, { type: 'video/youtube' });
       setFile(mockFile);
   };
@@ -608,6 +628,20 @@ const App = () => {
                     setFfmpegProgress(50 + (percent / 2)); // Polling is second 50%
                 }
             );
+
+            // Fetch video details to get available resolutions
+            let resolutions: number[] = [];
+            try {
+                const details = await getVideoDetails(`https://www.youtube.com/watch?v=${videoId}`);
+                resolutions = details.meta.availableResolutions || [];
+            } catch (e) {
+                console.warn("Could not fetch resolutions for fresh video, using defaults.");
+            }
+
+            // Fallback for fresh uploads if resolutions array is empty
+            if (resolutions.length === 0) {
+                resolutions = [1080, 720, 480, 360];
+            }
             
             setYoutubeMeta({
                 id: videoId,
@@ -616,6 +650,7 @@ const App = () => {
                 thumbnailUrl: videoThumbnail || '',
                 channelTitle: googleUser.name,
                 videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
+                availableResolutions: resolutions,
                 isOAuthFlow: true
             });
 
@@ -710,8 +745,9 @@ const App = () => {
     downloadFile(filename, content);
   };
 
-  const handleDownloadVideo = async () => {
+  const handleDownloadVideo = async (resolution?: number) => {
     const fileName = getOutputFilename('mp4');
+    setShowResolutionMenu(false);
 
     if (fileType === 'youtube') {
         if (!selectedCaptionId || !youtubeMeta?.videoUrl) return;
@@ -732,7 +768,7 @@ const App = () => {
         try {
              const trackConfig = { lang: selectedCaptionId, isAuto: true };
              const token = btoa(JSON.stringify(trackConfig));
-             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, token, fileName);
+             await downloadYouTubeVideoWithSubs(youtubeMeta.videoUrl, token, fileName, resolution);
              
              if (progressInterval.current) clearInterval(progressInterval.current);
              setDownloadProgress(100);
@@ -897,8 +933,21 @@ const App = () => {
               </div>
 
               <div className="lg:col-span-9 space-y-8">
-                {(fileType === 'video' || fileType === 'youtube') && videoSrc && (
-                    <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} isYouTube={fileType === 'youtube'} />
+                {(fileType === 'video' || fileType === 'youtube') && (
+                    <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
+                        {fileType === 'youtube' && youtubeMeta ? (
+                            <>
+                                <img src={youtubeMeta.thumbnailUrl} alt={youtubeMeta.title} className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                    <div className="px-4 py-2 bg-black/70 rounded-xl backdrop-blur border border-white/10 text-sm text-white font-medium flex items-center gap-2">
+                                        <Youtube className="w-4 h-4 text-red-500" /> YouTube Import
+                                    </div>
+                                </div>
+                            </>
+                        ) : videoSrc ? (
+                            <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} isYouTube={false} />
+                        ) : null}
+                    </div>
                 )}
 
                 <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-6 hover:bg-neutral-900/30 transition-all duration-300">
@@ -1095,12 +1144,12 @@ const App = () => {
                     {isYouTubeWorkflow ? 'Review the generated transcription below.' : 'Comparing original vs translated output.'}
                 </p>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 relative">
                   {(fileType === 'video' || fileType === 'youtube') && (
-                      <div className="">
+                      <div className="relative" ref={resolutionMenuRef}>
                         <Button 
                             variant="secondary" 
-                            onClick={handleDownloadVideo} 
+                            onClick={() => setShowResolutionMenu(!showResolutionMenu)} 
                             progress={downloadProgress}
                             statusText={downloadStatusText}
                             completed={isDownloadComplete}
@@ -1110,6 +1159,32 @@ const App = () => {
                         >
                             Download Video
                         </Button>
+                        {showResolutionMenu && (
+                            <div className="absolute right-0 top-full mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden z-20 animate-fade-in">
+                                <div>
+                                    {isYouTubeWorkflow && youtubeMeta?.availableResolutions && youtubeMeta.availableResolutions.length > 0 ? (
+                                        youtubeMeta.availableResolutions.map((res) => (
+                                            <button
+                                                key={res}
+                                                onClick={() => handleDownloadVideo(res)}
+                                                className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
+                                            >
+                                                <span>{res}p</span>
+                                                <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">MP4</span>
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <button
+                                            onClick={() => handleDownloadVideo()}
+                                            className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
+                                        >
+                                            <span>Best Quality</span>
+                                            <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">{isYouTubeWorkflow ? 'MP4' : 'MKV'}</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                       </div>
                   )}
                   <Button variant="primary" onClick={handleDownloadSrt} disabled={isTranslationInProgress} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>

@@ -14,7 +14,6 @@ const PORT = 4000;
 app.use(cors());
 
 // Increase limit to handle large JSON payloads if necessary
-// Note: This middleware is for parsing JSON bodies. Binary uploads via streams won't be affected if content-type differs.
 app.use(express.json({ limit: '50mb' })); 
 
 // --- CONFIGURATION ---
@@ -393,6 +392,17 @@ app.get('/api/info', async (req, res) => {
         processTracks(info.subtitles, false);
         processTracks(info.automatic_captions, true);
 
+        // Extract formats (resolutions)
+        const resolutions = new Set();
+        if (info.formats) {
+            info.formats.forEach(f => {
+                if (f.height && f.vcodec !== 'none') {
+                    resolutions.add(f.height);
+                }
+            });
+        }
+        const sortedResolutions = Array.from(resolutions).sort((a, b) => b - a);
+
         const thumbnail = info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : '');
         const durationSeconds = info.duration || 0;
         
@@ -409,7 +419,8 @@ app.get('/api/info', async (req, res) => {
                 duration: timeStr,
                 videoUrl: videoUrl
             },
-            captions: captions
+            captions: captions,
+            resolutions: sortedResolutions
         });
 
     } catch (error) {
@@ -488,7 +499,7 @@ app.get('/api/caption', async (req, res) => {
 });
 
 app.get('/api/download-video', async (req, res) => {
-    const { url, token } = req.query;
+    const { url, token, quality } = req.query; // Added quality param
 
     if (!url || !token) return res.status(400).send("Missing url or token");
 
@@ -507,9 +518,15 @@ app.get('/api/download-video', async (req, res) => {
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
     
     try {
+        let formatArg = 'best';
+        if (quality) {
+            // Select best video <= quality AND best audio, fallback to 'best' if merge fails
+            formatArg = `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]/best`;
+        }
+
         let args = [
             url,
-            '--format', 'best', 
+            '--format', formatArg, 
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath,
             '--embed-subs',
@@ -560,4 +577,4 @@ app.get('/api/download-video', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Backend Server running on http://localhost:${PORT}`);
-});
+})

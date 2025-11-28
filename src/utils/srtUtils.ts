@@ -8,11 +8,14 @@ const timeToMs = (timeString: string): number => {
   return (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + milliseconds;
 };
 
+// Helper to normalize text for comparison (removes punctuation/casing)
+const normalize = (str: string) => str.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "").replace(/\s+/g, " ").trim();
+
 export const parseSRT = (data: string): SubtitleNode[] => {
   // Normalize line endings
   const normalizedData = data.replace(/\r\n/g, '\n').trim();
   
-  // Remove WebVTT header if present (simple check)
+  // Remove WebVTT header if present
   const cleanData = normalizedData.replace(/^WEBVTT.*\n+/, '');
 
   let rawSubtitles: SubtitleNode[] = [];
@@ -23,7 +26,7 @@ export const parseSRT = (data: string): SubtitleNode[] => {
 
   blocks.forEach((block) => {
     const lines = block.split('\n');
-    if (lines.length === 0) return;
+    if (lines.length < 2) return;
 
     // Find timestamp line (contains "-->")
     const timeLineIndex = lines.findIndex(line => line.includes('-->'));
@@ -35,60 +38,107 @@ export const parseSRT = (data: string): SubtitleNode[] => {
       if (times.length === 2) {
         // Extract text: everything after the timestamp line
         const textLines = lines.slice(timeLineIndex + 1);
-        // Filter out empty lines or "style" lines sometimes present in VTT
-        const validTextLines = textLines.filter(l => l.trim() !== '' && !l.trim().match(/^NOTE/));
-        const text = validTextLines.join('\n').trim();
+        // Filter out empty lines, "NOTE" lines, or extra metadata
+        const validTextLines = textLines.filter(l => l.trim() !== '' && !l.trim().startsWith('NOTE') && !l.includes('-->'));
+        
+        // VTT often separates lines; join them with space for analysis
+        let text = validTextLines.join(' ').trim();
 
         if (text) {
-            // VTT cleanup: remove tags like <c.v> or <00:00:00.500> if present
-            const cleanText = text.replace(/<[^>]*>/g, '');
+            // VTT/SRT cleanup: remove tags like <c.v>, <00:00...>, {align...}
+            const cleanText = text
+                .replace(/<[^>]*>/g, '') 
+                .replace(/\{[^}]*\}/g, '')
+                .trim();
             
-            // Normalize format: 00:00:00.000 -> 00:00:00,000 (SRT standard)
+            // Normalize format: 00:00:00.000 -> 00:00:00,000
             const startTime = times[0].trim().replace('.', ',');
             const endTime = times[1].trim().replace('.', ',');
 
-            rawSubtitles.push({
-                id: tempCounter++,
-                startTime,
-                endTime,
-                text: cleanText,
-                originalText: cleanText
-            });
+            if (cleanText) {
+                rawSubtitles.push({
+                    id: tempCounter++,
+                    startTime,
+                    endTime,
+                    text: cleanText,
+                    originalText: cleanText
+                });
+            }
         }
       }
     }
   });
 
-  // --- DEDUPLICATION LOGIC ---
-  // Fixes YouTube Auto-Caption "Roll-up" duplicates where Line 1 is "Hello" and Line 2 is "Hello World"
-  // appearing at the same (or very close) start time.
+  // --- INTELLIGENT DEDUPLICATION LOGIC ---
   const cleanedSubtitles: SubtitleNode[] = [];
   
   for (let i = 0; i < rawSubtitles.length; i++) {
-    const current = rawSubtitles[i];
-    const next = rawSubtitles[i + 1];
+    const current = { ...rawSubtitles[i] };
+    
+    if (cleanedSubtitles.length > 0) {
+        const prev = cleanedSubtitles[cleanedSubtitles.length - 1];
+        const prevNorm = normalize(prev.text);
+        const currNorm = normalize(current.text);
 
-    if (next) {
-        const currentStart = timeToMs(current.startTime);
-        const nextStart = timeToMs(next.startTime);
+        // 1. Exact Duplicate
+        if (prevNorm === currNorm) {
+            prev.endTime = current.endTime; // Extend duration
+            continue;
+        }
+
+        // 2. Accumulation (Line 2 starts with Line 1)
+        // Prev: "I am going"
+        // Curr: "I am going to the store"
+        if (currNorm.startsWith(prevNorm)) {
+            // We strip the prefix from the current line
+            // But we must be careful about word boundaries.
+            const uniquePart = current.text.substring(prev.text.length).trim();
+            if (uniquePart) {
+                current.text = uniquePart;
+                current.originalText = uniquePart;
+            } else {
+                prev.endTime = current.endTime;
+                continue;
+            }
+        }
         
-        // If start times are within 500ms of each other
-        if (Math.abs(nextStart - currentStart) < 500) {
-            // Check if one text is a substring of the other
-            const currText = current.originalText?.toLowerCase().trim() || "";
-            const nextText = next.originalText?.toLowerCase().trim() || "";
+        // 3. Rolling Overlap (End of Line 1 is Start of Line 2)
+        // Prev: "going to the"
+        // Curr: "to the store"
+        else {
+            const prevWords = prev.text.split(' ');
+            const currWords = current.text.split(' ');
+            
+            let maxOverlap = 0;
+            // Check for overlap of 1 to N words
+            const maxLen = Math.min(prevWords.length, currWords.length);
+            for (let k = 1; k <= maxLen; k++) {
+                const suffix = prevWords.slice(-k).join(' ');
+                const prefix = currWords.slice(0, k).join(' ');
+                if (normalize(suffix) === normalize(prefix)) {
+                    maxOverlap = k;
+                }
+            }
 
-            // If next line contains current line (accumulation), skip current
-            if (nextText.startsWith(currText)) {
-                continue; 
+            if (maxOverlap > 0) {
+                // Remove the overlapping words from the start of current
+                const uniqueWords = currWords.slice(maxOverlap);
+                const uniqueText = uniqueWords.join(' ').trim();
+                
+                if (uniqueText) {
+                    current.text = uniqueText;
+                    current.originalText = uniqueText;
+                } else {
+                    prev.endTime = current.endTime;
+                    continue;
+                }
             }
         }
     }
-    // Renumber IDs sequentially
-    cleanedSubtitles.push({
-        ...current,
-        id: cleanedSubtitles.length + 1
-    });
+
+    // Re-assign ID to keep sequence clean
+    current.id = cleanedSubtitles.length + 1;
+    cleanedSubtitles.push(current);
   }
 
   return cleanedSubtitles;

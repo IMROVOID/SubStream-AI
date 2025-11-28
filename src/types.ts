@@ -62,7 +62,8 @@ export interface YouTubeVideoMetadata {
   duration?: string;
   videoUrl: string; 
   availableCaptions?: YouTubeCaptionTrack[];
-  isOAuthFlow?: boolean; // To distinguish between yt-dlp and auto-caption flows
+  availableResolutions?: number[]; // Added resolutions
+  isOAuthFlow?: boolean; 
 }
 
 export interface YouTubeCaptionTrack {
@@ -91,7 +92,7 @@ export interface DriveFile {
   size?: string;
   createdTime?: string;
   modifiedTime?: string;
-  fileExtension?: string; // Added field for better filtering
+  fileExtension?: string; 
   videoMediaMetadata?: {
     width: number;
     height: number;

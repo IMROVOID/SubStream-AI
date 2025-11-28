@@ -31,6 +31,9 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
         
         data.meta.videoUrl = data.meta.videoUrl || videoUrl;
         
+        // Include resolutions in the returned object
+        data.meta.availableResolutions = data.resolutions || [];
+
         return { meta: data.meta, captions: mappedCaptions };
 
     } catch (e: any) {
@@ -62,12 +65,16 @@ export async function downloadCaptionTrack(videoUrl: string, trackToken: string)
     }
 }
 
-export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken: string, fileName: string): Promise<void> {
+export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken: string, fileName: string, resolution?: number): Promise<void> {
     const query = new URLSearchParams({
         url: videoUrl,
         token: trackToken,
         name: fileName
     });
+    
+    if (resolution) {
+        query.append('quality', resolution.toString());
+    }
     
     try {
         const response = await fetch(`${BACKEND_URL}/download-video?${query.toString()}`);
