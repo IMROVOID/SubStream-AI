@@ -707,7 +707,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                             <Button 
                                                 onClick={handleImport}
                                                 disabled={isImporting}
-                                                className="w-full mt-auto md:mt-0"
+                                                className="w-full mt-auto md:mt-0 !w-full"
                                                 progress={isImporting ? importProgress : undefined}
                                                 statusText={isImporting ? "Downloading..." : ""}
                                             >
