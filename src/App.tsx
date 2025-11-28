@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield, ExternalLink } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, OPENAI_RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
@@ -22,6 +22,7 @@ type Page = 'HOME' | 'DOCS';
 type ModalType = 'NONE' | 'PRIVACY' | 'TOS' | 'CONFIG';
 type ApiKeyStatus = 'idle' | 'validating' | 'valid' | 'invalid';
 type GoogleUser = { name: string; email: string; picture: string };
+type GeminiTier = 'free' | 'tier1' | 'tier2' | 'tier3';
 
 const ESTIMATED_DAILY_QUOTA = 500; // Rough estimate for Free Tier
 
@@ -111,7 +112,6 @@ const App = () => {
 
   // Language & Translation Settings
   const [sourceLang, setSourceLang] = useState<string>('auto');
-  // FIX: Reverted default target language to the first in list (Arabic) instead of Persian
   const [targetLang, setTargetLang] = useState<string>(LANGUAGES[0].name); 
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>('');
 
@@ -137,6 +137,7 @@ const App = () => {
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
+  const [selectedGeminiTier, setSelectedGeminiTier] = useState<GeminiTier>('free');
   
   // YouTube Auth State
   const [googleUser, setGoogleUser] = useState<GoogleUser | null>(null);
@@ -158,6 +159,35 @@ const App = () => {
   const isDriveAuthCallback = useMemo(() => {
     return window.location.hash.includes('access_token') && window.location.hash.includes('state=drive_auth');
   }, []);
+
+  // --- MODEL & RATE LIMIT LOGIC ---
+  const activeModelData = useMemo(() => {
+      return AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
+  }, [selectedModelId]);
+
+  // Update RPM when model or tier changes for Google
+  useEffect(() => {
+      if (activeModelData.provider === 'google' && activeModelData.rateLimits) {
+          // Check if current tier is available for this model
+          if (selectedGeminiTier === 'free' && !activeModelData.rateLimits.free) {
+              setSelectedGeminiTier('tier1'); // Fallback if free not available
+          }
+      }
+  }, [activeModelData, selectedGeminiTier]);
+
+  useEffect(() => {
+      if (activeModelData.provider === 'google' && activeModelData.rateLimits) {
+          const rpm = activeModelData.rateLimits[selectedGeminiTier];
+          if (rpm) {
+             setSelectedRPM(rpm);
+             setGlobalRPM(rpm);
+          }
+      } else if (activeModelData.provider === 'openai') {
+          // Keep current Logic for OpenAI or reset if needed
+          setGlobalRPM(selectedRPM);
+      }
+  }, [selectedGeminiTier, activeModelData, selectedRPM]);
+
 
   useEffect(() => {
     if (isYouTubeAuthCallback) {
@@ -225,6 +255,7 @@ const App = () => {
     const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
     const storedModel = localStorage.getItem('substream_model_id');
     const storedRPM = localStorage.getItem('substream_rpm');
+    const storedGeminiTier = localStorage.getItem('substream_gemini_tier');
     const storedUsage = localStorage.getItem('substream_daily_usage');
     const lastUsageDate = localStorage.getItem('substream_usage_date');
     const today = new Date().toDateString();
@@ -238,6 +269,10 @@ const App = () => {
       setUserOpenAIApiKey(storedOpenAIKey);
       setTempOpenAIApiKey(storedOpenAIKey);
       setOpenAIApiKeyStatus('valid');
+    }
+
+    if (storedGeminiTier) {
+        setSelectedGeminiTier(storedGeminiTier as GeminiTier);
     }
 
     if (storedRPM) {
@@ -363,7 +398,6 @@ const App = () => {
     }
 
     const cleanBase = baseName.replace(/[^a-zA-Z0-9 \-_]/g, '').trim();
-    const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId);
     
     const isYouTubeTranscription = fileType === 'youtube';
     const isAiTranscription = !isYouTubeTranscription && (sourceLang === 'auto' || sourceLang === targetLang);
@@ -447,6 +481,7 @@ const App = () => {
     }
     localStorage.setItem('substream_model_id', selectedModelId);
     localStorage.setItem('substream_rpm', selectedRPM.toString());
+    localStorage.setItem('substream_gemini_tier', selectedGeminiTier);
     setGlobalRPM(selectedRPM);
     setActiveModal('NONE');
     showToast("Configuration Saved.");
@@ -591,14 +626,12 @@ const App = () => {
   };
 
   const handleGenerateSubtitles = async () => {
-    const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
-    
     if (fileType === 'youtube') {
          setError("This action is for local video files. Please select a language to generate captions for your YouTube import.");
          return;
     }
 
-    if (activeModel.provider === 'youtube') {
+    if (activeModelData.provider === 'youtube') {
         if (!googleAccessToken || !googleUser || !file) {
             setError("Please authenticate with YouTube in Settings to use this feature.");
             if (!file) setError("No file loaded to upload.");
@@ -674,10 +707,10 @@ const App = () => {
         return;
     }
 
-    const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const apiKey = activeModelData.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     if (!ffmpegRef.current || !apiKey) {
         setActiveModal('CONFIG');
-        setError(`Please provide an API Key for ${activeModel.provider} to generate subtitles.`);
+        setError(`Please provide an API Key for ${activeModelData.provider} to generate subtitles.`);
         setVideoProcessingStatus(VideoProcessingStatus.IDLE);
         return;
     }
@@ -689,16 +722,16 @@ const App = () => {
         const audioBlob = await extractAudio(ffmpegRef.current);
 
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
-        setVideoProcessingMessage(`Transcribing audio in ${sourceLang === 'auto' ? 'detected language' : sourceLang} with ${activeModel.name}...`);
+        setVideoProcessingMessage(`Transcribing audio in ${sourceLang === 'auto' ? 'detected language' : sourceLang} with ${activeModelData.name}...`);
         
-        const srtContent = await transcribeAudio(audioBlob, sourceLang, apiKey, activeModel);
+        const srtContent = await transcribeAudio(audioBlob, sourceLang, apiKey, activeModelData);
         const parsed = parseSRT(srtContent);
         
         setSubtitles(parsed);
         setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
 
         setVideoProcessingStatus(VideoProcessingStatus.DONE); 
-        runTranslationSequence(parsed, apiKey, activeModel);
+        runTranslationSequence(parsed, apiKey, activeModelData);
 
     } catch(e: any) {
         setError(`Failed to generate subtitles: ${e.message}`);
@@ -741,15 +774,14 @@ const App = () => {
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
     
-    const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
-    const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const apiKey = activeModelData.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     if (!apiKey) {
       setActiveModal('CONFIG');
-      setError(`Please Provide an API Key for ${activeModel.provider} to continue.`);
+      setError(`Please Provide an API Key for ${activeModelData.provider} to continue.`);
       return;
     }
     
-    runTranslationSequence(subtitles, apiKey, activeModel);
+    runTranslationSequence(subtitles, apiKey, activeModelData);
   };
 
   const handleDownloadSrt = () => {
@@ -837,7 +869,6 @@ const App = () => {
 
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
-  const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
   const hasProAccess = userGoogleApiKey || userOpenAIApiKey;
 
   const filteredGoogleModels = useMemo(() => {
@@ -861,7 +892,7 @@ const App = () => {
     VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS
   ].includes(videoProcessingStatus);
   
-  const selectedRpmIndex = useMemo(() => RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
+  const selectedOpenAIRpmIndex = useMemo(() => OPENAI_RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
 
   const isTranslationInProgress = status === TranslationStatus.TRANSLATING;
   const isTranslationComplete = status === TranslationStatus.COMPLETED;
@@ -1405,19 +1436,61 @@ const App = () => {
                     <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
                   </div>
     
-                  <div className="space-y-2">
-                     <div className="flex items-center justify-between mb-2">
-                        <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
-                        <p className="font-medium text-white text-sm">{selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}</p>
-                     </div>
-                      <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
-                          <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${selectedRpmIndex * 100}%)` }} />
-                          {RPM_OPTIONS.map((option) => (
-                              <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
-                          ))}
-                      </div>
-                       <p className="text-xs text-neutral-500 text-center mt-2">{RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
-                  </div>
+                  {activeModelData.provider !== 'youtube' && (
+                    <div className="space-y-2">
+                         <div className="flex items-center justify-between mb-2">
+                            <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
+                            <p className="font-medium text-white text-sm">{selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}</p>
+                         </div>
+                        
+                         {/* GOOGLE DYNAMIC RATE LIMIT UI */}
+                         {activeModelData.provider === 'google' && activeModelData.rateLimits ? (
+                             <>
+                                <div className="grid grid-cols-4 gap-1 w-full bg-neutral-900 border border-neutral-800 rounded-xl p-1">
+                                    {(['free', 'tier1', 'tier2', 'tier3'] as GeminiTier[]).map((tier) => {
+                                        const rpm = activeModelData.rateLimits![tier];
+                                        const isDisabled = rpm === undefined;
+                                        const isActive = selectedGeminiTier === tier;
+                                        const labelMap = { free: 'Free Tier', tier1: 'Tier 1', tier2: 'Tier 2', tier3: 'Tier 3' };
+                                        
+                                        return (
+                                            <button
+                                                key={tier}
+                                                onClick={() => !isDisabled && setSelectedGeminiTier(tier)}
+                                                disabled={isDisabled}
+                                                className={`
+                                                    relative flex flex-col items-center justify-center py-2 rounded-lg text-xs transition-all duration-200
+                                                    ${isDisabled ? 'opacity-30 cursor-not-allowed text-neutral-600' : 
+                                                        isActive ? 'bg-neutral-700 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'}
+                                                `}
+                                            >
+                                                <span className="font-bold mb-0.5">{labelMap[tier]}</span>
+                                                <span className="text-[10px] opacity-80">{rpm ? rpm : 'N/A'}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <div className="mt-2 text-center">
+                                    <a href="https://aistudio.google.com/usage?timeRange=last-28-days&tab=rate-limit" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                        Check your limits on Google AI Studio <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                </div>
+                             </>
+                         ) : (
+                             /* OPENAI / STATIC RATE LIMIT UI */
+                             <>
+                                <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
+                                    <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${selectedOpenAIRpmIndex * 100}%)` }} />
+                                    {OPENAI_RPM_OPTIONS.map((option) => (
+                                        <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-neutral-500 text-center mt-2">{OPENAI_RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
+                             </>
+                         )}
+                    </div>
+                  )}
+
               </div>
               
               <div className="flex items-center justify-between w-full pt-6 mt-8 border-t border-neutral-800">

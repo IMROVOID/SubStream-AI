@@ -45,6 +45,13 @@ export interface LanguageOption {
   font?: string; // New property for font class
 }
 
+export interface GeminiRateLimits {
+    free?: number;
+    tier1: number;
+    tier2: number;
+    tier3: number;
+}
+
 export interface AIModel {
   id: string;
   name: string;
@@ -52,6 +59,7 @@ export interface AIModel {
   tags: string[];
   provider: 'google' | 'openai' | 'youtube';
   transcriptionModel?: string;
+  rateLimits?: GeminiRateLimits; // New property for Dynamic Limits
 }
 
 export interface YouTubeVideoMetadata {
@@ -131,6 +139,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'Highest reasoning capability. Best for complex dialogue, cultural nuances, and context retention.',
     tags: ['Preview', 'Slower', 'Most Powerful'],
     provider: 'google',
+    rateLimits: {
+        // Free tier not available for 3.0 Pro in provided images
+        tier1: 50,
+        tier2: 1000,
+        tier3: 2000
+    }
   },
   {
     id: 'gemini-2.5-pro',
@@ -138,6 +152,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'Balanced performance with advanced reasoning capabilities. Great for most subtitles.',
     tags: ['Stable', 'High Quality'],
     provider: 'google',
+    rateLimits: {
+        free: 2,
+        tier1: 150,
+        tier2: 1000,
+        tier3: 2000
+    }
   },
   {
     id: 'gemini-2.5-flash',
@@ -145,6 +165,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'Next-generation high-speed model. Ideal for large files and quick turnaround.',
     tags: ['Stable', 'Ultra Fast'],
     provider: 'google',
+    rateLimits: {
+        free: 10,
+        tier1: 1000,
+        tier2: 2000,
+        tier3: 10000
+    }
   },
   {
     id: 'gemini-2.5-flash-lite',
@@ -152,6 +178,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'Cost-optimized version of 2.5 Flash. Extremely fast and affordable for high volume.',
     tags: ['Lite', 'Economy'],
     provider: 'google',
+    rateLimits: {
+        free: 15,
+        tier1: 4000,
+        tier2: 10000,
+        tier3: 30000
+    }
   },
   {
     id: 'gemini-2.0-pro',
@@ -159,6 +191,13 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'Previous generation high-intelligence model. Reliable for standard translation tasks.',
     tags: ['Stable', 'Smart'],
     provider: 'google',
+    // Values inferred from 2.5 Pro as safe fallback since 2.0 Pro wasn't explicitly in images but exists in legacy code
+    rateLimits: {
+        free: 2,
+        tier1: 60, 
+        tier2: 1000,
+        tier3: 2000
+    }
   },
   {
     id: 'gemini-2.0-flash',
@@ -166,6 +205,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'Optimized for speed and efficiency. Good for straightforward content and quick results.',
     tags: ['Stable', 'Efficient'],
     provider: 'google',
+    rateLimits: {
+        free: 15,
+        tier1: 2000,
+        tier2: 10000,
+        tier3: 30000
+    }
   },
   {
     id: 'gemini-2.0-flash-lite-preview-02-05',
@@ -173,6 +218,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     description: 'The most cost-effective model in the 2.0 family. Good balance of speed and quality.',
     tags: ['Preview', 'Lite', 'Budget'],
     provider: 'google',
+    rateLimits: {
+        free: 30,
+        tier1: 4000,
+        tier2: 20000,
+        tier3: 30000
+    }
   },
 
   // --- OPENAI MODELS (Version Descending) ---
@@ -302,9 +353,10 @@ export const SUPPORTED_VIDEO_FORMATS = [
   'video/x-msvideo', // AVI
 ];
 
-export type RPMLimit = 2 | 15 | 30 | 'unlimited';
+export type RPMLimit = number | 'unlimited';
 
-export const RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
+// Used for OpenAI Only
+export const OPENAI_RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
     { value: 2, label: 'Low', description: 'Best for avoiding strict rate limits on free tiers (2 RPM).' },
     { value: 15, label: 'Medium', description: 'Recommended default. Good balance of speed and safety (15 RPM).' },
     { value: 30, label: 'High', description: 'Faster, but higher risk of rate limits (30 RPM).' },
