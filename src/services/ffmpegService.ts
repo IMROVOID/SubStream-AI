@@ -23,13 +23,10 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
 
     onProgress('Loading core video engine...');
     
-    // This is the definitive fix. We revert to loading from the CDN.
-    // This works now because the necessary headers in vite.config.ts are present.
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
     
     try {
         console.log(`loadFFmpeg: Attempting to load core from CDN: ${baseURL}`);
-        // We still dynamically import toBlobURL to avoid bundler issues.
         const { toBlobURL } = await import('@ffmpeg/util');
         console.log("loadFFmpeg: Dynamic import of toBlobURL successful.");
 
@@ -42,7 +39,6 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
         onProgress('Engine loaded.');
     } catch (error) {
         console.error("CRITICAL ERROR during FFmpeg load:", error);
-        // Re-throw the original error to be caught by the calling function.
         throw error;
     }
 
@@ -106,7 +102,18 @@ export async function extractSrt(ffmpeg: FFmpeg, trackIndex: number): Promise<st
 
 
 export async function extractAudio(ffmpeg: FFmpeg): Promise<Blob> {
-    const command = ['-i', 'input.video', '-vn', '-acodec', 'libmp3lame', '-q:a', '2', 'output.mp3'];
+    // Switch to CBR (Constant Bit Rate) MP3 to prevent timestamp drift in AI models.
+    // -b:a 192k : Constant 192kbps
+    // -ar 44100 : Standard sample rate
+    const command = [
+        '-i', 'input.video', 
+        '-vn', 
+        '-acodec', 'libmp3lame', 
+        '-b:a', '192k', 
+        '-ar', '44100', 
+        'output.mp3'
+    ];
+    
     await ffmpeg.exec(command);
     const data = await ffmpeg.readFile('output.mp3');
 
@@ -117,23 +124,62 @@ export async function extractAudio(ffmpeg: FFmpeg): Promise<Blob> {
     throw new Error('FFmpeg did not return a valid binary file for audio extraction.');
 }
 
-export async function addSrtToVideo(ffmpeg: FFmpeg, videoFile: File, srtContent: string, targetLangCode: string): Promise<Blob> {
-    await ffmpeg.writeFile('input.video', await fetchFile(videoFile));
-    await ffmpeg.writeFile('subtitles.srt', new TextEncoder().encode(srtContent));
+/**
+ * Embeds two subtitle tracks: 
+ * 1. The Translated Text (Default)
+ * 2. The Original Transcription (Secondary)
+ */
+export async function addSrtToVideo(
+    ffmpeg: FFmpeg, 
+    videoFile: File, 
+    translatedSrt: string, 
+    targetLangCode: string,
+    originalSrt?: string,
+    sourceLangCode?: string
+): Promise<Blob> {
     
-    const outputFileName = 'output.mkv';
-
+    // Write Inputs
+    await ffmpeg.writeFile('input.video', await fetchFile(videoFile));
+    await ffmpeg.writeFile('translated.srt', new TextEncoder().encode(translatedSrt));
+    
     const command = [
         '-i', 'input.video',
-        '-i', 'subtitles.srt',
-        '-c', 'copy',
-        '-map', '0',
-        '-map', '-0:s',
-        '-map', '1',
-        '-c:s:0', 'srt',
-        '-metadata:s:s:0', `language=${targetLangCode}`,
-        outputFileName
+        '-i', 'translated.srt'
     ];
+
+    if (originalSrt) {
+        await ffmpeg.writeFile('original.srt', new TextEncoder().encode(originalSrt));
+        command.push('-i', 'original.srt');
+    }
+
+    const outputFileName = 'output.mkv';
+
+    // Base maps: Video + Audio from input
+    command.push(
+        '-c', 'copy',
+        '-map', '0:v', 
+        '-map', '0:a'
+    );
+
+    // Map Translated (Input 1) -> Stream 0 (Subtitle)
+    command.push(
+        '-map', '1', 
+        '-c:s', 'srt',
+        '-metadata:s:s:0', `language=${targetLangCode}`, 
+        '-metadata:s:s:0', `title=Translated (${targetLangCode})`,
+        '-disposition:s:s:0', 'default'
+    );
+
+    // Map Original (Input 2) -> Stream 1 (Subtitle) if exists
+    if (originalSrt) {
+        command.push(
+            '-map', '2',
+            '-metadata:s:s:1', `language=${sourceLangCode || 'und'}`,
+            '-metadata:s:s:1', `title=Original (${sourceLangCode || 'Original'})`
+        );
+    }
+
+    command.push(outputFileName);
 
     await ffmpeg.exec(command);
     const data = await ffmpeg.readFile(outputFileName);

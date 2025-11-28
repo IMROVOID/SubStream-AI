@@ -101,59 +101,77 @@ export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => 
 
 // --- Transcription ---
 
+// Helper to convert JSON response to SRT String
+const jsonToSRT = (segments: { start: string; end: string; text: string }[]): string => {
+    return segments.map((seg, index) => {
+        return `${index + 1}\n${seg.start} --> ${seg.end}\n${seg.text}`;
+    }).join('\n\n');
+};
+
 async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey: string, modelId: string): Promise<string> {
     const ai = new GoogleGenAI({ apiKey });
     const audioBuffer = await audioBlob.arrayBuffer();
     const base64Audio = arrayBufferToBase64(audioBuffer);
     const audioParts = [{ inlineData: { data: base64Audio, mimeType: audioBlob.type } }];
 
-    // Improved Prompt for Strict SRT Formatting
-    const prompt = `You are a professional captioning AI.
-    TASK: Transcribe the audio perfectly into SRT (SubRip) subtitle format.
-    LANGUAGE: ${sourceLang === 'auto' ? 'Detect the spoken language automatically' : sourceLang}.
+    // AGGRESSIVE SEGMENTATION & SYNC PROMPT
+    const prompt = `You are an expert subtitle timer.
     
-    CRITICAL FORMATTING RULES:
-    1.  **Strict Segmentation**: You MUST split the audio into SHORT, distinct subtitle blocks.
-    2.  **Timing**: Each block must have exact timestamps corresponding to when those specific words are spoken.
-    3.  **Length Limit**: Max 42 characters per line. Max 2 lines per block.
-    4.  **Duration**: No single subtitle block should last longer than 5 seconds. Split long sentences into multiple blocks.
-    5.  **Output**: Return ONLY the SRT content. No markdown, no "Here is the SRT", no code blocks. Just the raw text.
+    TASK:
+    Transcribe the audio into precise JSON segments.
+    ${sourceLang !== 'auto' ? `LANGUAGE: Strictly ${sourceLang}. Do NOT translate.` : 'LANGUAGE: Detect automatically.'}
 
-    Bad Example (DO NOT DO THIS):
-    1
-    00:00:00,000 --> 00:00:30,000
-    [30 seconds of text crammed into one block...]
+    STRICT TIMING RULES (CRITICAL):
+    1. **SYNC ACCURACY**: The 'start' timestamp must match the EXACT millisecond the voice begins. Do NOT estimate.
+    2. **NO DELAY**: Do NOT add buffer time to the start. If speech starts at 00:00:02,500, the timestamp must be 00:00:02,500.
+    3. **MICRO-SEGMENTATION**: Keep segments short (max 10-12 words). Break long sentences into natural pauses.
+    4. **DURATION**: Segments should be 2-4 seconds long.
+    5. **FORMAT**: Return ONLY a JSON array.
 
-    Good Example (DO THIS):
-    1
-    00:00:01,000 --> 00:00:03,500
-    Welcome back to the channel.
-
-    2
-    00:00:03,600 --> 00:00:06,000
-    Today we are discussing AI models.
+    Example Output:
+    [
+        {"start": "00:00:00,000", "end": "00:00:02,100", "text": "This is the first precise segment."},
+        {"start": "00:00:02,100", "end": "00:00:04,500", "text": "And this follows immediately without drift."}
+    ]
     `;
 
+    const generationConfig: GenerationConfig = { 
+        responseMimeType: 'application/json' 
+    };
+
     await enforceRateLimit(); // Check limit
+    
     const result = await ai.models.generateContent({ 
         model: modelId, 
-        contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }] 
+        contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }],
+        config: generationConfig
     });
     
-    const text = result.text;
-    if (!text) throw new Error("No transcription generated.");
+    const responseText = result.text;
+    if (!responseText) throw new Error("No transcription generated.");
     
-    return text.replace(/```srt\n|```/g, '').trim();
+    try {
+        const jsonSegments = JSON.parse(responseText);
+        if (!Array.isArray(jsonSegments)) throw new Error("AI returned invalid JSON structure.");
+        
+        // Convert the strict JSON back to SRT string for the App to parse
+        return jsonToSRT(jsonSegments);
+    } catch (e) {
+        console.error("Failed to parse AI JSON response:", responseText);
+        throw new Error("AI generated invalid transcription data. Please try again.");
+    }
 }
 
 async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey: string, modelId: string): Promise<string> {
     const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+    // OpenAI requires a File object with a name and type
     const audioFile = new File([audioBlob], "audio.mp3", { type: audioBlob.type });
 
+    // OpenAI Whisper is an ASR model, it handles timestamps natively.
     const options: OpenAI.Audio.Transcriptions.TranscriptionCreateParams = {
         file: audioFile,
-        model: modelId,
-        response_format: 'srt',
+        model: modelId, // Usually 'whisper-1'
+        response_format: 'srt', // Whisper outputs valid SRT natively
     };
 
     if (sourceLang !== 'auto') {
@@ -163,6 +181,7 @@ async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey:
     
     await enforceRateLimit(); // Check limit
     const transcription = await openai.audio.transcriptions.create(options) as any;
+    
     if (typeof transcription !== 'string') throw new Error('OpenAI transcription returned an invalid result.');
     return transcription;
 }

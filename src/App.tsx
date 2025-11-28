@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Bot, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield, Check } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata } from './types';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
@@ -597,6 +597,7 @@ const App = () => {
          return;
     }
 
+    // --- YOUTUBE AUTO MODEL FLOW ---
     if (activeModel.provider === 'youtube') {
         if (!googleAccessToken || !googleUser || !file) {
             setError("Please authenticate with YouTube in Settings to use this feature.");
@@ -673,6 +674,7 @@ const App = () => {
         return;
     }
 
+    // --- GEMINI / OPENAI MODEL FLOW ---
     const apiKey = activeModel.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
     if (!ffmpegRef.current || !apiKey) {
         setActiveModal('CONFIG');
@@ -682,26 +684,68 @@ const App = () => {
     }
 
     try {
+        // 1. EXTRACT AUDIO
         setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.EXTRACTING_AUDIO);
         setVideoProcessingMessage('Extracting audio from video...');
         const audioBlob = await extractAudio(ffmpegRef.current);
 
+        // 2. TRANSCRIBE (SOURCE)
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
-        setVideoProcessingMessage(`Generating subtitles with ${activeModel.name}, this may take a moment...`);
+        setVideoProcessingMessage(`Transcribing audio in ${sourceLang === 'auto' ? 'detected language' : sourceLang} with ${activeModel.name}...`);
+        
+        // Pass sourceLang to transcribeAudio to ensure correct transcription (not translation)
         const srtContent = await transcribeAudio(audioBlob, sourceLang, apiKey, activeModel);
-
         const parsed = parseSRT(srtContent);
+        
+        // 3. SHOW PREVIEW
         setSubtitles(parsed);
-        setVideoProcessingStatus(VideoProcessingStatus.DONE);
-        setStatus(TranslationStatus.COMPLETED);
         setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+
+        // 4. AUTO-START TRANSLATION (TARGET)
+        // We call the translation logic immediately for the workflow
+        setVideoProcessingStatus(VideoProcessingStatus.DONE); 
+        runTranslationSequence(parsed, apiKey, activeModel);
+
     } catch(e: any) {
         setError(`Failed to generate subtitles: ${e.message}`);
         setVideoProcessingStatus(VideoProcessingStatus.ERROR);
+        setStatus(TranslationStatus.ERROR);
     }
   };
   
+  // Decoupled Translation Function
+  const runTranslationSequence = async (
+      subtitlesToTranslate: SubtitleNode[], 
+      apiKey: string, 
+      activeModel: AIModel
+  ) => {
+    setStatus(TranslationStatus.TRANSLATING);
+    setProgress(0);
+    setError(null);
+
+    try {
+      const result = await processFullSubtitleFile(
+        subtitlesToTranslate,
+        sourceLang,
+        targetLang,
+        apiKey,
+        activeModel,
+        (count) => setProgress(Math.round((count / subtitlesToTranslate.length) * 100)),
+        (updatedSubtitles) => setSubtitles(updatedSubtitles)
+      );
+      
+      setSubtitles(result);
+      const estimatedRequests = Math.ceil(subtitlesToTranslate.length / BATCH_SIZE);
+      updateUsage(estimatedRequests);
+      setStatus(TranslationStatus.COMPLETED);
+    } catch (e: any) {
+      console.error(e);
+      setError(e.message || "An error occurred during translation. Please try again.");
+      setStatus(TranslationStatus.ERROR);
+    }
+  };
+
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
     
@@ -712,30 +756,8 @@ const App = () => {
       setError(`Please Provide an API Key for ${activeModel.provider} to continue.`);
       return;
     }
-
-    setStatus(TranslationStatus.TRANSLATING);
-    setProgress(0);
-    setError(null);
-
-    try {
-      const result = await processFullSubtitleFile(
-        subtitles,
-        sourceLang,
-        targetLang,
-        apiKey,
-        activeModel,
-        (count) => setProgress(Math.round((count / subtitles.length) * 100)),
-        (updatedSubtitles) => setSubtitles(updatedSubtitles)
-      );
-      
-      setSubtitles(result);
-      updateUsage(estimatedRequests);
-      setStatus(TranslationStatus.COMPLETED);
-    } catch (e: any) {
-      console.error(e);
-      setError(e.message || "An error occurred during translation. Please try again.");
-      setStatus(TranslationStatus.ERROR);
-    }
+    
+    runTranslationSequence(subtitles, apiKey, activeModel);
   };
 
   const handleDownloadSrt = () => {
@@ -794,12 +816,25 @@ const App = () => {
     try {
         setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.MUXING);
-        setVideoProcessingMessage('Packaging your new video file... This will not re-encode the video.');
-        const finalSrt = stringifySRT(subtitles);
+        setVideoProcessingMessage('Packaging dual-track video file (Original + Translated)...');
+        
+        const finalSrt = stringifySRT(subtitles); // Translated Text
+        const originalSrt = stringifySRT(subtitles.map(s => ({...s, text: s.originalText || s.text}))); // Original Text
+
         const targetLangData = LANGUAGES.find(l => l.name === targetLang);
+        const sourceLangData = LANGUAGES.find(l => l.name === sourceLang);
         
         const mkvFileName = fileName.replace('.mp4', '.mkv');
-        const newVideoBlob = await addSrtToVideo(ffmpegRef.current, file, finalSrt, targetLangData?.code || 'eng');
+        
+        // Pass both translated and original SRT to FFmpeg
+        const newVideoBlob = await addSrtToVideo(
+            ffmpegRef.current, 
+            file, 
+            finalSrt, 
+            targetLangData?.code || 'eng',
+            originalSrt,
+            sourceLangData?.code || 'und'
+        );
         
         downloadFile(mkvFileName, newVideoBlob);
         setVideoProcessingStatus(VideoProcessingStatus.DONE);
@@ -1001,6 +1036,10 @@ const App = () => {
                         onGenerate={handleGenerateSubtitles}
                         activeModel={activeModelData}
                         isYouTubeAuthenticated={!!googleUser}
+                        sourceLang={sourceLang}
+                        setSourceLang={setSourceLang}
+                        targetLang={targetLang}
+                        setTargetLang={setTargetLang}
                       />
                    ) : (
                      <div className="flex flex-col gap-4">
@@ -1239,6 +1278,7 @@ const App = () => {
 
       {/* ... Modals ... */}
       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
+        {/* ... (Existing modal content remains unchanged) ... */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
            <div className="flex flex-col gap-4">
               <label className="block text-sm font-bold text-white flex items-center gap-2"><Cpu className="w-4 h-4" /> Select AI Model</label>
@@ -1399,6 +1439,7 @@ const App = () => {
       </Modal>
 
       <Modal isOpen={activeModal === 'PRIVACY'} onClose={() => setActiveModal('NONE')} title="Privacy Policy">
+        {/* ... (Existing modal content remains unchanged) ... */}
          <div className="space-y-6 text-sm text-neutral-300 leading-relaxed">
             <p className="text-xs text-neutral-500">Last Updated: November 2025</p>
             <div className="space-y-3">
@@ -1439,6 +1480,7 @@ const App = () => {
       </Modal>
 
       <Modal isOpen={activeModal === 'TOS'} onClose={() => setActiveModal('NONE')} title="Terms of Service">
+        {/* ... (Existing modal content remains unchanged) ... */}
          <div className="space-y-6 text-sm text-neutral-300 leading-relaxed">
             <p className="text-xs text-neutral-500">Last Updated: November 2025</p>
             <div className="space-y-3">
