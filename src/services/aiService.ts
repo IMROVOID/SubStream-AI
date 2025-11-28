@@ -252,11 +252,18 @@ async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey:
 
     await enforceRateLimit();
     
-    const result = await ai.models.generateContent({ 
+    // Add Timeout to prevent infinite hanging
+    const apiCall = ai.models.generateContent({ 
         model: modelId, 
         contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }],
         config: generationConfig
     });
+
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Request timed out. The model may be busy or the file is too large.")), 180000) // 3 min timeout
+    );
+
+    const result = await Promise.race([apiCall, timeoutPromise]) as any;
     
     const responseText = result.text;
     if (!responseText) throw new Error("No transcription generated.");
@@ -296,8 +303,6 @@ async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey:
     await enforceRateLimit();
     const transcription = await openai.audio.transcriptions.create(options) as any;
     
-    // Whisper returns SRT directly. We can apply text splitting logic here too if needed, 
-    // but Whisper usually handles segmentation better. For consistency, we return raw SRT.
     if (typeof transcription !== 'string') throw new Error('OpenAI transcription returned an invalid result.');
     return transcription;
 }

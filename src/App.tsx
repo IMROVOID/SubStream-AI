@@ -111,7 +111,8 @@ const App = () => {
 
   // Language & Translation Settings
   const [sourceLang, setSourceLang] = useState<string>('auto');
-  const [targetLang, setTargetLang] = useState<string>('Persian'); // Changed default to Persian based on context
+  // FIX: Reverted default target language to the first in list (Arabic) instead of Persian
+  const [targetLang, setTargetLang] = useState<string>(LANGUAGES[0].name); 
   const [selectedCaptionId, setSelectedCaptionId] = useState<string>('');
 
   // Video-specific State
@@ -132,7 +133,7 @@ const App = () => {
   const [tempOpenAIApiKey, setTempOpenAIApiKey] = useState<string>('');
   const [openAIApiKeyStatus, setOpenAIApiKeyStatus] = useState<ApiKeyStatus>('idle');
   
-  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); // Default to Gemini 3 Pro
+  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); 
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
@@ -399,7 +400,6 @@ const App = () => {
     setVideoSrc(null);
   };
 
-  // ... (Login handlers same as before) ...
   const handleGoogleLoginSuccess = (tokenResponse: TokenResponse) => {
     if (!tokenResponse || !tokenResponse.access_token) return;
     
@@ -466,7 +466,6 @@ const App = () => {
     setOpenAIApiKeyStatus('idle');
   };
 
-  // ... (Other handlers same as before) ...
   const handleImportYouTube = async (meta: YouTubeVideoMetadata) => {
       resetState();
       setFileType('youtube');
@@ -591,7 +590,6 @@ const App = () => {
     }
   };
 
-  // ... (Generation and Translation logic using new structure) ...
   const handleGenerateSubtitles = async () => {
     const activeModel = AVAILABLE_MODELS.find(m => m.id === selectedModelId)!;
     
@@ -641,6 +639,7 @@ const App = () => {
                 console.warn("Could not fetch resolutions for fresh video, using defaults.");
             }
 
+            // Fallback for fresh uploads if resolutions array is empty
             if (resolutions.length === 0) {
                 resolutions = [1080, 720, 480, 360];
             }
@@ -836,13 +835,11 @@ const App = () => {
     }
   };
 
-  // ... (Other helpers and variables) ...
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
   const activeModelData = AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
   const hasProAccess = userGoogleApiKey || userOpenAIApiKey;
 
-  // Memoized lists...
   const filteredGoogleModels = useMemo(() => {
     return AVAILABLE_MODELS.filter(model => model.provider === 'google' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
   }, [modelSearchQuery]);
@@ -1160,9 +1157,9 @@ const App = () => {
                 )}
                 
                 {error && (
-                  <div className="p-4 rounded-xl bg-red-900/10 border border-red-900/40 text-red-200 text-sm flex items-center gap-3 animate-fade-in">
-                    <AlertCircle className="w-5 h-5 text-red-500" />
-                    <span>{error}</span>
+                  <div className="p-4 rounded-xl bg-red-900/10 border border-red-900/40 text-red-200 text-sm flex items-start gap-3 animate-fade-in w-full">
+                    <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                    <span className="break-words whitespace-pre-wrap w-full">{error}</span>
                   </div>
                 )}
               </div>

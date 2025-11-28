@@ -10,7 +10,8 @@ export default {
       fontFamily: {
         sans: ['Inter', 'sans-serif'],
         display: ['Space Grotesk', 'sans-serif'],
-        vazirmatn: ['Vazirmatn', 'sans-serif'], // Added Vazirmatn
+        // This name 'Vazirmatn' must match the font-family name in index.css
+        vazirmatn: ['Vazirmatn', 'sans-serif'], 
       },
       fontSize: {
         '4xl': ['2.5rem', { lineHeight: '2.75rem' }],
