@@ -47,18 +47,18 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 
 /**
  * HYBRID DOWNLOADER:
- * 1. Tries Official YouTube API first (if authenticated) -> 100% Reliable for owned videos
- * 2. Falls back to Backend Proxy (yt-dlp) -> Best Effort for public videos
+ * 1. Tries Official YouTube API via Local Proxy (Authenticated) -> 100% Reliable for owned videos
+ * 2. Falls back to scraping via yt-dlp (Public) -> Best Effort for public videos
  */
 export async function downloadCaptionTrack(videoUrl: string, trackToken: string, accessToken?: string | null): Promise<string> {
     
     // --- STRATEGY 1: Official API (Authenticated) ---
+    // We must route this through the backend proxy to avoid CORS errors in the browser
     if (accessToken) {
         const videoId = extractYouTubeId(videoUrl);
         if (videoId) {
             try {
                 // 1. Decode the track token to find language preference
-                // The token is base64 encoded JSON from the 'info' endpoint
                 let targetLang = '';
                 try {
                     const jsonStr = atob(trackToken);
@@ -69,28 +69,27 @@ export async function downloadCaptionTrack(videoUrl: string, trackToken: string,
                 }
 
                 if (targetLang) {
-                    // 2. List captions via API to find the Track ID
-                    const listResp = await fetch(`https://www.googleapis.com/youtube/v3/captions?part=snippet&videoId=${videoId}`, {
-                        headers: { 'Authorization': `Bearer ${accessToken}` }
-                    });
+                    // 2. List captions via API (Proxy) to find the Track ID
+                    // We can reuse the existing proxy/captions endpoint which lists tracks
+                    const listResp = await fetch(`${BACKEND_URL}/proxy/captions?videoId=${videoId}&token=${encodeURIComponent(accessToken)}`);
 
                     if (listResp.ok) {
                         const listData = await listResp.json();
                         // Find a track matching our language
-                        const track = listData.items.find((t: any) => t.snippet.language === targetLang);
+                        // The API returns 'snippet.language', we need to match it loosely
+                        const track = listData.items?.find((t: any) => t.snippet.language === targetLang);
                         
                         if (track) {
                             console.log("Found track via Official API:", track.id);
-                            // 3. Download via API
-                            const downResp = await fetch(`https://www.googleapis.com/youtube/v3/captions/${track.id}?tfmt=srt`, {
-                                headers: { 'Authorization': `Bearer ${accessToken}` }
-                            });
+                            
+                            // 3. Download via API Proxy (Bypasses CORS)
+                            const downResp = await fetch(`${BACKEND_URL}/proxy/download-caption?captionId=${track.id}&token=${encodeURIComponent(accessToken)}`);
                             
                             if (downResp.ok) {
                                 const text = await downResp.text();
                                 if (text && text.length > 0) return text;
                             } else {
-                                console.warn("Official API Download Failed:", downResp.status);
+                                console.warn("Official API Proxy Download Failed:", downResp.status);
                             }
                         }
                     } else {
@@ -103,7 +102,7 @@ export async function downloadCaptionTrack(videoUrl: string, trackToken: string,
         }
     }
 
-    // --- STRATEGY 2: Backend Proxy (yt-dlp) ---
+    // --- STRATEGY 2: Backend yt-dlp (Fallback) ---
     try {
         const query = new URLSearchParams({
             url: videoUrl,

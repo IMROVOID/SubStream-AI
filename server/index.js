@@ -175,9 +175,9 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION & IP STRATEGY) ---
 
-// Removed 'tv' (bad for subs), 'web' (needs JS), 'android' (needs PO Token)
-// 'android_creator' and 'ios' are currently the most reliable for authenticated requests
-const CLIENTS_TO_TRY = ['android_creator', 'ios', 'mweb'];
+// Optimized Client List: 'android_creator' (High Trust) -> 'ios' (Standard)
+// Removed 'tv' (Format Unavail) and 'web' (Challenge Error)
+const CLIENTS_TO_TRY = ['android_creator', 'ios'];
 
 const executeYtDlpWithRetry = async (baseArgs) => {
     let lastError;
@@ -196,10 +196,10 @@ const executeYtDlpWithRetry = async (baseArgs) => {
                 '--no-playlist',
                 '--no-check-certificates',
                 
-                // Allow IPv6 if proxy supports it (Removed --force-ipv4)
+                // IPv6 Handling: v2ray controls the exit node
                 
                 '--no-cache-dir', // Critical to prevent caching 429/403 states
-                '--sleep-requests', '1.5', // Slow down to avoid 429
+                '--sleep-requests', '1.5', // Throttle to avoid aggressive blocking
                 '--extractor-args', `youtube:player_client=${client}`
             ];
 
