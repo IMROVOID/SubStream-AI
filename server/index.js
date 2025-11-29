@@ -41,24 +41,6 @@ const getSystemProxy = () => {
 const PROXY_URL = getSystemProxy();
 console.log(`[Server] Network Proxy Configuration: ${PROXY_URL ? PROXY_URL : 'Direct Connection'}`);
 
-// --- HELPERS ---
-const ensureBinary = async () => {
-    if (!fs.existsSync(YT_DLP_BINARY_PATH)) {
-        console.log('Downloading yt-dlp binary... This may take a minute.');
-        try {
-            await YTDlpWrap.downloadFromGithub(YT_DLP_BINARY_PATH);
-            console.log('yt-dlp binary downloaded successfully.');
-            if (process.platform !== 'win32') {
-                fs.chmodSync(YT_DLP_BINARY_PATH, '755');
-            }
-        } catch (err) {
-            console.error('Failed to download yt-dlp:', err);
-        }
-    }
-};
-
-ensureBinary();
-
 // --- AXIOS CLIENT CONFIGURATION ---
 const createAxiosClient = () => {
     const config = {
@@ -93,6 +75,78 @@ const createAxiosClient = () => {
 };
 
 const axiosClient = createAxiosClient();
+
+// --- BINARY MANAGEMENT (Self-Healing) ---
+
+const downloadBinaryWithProxy = async () => {
+    const platform = process.platform;
+    // Determine correct filename for GitHub releases
+    let fileName = 'yt-dlp';
+    if (platform === 'win32') fileName = 'yt-dlp.exe';
+    else if (platform === 'darwin') fileName = 'yt-dlp_macos';
+
+    const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${fileName}`;
+    console.log(`[Server] Downloading ${fileName} from GitHub using Proxy...`);
+
+    const writer = fs.createWriteStream(YT_DLP_BINARY_PATH);
+
+    const response = await axiosClient({
+        url,
+        method: 'GET',
+        responseType: 'stream',
+        timeout: 0 // No timeout for download
+    });
+
+    response.data.pipe(writer);
+
+    return new Promise((resolve, reject) => {
+        writer.on('finish', () => {
+            console.log('[Server] yt-dlp binary downloaded successfully.');
+            if (platform !== 'win32') {
+                try { fs.chmodSync(YT_DLP_BINARY_PATH, '755'); } catch (e) {}
+            }
+            resolve();
+        });
+        writer.on('error', reject);
+    });
+};
+
+const ensureBinary = async () => {
+    let isValid = false;
+
+    // 1. Check if exists
+    if (fs.existsSync(YT_DLP_BINARY_PATH)) {
+        try {
+            // 2. Try to run version check to verify integrity
+            await ytDlpWrap.execPromise(['--version']);
+            isValid = true;
+        } catch (e) {
+            console.error(`[Server] Existing yt-dlp binary is corrupted (Error: ${e.message.split('\n')[0]}). Deleting...`);
+            try { fs.unlinkSync(YT_DLP_BINARY_PATH); } catch (delErr) {}
+        }
+    }
+
+    // 3. Download if missing or deleted
+    if (!isValid) {
+        try {
+            await downloadBinaryWithProxy();
+        } catch (err) {
+            console.error('[Server] Failed to download yt-dlp binary:', err.message);
+            // Fallback: Try library default if custom proxy download fails (unlikely)
+            try {
+                console.log('[Server] Attempting fallback download...');
+                await YTDlpWrap.downloadFromGithub(YT_DLP_BINARY_PATH);
+            } catch (fallbackErr) {
+                console.error('[Server] Fallback download also failed.');
+            }
+        }
+    }
+};
+
+// Initialize binary check on startup
+ensureBinary();
+
+// --- HELPERS ---
 
 // Retry Helper
 const makeRequestWithRetry = async (config, retries = 3) => {
@@ -334,8 +388,9 @@ const getCommonYtDlpArgs = () => {
         '--no-playlist',
         '--no-check-certificates',
         '--force-ipv4',
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '--referer', 'https://www.youtube.com/'
+        '--no-cache-dir', // Prevent caching bad configs/tokens
+        // SWITCH TO IOS CLIENT: Android failed with 429/PO Token. iOS is safer for simple extraction.
+        '--extractor-args', 'youtube:player_client=ios',
     ];
 
     if (PROXY_URL) {
@@ -349,6 +404,7 @@ app.get('/api/info', async (req, res) => {
     const url = req.query.url;
     if (!url) return res.status(400).json({ error: 'URL required' });
 
+    // Wait for binary to be ready before executing
     await ensureBinary();
 
     try {
@@ -456,6 +512,8 @@ app.get('/api/caption', async (req, res) => {
         return res.status(400).send("Invalid Caption Token");
     }
 
+    await ensureBinary();
+
     const tempId = `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
 
@@ -513,6 +571,8 @@ app.get('/api/download-video', async (req, res) => {
     } catch (e) {
         return res.status(400).send("Invalid Token");
     }
+
+    await ensureBinary();
 
     const tempId = `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
