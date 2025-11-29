@@ -334,8 +334,8 @@ const getCommonYtDlpArgs = () => {
         '--no-playlist',
         '--no-check-certificates',
         '--force-ipv4',
-        // SWITCH TO ANDROID CLIENT: Bypasses HTTP 429 on Web Client
-        '--extractor-args', 'youtube:player_client=android',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '--referer', 'https://www.youtube.com/'
     ];
 
     if (PROXY_URL) {
