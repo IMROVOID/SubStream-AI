@@ -148,7 +148,7 @@ ensureBinary();
 
 // --- HELPERS ---
 
-// Retry Helper
+// Retry Helper for Axios
 const makeRequestWithRetry = async (config, retries = 3) => {
     try {
         return await axiosClient(config);
@@ -169,6 +169,54 @@ const makeRequestWithRetry = async (config, retries = 3) => {
         throw error;
     }
 };
+
+// --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION) ---
+
+// Clients to try in order of likelihood to succeed
+const CLIENTS_TO_TRY = ['ios', 'android', 'mweb', 'web'];
+
+const executeYtDlpWithRetry = async (baseArgs) => {
+    let lastError;
+
+    for (const client of CLIENTS_TO_TRY) {
+        try {
+            // Build arguments for this specific client attempt
+            const currentArgs = [
+                ...baseArgs,
+                '--no-playlist',
+                '--no-check-certificates',
+                '--force-ipv4',
+                '--no-cache-dir', // Critical to prevent caching 429/403 states
+                '--extractor-args', `youtube:player_client=${client}`
+            ];
+
+            if (PROXY_URL) {
+                currentArgs.push('--proxy', PROXY_URL);
+            }
+
+            console.log(`[YT-DLP] Attempting with client: ${client}`);
+            const result = await ytDlpWrap.execPromise(currentArgs);
+            console.log(`[YT-DLP] Success with client: ${client}`);
+            return result;
+
+        } catch (e) {
+            const msg = e.message || '';
+            const isRateLimit = msg.includes('HTTP Error 429') || msg.includes('Too Many Requests');
+            const isForbidden = msg.includes('HTTP Error 403') || msg.includes('Sign in to confirm');
+            const isPOToken = msg.includes('PO Token');
+
+            console.warn(`[YT-DLP] Client '${client}' failed. (Error: ${isRateLimit ? 'Rate Limited' : isForbidden ? 'Forbidden' : isPOToken ? 'PO Token' : 'Generic'})`);
+            
+            lastError = e;
+            // Continue to next client in loop
+        }
+    }
+
+    // If we exhausted all clients
+    console.error("[YT-DLP] All clients failed.");
+    throw lastError;
+};
+
 
 // --- GENERAL FILE PROXY ---
 
@@ -383,23 +431,6 @@ app.get('/api/proxy/download-caption', async (req, res) => {
 
 // --- YT-DLP ENDPOINTS ---
 
-const getCommonYtDlpArgs = () => {
-    const args = [
-        '--no-playlist',
-        '--no-check-certificates',
-        '--force-ipv4',
-        '--no-cache-dir', // Prevent caching bad configs/tokens
-        // SWITCH TO IOS CLIENT: Android failed with 429/PO Token. iOS is safer for simple extraction.
-        '--extractor-args', 'youtube:player_client=ios',
-    ];
-
-    if (PROXY_URL) {
-        args.push('--proxy', PROXY_URL);
-    }
-
-    return args;
-};
-
 app.get('/api/info', async (req, res) => {
     const url = req.query.url;
     if (!url) return res.status(400).json({ error: 'URL required' });
@@ -412,10 +443,9 @@ app.get('/api/info', async (req, res) => {
             url,
             '--dump-json',
             '--skip-download',
-            ...getCommonYtDlpArgs()
         ];
 
-        const metadata = await ytDlpWrap.execPromise(args);
+        const metadata = await executeYtDlpWithRetry(args);
         
         const info = JSON.parse(metadata);
         const videoUrl = info.webpage_url || url;
@@ -524,13 +554,12 @@ app.get('/api/caption', async (req, res) => {
             '--convert-subs', 'srt',
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath,
-            ...getCommonYtDlpArgs()
         ];
 
         if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
         else args.push('--write-sub', '--sub-lang', lang);
 
-        await ytDlpWrap.execPromise(args);
+        await executeYtDlpWithRetry(args);
 
         const files = fs.readdirSync(TEMP_DIR);
         const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
@@ -593,13 +622,12 @@ app.get('/api/download-video', async (req, res) => {
             '--embed-thumbnail',
             '--convert-subs', 'srt',
             '--merge-output-format', 'mp4',
-            ...getCommonYtDlpArgs()
         ];
 
         if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
         else args.push('--write-sub', '--sub-lang', lang);
 
-        await ytDlpWrap.execPromise(args);
+        await executeYtDlpWithRetry(args);
 
         const files = fs.readdirSync(TEMP_DIR);
         let videoFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.mp4') || f.endsWith('.mkv')) && !f.endsWith('.part'));
