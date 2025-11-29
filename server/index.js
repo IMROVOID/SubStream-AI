@@ -1,13 +1,16 @@
 const express = require('express');
 const cors = require('cors');
 const YTDlpWrap = require('yt-dlp-wrap').default;
-const ffmpegPath = require('ffmpeg-static'); 
+const ffmpegPath = require('ffmpeg-static');
+const { exec } = require('child_process');
 const axios = require('axios');
 // Import HttpsProxyAgent to handle v2ray/local proxy tunnels correctly
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const path = require('path');
 const fs = require('fs');
+const util = require('util');
 
+const execPromise = util.promisify(exec);
 const app = express();
 const PORT = 4000;
 
@@ -173,16 +176,89 @@ const makeRequestWithRetry = async (config, retries = 3) => {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- SRT CLEANING HELPERS ---
+
+const timeToMs = (timeString) => {
+    if (!timeString) return 0;
+    const [hms, ms] = timeString.replace('.', ',').split(','); // Handle dot or comma
+    const [h, m, s] = hms.split(':').map(Number);
+    return (h * 3600000) + (m * 60000) + (s * 1000) + (parseInt(ms) || 0);
+};
+
+const msToTime = (ms) => {
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const mil = Math.floor(ms % 1000);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(mil).padStart(3, '0')}`;
+};
+
+/**
+ * Parses raw SRT string, fixes overlapping timestamps, and returns clean SRT string.
+ */
+const cleanSrtContent = (srtData) => {
+    // 1. Parse
+    const normalizedData = srtData.replace(/\r\n/g, '\n').trim();
+    const blocks = normalizedData.split(/\n\n+/);
+    
+    let subtitles = [];
+    
+    blocks.forEach((block, index) => {
+        const lines = block.split('\n');
+        if (lines.length < 2) return;
+
+        // Find timestamp line
+        const timeLineIndex = lines.findIndex(l => l.includes('-->'));
+        if (timeLineIndex === -1) return;
+
+        const times = lines[timeLineIndex].split('-->');
+        if (times.length !== 2) return;
+
+        const startTime = times[0].trim();
+        const endTime = times[1].trim();
+        
+        // Get Text
+        const textLines = lines.slice(timeLineIndex + 1);
+        const text = textLines.join(' ').replace(/<[^>]*>/g, '').trim(); // Remove tags
+        
+        if (text) {
+            subtitles.push({
+                id: index + 1,
+                startMs: timeToMs(startTime),
+                endMs: timeToMs(endTime),
+                text: text
+            });
+        }
+    });
+
+    // 2. Fix Overlaps
+    // Ensure Line N End <= Line N+1 Start
+    subtitles.sort((a, b) => a.startMs - b.startMs);
+
+    for (let i = 0; i < subtitles.length - 1; i++) {
+        const current = subtitles[i];
+        const next = subtitles[i + 1];
+
+        if (current.endMs > next.startMs) {
+            // Snap end time to next start time
+            current.endMs = next.startMs;
+        }
+    }
+
+    // 3. Rebuild SRT
+    return subtitles.map((sub, idx) => {
+        return `${idx + 1}\n${msToTime(sub.startMs)} --> ${msToTime(sub.endMs)}\n${sub.text}`;
+    }).join('\n\n');
+};
+
+
 // --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION & IP STRATEGY) ---
 
-// Optimized Client List: 'android_creator' (High Trust) -> 'ios' (Standard)
-// Removed 'tv' (Format Unavail) and 'web' (Challenge Error)
-const CLIENTS_TO_TRY = ['android_creator', 'ios'];
+const CLIENTS_TO_TRY = ['android_creator', 'ios', 'mweb'];
 
 const executeYtDlpWithRetry = async (baseArgs) => {
     let lastError;
 
-    // Check for cookies file
     const hasCookies = fs.existsSync(COOKIES_PATH);
     if (hasCookies) {
         console.log("[YT-DLP] Using cookies.txt for authentication.");
@@ -190,16 +266,12 @@ const executeYtDlpWithRetry = async (baseArgs) => {
 
     for (const client of CLIENTS_TO_TRY) {
         try {
-            // Build arguments for this specific client attempt
             const currentArgs = [
                 ...baseArgs,
                 '--no-playlist',
                 '--no-check-certificates',
-                
-                // IPv6 Handling: v2ray controls the exit node
-                
-                '--no-cache-dir', // Critical to prevent caching 429/403 states
-                '--sleep-requests', '1.5', // Throttle to avoid aggressive blocking
+                '--no-cache-dir', 
+                '--sleep-requests', '1.5',
                 '--extractor-args', `youtube:player_client=${client}`
             ];
 
@@ -219,20 +291,12 @@ const executeYtDlpWithRetry = async (baseArgs) => {
         } catch (e) {
             const msg = e.message || '';
             const isRateLimit = msg.includes('HTTP Error 429') || msg.includes('Too Many Requests');
-            const isForbidden = msg.includes('HTTP Error 403') || msg.includes('Sign in to confirm');
-            const isPOToken = msg.includes('PO Token');
-            const isFormat = msg.includes('Requested format is not available');
-
-            console.warn(`[YT-DLP] Client '${client}' failed. (Error: ${isRateLimit ? 'Rate Limited' : isForbidden ? 'Forbidden' : isPOToken ? 'PO Token' : isFormat ? 'Format Unavail' : 'Generic'})`);
-            
+            console.warn(`[YT-DLP] Client '${client}' failed. (Rate Limit: ${isRateLimit})`);
             lastError = e;
-            
-            // Exponential backoff delay between client retries
             await delay(2000 + Math.random() * 2000); 
         }
     }
 
-    // If we exhausted all clients
     console.error("[YT-DLP] All clients failed.");
     throw lastError;
 };
@@ -342,7 +406,6 @@ app.post('/api/proxy/upload-init', async (req, res) => {
 
     try {
         console.log("Proxy: Initiating Upload...");
-        // Call Google API using the configured Axios client (with Proxy Agent)
         const response = await makeRequestWithRetry({
             method: 'post',
             url: 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
@@ -354,22 +417,14 @@ app.post('/api/proxy/upload-init', async (req, res) => {
                 'X-Upload-Content-Type': fileType
             }
         });
-        
-        console.log("Proxy: Upload URL received.");
         res.json({ location: response.headers.location });
     } catch (e) {
         const status = e.response?.status || 500;
         const data = e.response?.data || { error: e.message };
-        
-        console.error(`Proxy Upload Init Error (${status}):`);
-        if (e.code) console.error(`Error Code: ${e.code}`);
-        if (data) console.error(JSON.stringify(data, null, 2));
-        
         res.status(status).json(data);
     }
 });
 
-// NEW: Endpoint to handle the actual binary upload via proxy
 app.put('/api/proxy/upload-finish', async (req, res) => {
     const uploadUrl = req.headers['x-upload-url'];
     const contentType = req.headers['content-type'];
@@ -380,11 +435,6 @@ app.put('/api/proxy/upload-finish', async (req, res) => {
     }
 
     try {
-        console.log("Proxy: Streaming binary upload to Google...");
-        
-        // Stream the incoming request directly to Google
-        // We use req as the data stream. express.json() ignores non-json content types, 
-        // so the stream should be intact for video files.
         const response = await axiosClient({
             method: 'put',
             url: uploadUrl,
@@ -395,25 +445,18 @@ app.put('/api/proxy/upload-finish', async (req, res) => {
             },
             maxBodyLength: Infinity,
             maxContentLength: Infinity,
-            timeout: 0, // IMPORTANT: Disable timeout for large video uploads
+            timeout: 0, 
             responseType: 'json' 
         });
-
-        console.log("Proxy: Upload completed successfully.");
         res.json(response.data);
-
     } catch (e) {
-        console.error("Proxy Upload Finish Error:", e.message);
-        const status = e.response?.status || 500;
-        const data = e.response?.data || { error: e.message };
-        res.status(status).json(data);
+        res.status(500).json({ error: e.message });
     }
 });
 
 
 app.get('/api/proxy/captions', async (req, res) => {
     const { token, videoId } = req.query;
-
     if (!token || !videoId) return res.status(400).json({ error: "Missing params" });
 
     try {
@@ -431,7 +474,6 @@ app.get('/api/proxy/captions', async (req, res) => {
 
 app.get('/api/proxy/download-caption', async (req, res) => {
     const { token, captionId } = req.query;
-
     if (!token || !captionId) return res.status(400).json({ error: "Missing params" });
 
     try {
@@ -454,22 +496,13 @@ app.get('/api/proxy/download-caption', async (req, res) => {
 app.get('/api/info', async (req, res) => {
     const url = req.query.url;
     if (!url) return res.status(400).json({ error: 'URL required' });
-
-    // Wait for binary to be ready before executing
     await ensureBinary();
 
     try {
-        const args = [
-            url,
-            '--dump-json',
-            '--skip-download',
-        ];
-
+        const args = [url, '--dump-json', '--skip-download'];
         const metadata = await executeYtDlpWithRetry(args);
-        
         const info = JSON.parse(metadata);
         const videoUrl = info.webpage_url || url;
-        
         let captions = [];
         const seenKeys = new Set();
 
@@ -479,12 +512,10 @@ app.get('/api/info', async (req, res) => {
                 const formats = tracksObj[lang];
                 const name = (formats[0] && formats[0].name) || lang;
                 const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
-                
                 if (!seenKeys.has(uniqueKey)) {
                     seenKeys.add(uniqueKey);
                     const trackConfig = { lang: lang, isAuto: isAuto };
                     const token = Buffer.from(JSON.stringify(trackConfig)).toString('base64');
-
                     captions.push({
                         id: token, 
                         language: lang,
@@ -494,65 +525,43 @@ app.get('/api/info', async (req, res) => {
                 }
             });
         };
-
         processTracks(info.subtitles, false);
         processTracks(info.automatic_captions, true);
 
-        // Extract formats (resolutions)
         const resolutions = new Set();
         if (info.formats) {
             info.formats.forEach(f => {
-                if (f.height && f.vcodec !== 'none') {
-                    resolutions.add(f.height);
-                }
+                if (f.height && f.vcodec !== 'none') resolutions.add(f.height);
             });
         }
         const sortedResolutions = Array.from(resolutions).sort((a, b) => b - a);
-
-        const thumbnail = info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : '');
-        const durationSeconds = info.duration || 0;
-        
-        const date = new Date(durationSeconds * 1000);
-        const timeStr = durationSeconds < 3600 ? date.toISOString().substr(14, 5) : date.toISOString().substr(11, 8);
 
         res.json({
             meta: {
                 id: info.id,
                 title: info.title,
                 description: info.description,
-                thumbnailUrl: thumbnail,
+                thumbnailUrl: info.thumbnail,
                 channelTitle: info.uploader,
-                duration: timeStr,
+                duration: info.duration,
                 videoUrl: videoUrl
             },
             captions: captions,
             resolutions: sortedResolutions
         });
-
     } catch (error) {
         console.error("yt-dlp info error:", error.message);
-        res.status(500).json({ error: 'Failed to fetch video details. URL might be invalid or restricted.' });
+        res.status(500).json({ error: 'Failed to fetch video details.' });
     }
 });
 
 app.get('/api/caption', async (req, res) => {
-    const rawToken = req.query.token || req.query.trackId;
+    const rawToken = req.query.token;
     const url = req.query.url;
-
     if (!url || !rawToken) return res.status(400).send("Missing required parameters");
-
-    if (rawToken.startsWith('http')) {
-        try {
-            const response = await axiosClient.get(rawToken, { responseType: 'text' });
-            return res.send(response.data);
-        } catch (e) {
-            return res.status(500).send("Failed to download legacy caption URL.");
-        }
-    }
 
     let isAuto = false;
     let lang = '';
-
     try {
         const jsonStr = Buffer.from(rawToken, 'base64').toString('utf-8');
         const decoded = JSON.parse(jsonStr);
@@ -563,19 +572,11 @@ app.get('/api/caption', async (req, res) => {
     }
 
     await ensureBinary();
-
     const tempId = `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
 
     try {
-        let args = [
-            url,
-            '--skip-download',
-            '--convert-subs', 'srt',
-            '--output', outputTemplate,
-            '--ffmpeg-location', ffmpegPath,
-        ];
-
+        let args = [url, '--skip-download', '--convert-subs', 'srt', '--output', outputTemplate, '--ffmpeg-location', ffmpegPath];
         if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
         else args.push('--write-sub', '--sub-lang', lang);
 
@@ -583,31 +584,25 @@ app.get('/api/caption', async (req, res) => {
 
         const files = fs.readdirSync(TEMP_DIR);
         const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
-
-        if (!generatedFile) {
-            throw new Error(`Subtitle file not generated.`);
-        }
+        if (!generatedFile) throw new Error(`Subtitle file not generated.`);
 
         const filePath = path.join(TEMP_DIR, generatedFile);
         const content = fs.readFileSync(filePath, 'utf-8');
         fs.unlinkSync(filePath);
 
-        res.send(content);
+        // CLEAN THE CONTENT BEFORE SENDING
+        const cleanContent = cleanSrtContent(content);
+        res.send(cleanContent);
 
     } catch (error) {
-        try {
-            const files = fs.readdirSync(TEMP_DIR);
-            files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
-        } catch (e) {}
-
         console.error("YT-DLP Caption Error:", error.message);
-        res.status(500).send(error.message || "Unknown error during subtitle download");
+        res.status(500).send(error.message);
     }
 });
 
+// --- DECOUPLED DOWNLOAD & MERGE ENDPOINT ---
 app.get('/api/download-video', async (req, res) => {
-    const { url, token, quality } = req.query; // Added quality param
-
+    const { url, token, quality } = req.query;
     if (!url || !token) return res.status(400).send("Missing url or token");
 
     let isAuto = false;
@@ -623,66 +618,81 @@ app.get('/api/download-video', async (req, res) => {
 
     await ensureBinary();
 
-    const tempId = `vid_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
-    
+    const baseId = `job_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const videoOutput = path.join(TEMP_DIR, `${baseId}_vid.%(ext)s`);
+    const subOutput = path.join(TEMP_DIR, `${baseId}_sub.%(ext)s`);
+
     try {
+        console.log(`[Download] Starting separate download for ${baseId}`);
+
+        // 1. Download Video ONLY
         let formatArg = 'best';
-        if (quality) {
-            // Select best video <= quality AND best audio, fallback to 'best' if merge fails
-            formatArg = `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]/best`;
-        }
+        if (quality) formatArg = `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]/best`;
+        
+        const vidArgs = [url, '--format', formatArg, '--output', videoOutput, '--ffmpeg-location', ffmpegPath];
+        await executeYtDlpWithRetry(vidArgs);
 
-        let args = [
-            url,
-            '--format', formatArg, 
-            '--output', outputTemplate,
-            '--ffmpeg-location', ffmpegPath,
-            '--embed-subs',
-            '--embed-thumbnail',
-            '--convert-subs', 'srt',
-            '--merge-output-format', 'mp4',
-        ];
+        // 2. Download Subtitle ONLY
+        const subArgs = [url, '--skip-download', '--convert-subs', 'srt', '--output', subOutput, '--ffmpeg-location', ffmpegPath];
+        if (isAuto) subArgs.push('--write-auto-sub', '--sub-lang', lang);
+        else subArgs.push('--write-sub', '--sub-lang', lang);
+        
+        await executeYtDlpWithRetry(subArgs);
 
-        if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
-        else args.push('--write-sub', '--sub-lang', lang);
-
-        await executeYtDlpWithRetry(args);
-
+        // 3. Locate files
         const files = fs.readdirSync(TEMP_DIR);
-        let videoFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.mp4') || f.endsWith('.mkv')) && !f.endsWith('.part'));
+        const videoFile = files.find(f => f.startsWith(`${baseId}_vid`) && !f.endsWith('.part'));
+        const subFile = files.find(f => f.startsWith(`${baseId}_sub`) && f.endsWith('.srt'));
 
-        if (!videoFile) {
-            const partFile = files.find(f => f.startsWith(tempId) && f.endsWith('.part'));
-            if (partFile) {
-                const newName = partFile.replace('.part', '');
-                fs.renameSync(path.join(TEMP_DIR, partFile), path.join(TEMP_DIR, newName));
-                videoFile = newName;
-            }
-        }
+        if (!videoFile || !subFile) throw new Error("Failed to download video or subtitle components.");
 
-        if (!videoFile) throw new Error(`Video file not found after download.`);
+        const videoPath = path.join(TEMP_DIR, videoFile);
+        const subPath = path.join(TEMP_DIR, subFile);
+        const cleanSubPath = path.join(TEMP_DIR, `${baseId}_clean.srt`);
+        const finalPath = path.join(TEMP_DIR, `${baseId}_final.mp4`);
 
-        const filePath = path.join(TEMP_DIR, videoFile);
-        res.download(filePath, (err) => {
-            setTimeout(() => {
+        // 4. Clean Subtitles
+        console.log(`[Download] Cleaning subtitles for ${baseId}`);
+        const rawSub = fs.readFileSync(subPath, 'utf-8');
+        const cleanedSub = cleanSrtContent(rawSub);
+        fs.writeFileSync(cleanSubPath, cleanedSub);
+
+        // 5. Mux using FFmpeg
+        console.log(`[Download] Muxing video...`);
+        // Use mov_text for mp4 subtitle compatibility
+        const ffmpegCmd = `"${ffmpegPath}" -i "${videoPath}" -i "${cleanSubPath}" -c:v copy -c:a copy -c:s mov_text -metadata:s:s:0 language=${lang} "${finalPath}"`;
+        
+        await execPromise(ffmpegCmd);
+
+        // 6. Send File
+        if (fs.existsSync(finalPath)) {
+            res.download(finalPath, (err) => {
+                // Cleanup
                 try {
-                    const leftovers = fs.readdirSync(TEMP_DIR).filter(f => f.startsWith(tempId));
-                    leftovers.forEach(f => { try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch(e) {} });
-                } catch (e) {}
-            }, 10000); 
-        });
+                    fs.unlinkSync(videoPath);
+                    fs.unlinkSync(subPath);
+                    fs.unlinkSync(cleanSubPath);
+                    setTimeout(() => {
+                        if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
+                    }, 5000);
+                } catch (e) { console.error("Cleanup error", e); }
+            });
+        } else {
+            throw new Error("Muxing failed, output file missing.");
+        }
 
     } catch (error) {
+        console.error("Download/Merge Error:", error.message);
+        res.status(500).send(`Processing failed: ${error.message}`);
+        
+        // Attempt cleanup on fail
         try {
-             const files = fs.readdirSync(TEMP_DIR);
-             files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
-        } catch (e) {}
-        console.error("YT-DLP Video Error:", error.message);
-        res.status(500).send(`Video processing failed: ${error.message}`);
+            const files = fs.readdirSync(TEMP_DIR);
+            files.filter(f => f.startsWith(baseId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
+        } catch(e) {}
     }
 });
 
 app.listen(PORT, () => {
     console.log(`Backend Server running on http://localhost:${PORT}`);
-})
+});

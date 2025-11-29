@@ -2,10 +2,20 @@ import { SubtitleNode } from '../types';
 
 // Helper to convert SRT timestamp (00:00:00,000) to milliseconds
 const timeToMs = (timeString: string): number => {
-  const [time, msStr] = timeString.split(',');
+  if (!timeString) return 0;
+  const [time, msStr] = timeString.replace('.', ',').split(','); // Handle potential dots
   const [hours, minutes, seconds] = time.split(':').map(Number);
   const milliseconds = Number(msStr);
   return (hours * 3600000) + (minutes * 60000) + (seconds * 1000) + milliseconds;
+};
+
+// Helper to convert milliseconds back to SRT timestamp (00:00:00,000)
+const msToTime = (ms: number): string => {
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const mil = Math.floor(ms % 1000);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(mil).padStart(3, '0')}`;
 };
 
 // Helper to normalize text for comparison (removes punctuation/casing)
@@ -33,7 +43,7 @@ export const parseSRT = (data: string): SubtitleNode[] => {
     
     if (timeLineIndex !== -1) {
       const timeLine = lines[timeLineIndex];
-      const times = timeLine.split(' --> ');
+      const times = timeLine.split('-->');
       
       if (times.length === 2) {
         // Extract text: everything after the timestamp line
@@ -69,7 +79,10 @@ export const parseSRT = (data: string): SubtitleNode[] => {
     }
   });
 
-  // --- INTELLIGENT DEDUPLICATION LOGIC ---
+  // 1. Sort by start time to ensure chronological order
+  rawSubtitles.sort((a, b) => timeToMs(a.startTime) - timeToMs(b.startTime));
+
+  // 2. Deduplication Logic
   const cleanedSubtitles: SubtitleNode[] = [];
   
   for (let i = 0; i < rawSubtitles.length; i++) {
@@ -80,18 +93,14 @@ export const parseSRT = (data: string): SubtitleNode[] => {
         const prevNorm = normalize(prev.text);
         const currNorm = normalize(current.text);
 
-        // 1. Exact Duplicate
+        // Exact Duplicate
         if (prevNorm === currNorm) {
             prev.endTime = current.endTime; // Extend duration
             continue;
         }
 
-        // 2. Accumulation (Line 2 starts with Line 1)
-        // Prev: "I am going"
-        // Curr: "I am going to the store"
+        // Accumulation (Line 2 starts with Line 1)
         if (currNorm.startsWith(prevNorm)) {
-            // We strip the prefix from the current line
-            // But we must be careful about word boundaries.
             const uniquePart = current.text.substring(prev.text.length).trim();
             if (uniquePart) {
                 current.text = uniquePart;
@@ -102,15 +111,12 @@ export const parseSRT = (data: string): SubtitleNode[] => {
             }
         }
         
-        // 3. Rolling Overlap (End of Line 1 is Start of Line 2)
-        // Prev: "going to the"
-        // Curr: "to the store"
+        // Rolling Overlap (End of Line 1 is Start of Line 2)
         else {
             const prevWords = prev.text.split(' ');
             const currWords = current.text.split(' ');
             
             let maxOverlap = 0;
-            // Check for overlap of 1 to N words
             const maxLen = Math.min(prevWords.length, currWords.length);
             for (let k = 1; k <= maxLen; k++) {
                 const suffix = prevWords.slice(-k).join(' ');
@@ -121,7 +127,6 @@ export const parseSRT = (data: string): SubtitleNode[] => {
             }
 
             if (maxOverlap > 0) {
-                // Remove the overlapping words from the start of current
                 const uniqueWords = currWords.slice(maxOverlap);
                 const uniqueText = uniqueWords.join(' ').trim();
                 
@@ -135,10 +140,26 @@ export const parseSRT = (data: string): SubtitleNode[] => {
             }
         }
     }
-
-    // Re-assign ID to keep sequence clean
+    
+    // Re-assign ID
     current.id = cleanedSubtitles.length + 1;
     cleanedSubtitles.push(current);
+  }
+
+  // 3. Fix Overlapping Timestamps (The Youtube Auto-Caption Fix)
+  // This prevents two lines from showing at once by clipping the previous line's end time.
+  for (let i = 0; i < cleanedSubtitles.length - 1; i++) {
+      const current = cleanedSubtitles[i];
+      const next = cleanedSubtitles[i+1];
+      
+      const currentEndMs = timeToMs(current.endTime);
+      const nextStartMs = timeToMs(next.startTime);
+      
+      // If overlap exists (Current ends AFTER Next starts)
+      if (currentEndMs > nextStartMs) {
+          // Snap current end to next start
+          current.endTime = next.startTime;
+      }
   }
 
   return cleanedSubtitles;

@@ -48,7 +48,7 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
 /**
  * HYBRID DOWNLOADER:
  * 1. Tries Official YouTube API via Local Proxy (Authenticated) -> 100% Reliable for owned videos
- * 2. Falls back to scraping via yt-dlp (Public) -> Best Effort for public videos
+ * 2. Falls back to Backend Proxy (yt-dlp) -> Best Effort for public videos
  */
 export async function downloadCaptionTrack(videoUrl: string, trackToken: string, accessToken?: string | null): Promise<string> {
     
@@ -70,13 +70,11 @@ export async function downloadCaptionTrack(videoUrl: string, trackToken: string,
 
                 if (targetLang) {
                     // 2. List captions via API (Proxy) to find the Track ID
-                    // We can reuse the existing proxy/captions endpoint which lists tracks
                     const listResp = await fetch(`${BACKEND_URL}/proxy/captions?videoId=${videoId}&token=${encodeURIComponent(accessToken)}`);
 
                     if (listResp.ok) {
                         const listData = await listResp.json();
                         // Find a track matching our language
-                        // The API returns 'snippet.language', we need to match it loosely
                         const track = listData.items?.find((t: any) => t.snippet.language === targetLang);
                         
                         if (track) {
