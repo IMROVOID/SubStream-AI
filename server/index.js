@@ -170,10 +170,13 @@ const makeRequestWithRetry = async (config, retries = 3) => {
     }
 };
 
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION) ---
 
-// Clients to try in order of likelihood to succeed
-const CLIENTS_TO_TRY = ['ios', 'android', 'mweb', 'web'];
+// 'tv' is often the most permissive for metadata/subs
+// 'android_creator' is a good backup for mobile APIs
+const CLIENTS_TO_TRY = ['tv', 'android_creator', 'ios', 'android', 'mweb', 'web'];
 
 const executeYtDlpWithRetry = async (baseArgs) => {
     let lastError;
@@ -204,11 +207,14 @@ const executeYtDlpWithRetry = async (baseArgs) => {
             const isRateLimit = msg.includes('HTTP Error 429') || msg.includes('Too Many Requests');
             const isForbidden = msg.includes('HTTP Error 403') || msg.includes('Sign in to confirm');
             const isPOToken = msg.includes('PO Token');
+            const isFormat = msg.includes('Requested format is not available');
 
-            console.warn(`[YT-DLP] Client '${client}' failed. (Error: ${isRateLimit ? 'Rate Limited' : isForbidden ? 'Forbidden' : isPOToken ? 'PO Token' : 'Generic'})`);
+            console.warn(`[YT-DLP] Client '${client}' failed. (Error: ${isRateLimit ? 'Rate Limited' : isForbidden ? 'Forbidden' : isPOToken ? 'PO Token' : isFormat ? 'Format Unavail' : 'Generic'})`);
             
             lastError = e;
-            // Continue to next client in loop
+            
+            // Short random delay between retries to avoid hammering
+            await delay(1500 + Math.random() * 1000); 
         }
     }
 
