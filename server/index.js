@@ -193,15 +193,19 @@ const msToTime = (ms) => {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(mil).padStart(3, '0')}`;
 };
 
+// Normalizer for deduplication
+const normalize = (str) => str.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "").replace(/\s+/g, " ").trim();
+
 /**
- * Parses raw SRT string, fixes overlapping timestamps, and returns clean SRT string.
+ * Parses raw SRT string, performs intelligent deduplication (rolling overlap),
+ * fixes timestamp overlaps, and returns a clean SRT string.
  */
 const cleanSrtContent = (srtData) => {
     // 1. Parse
     const normalizedData = srtData.replace(/\r\n/g, '\n').trim();
     const blocks = normalizedData.split(/\n\n+/);
     
-    let subtitles = [];
+    let rawSubtitles = [];
     
     blocks.forEach((block, index) => {
         const lines = block.split('\n');
@@ -222,7 +226,7 @@ const cleanSrtContent = (srtData) => {
         const text = textLines.join(' ').replace(/<[^>]*>/g, '').trim(); // Remove tags
         
         if (text) {
-            subtitles.push({
+            rawSubtitles.push({
                 id: index + 1,
                 startMs: timeToMs(startTime),
                 endMs: timeToMs(endTime),
@@ -231,13 +235,75 @@ const cleanSrtContent = (srtData) => {
         }
     });
 
-    // 2. Fix Overlaps
-    // Ensure Line N End <= Line N+1 Start
-    subtitles.sort((a, b) => a.startMs - b.startMs);
+    // 2. INTELLIGENT DEDUPLICATION (Ported from srtUtils.ts)
+    // This handles the "new line includes half of previous line" issue
+    const uniqueSubtitles = [];
 
-    for (let i = 0; i < subtitles.length - 1; i++) {
-        const current = subtitles[i];
-        const next = subtitles[i + 1];
+    for (let i = 0; i < rawSubtitles.length; i++) {
+        const current = { ...rawSubtitles[i] };
+        
+        if (uniqueSubtitles.length > 0) {
+            const prev = uniqueSubtitles[uniqueSubtitles.length - 1];
+            const prevNorm = normalize(prev.text);
+            const currNorm = normalize(current.text);
+
+            // A. Exact Duplicate
+            if (prevNorm === currNorm) {
+                prev.endMs = current.endMs; // Extend previous duration
+                continue; // Skip current
+            }
+
+            // B. Accumulation (Line 2 starts with Line 1)
+            if (currNorm.startsWith(prevNorm)) {
+                const uniquePart = current.text.substring(prev.text.length).trim();
+                if (uniquePart) {
+                    current.text = uniquePart;
+                } else {
+                    prev.endMs = current.endMs;
+                    continue;
+                }
+            } 
+            // C. Rolling Overlap (End of Line 1 is Start of Line 2)
+            else {
+                const prevWords = prev.text.split(' ');
+                const currWords = current.text.split(' ');
+                
+                let maxOverlap = 0;
+                const maxLen = Math.min(prevWords.length, currWords.length);
+                
+                // Check overlaps of 1 word, 2 words, etc.
+                for (let k = 1; k <= maxLen; k++) {
+                    const suffix = prevWords.slice(-k).join(' ');
+                    const prefix = currWords.slice(0, k).join(' ');
+                    if (normalize(suffix) === normalize(prefix)) {
+                        maxOverlap = k;
+                    }
+                }
+
+                if (maxOverlap > 0) {
+                    const uniqueWords = currWords.slice(maxOverlap);
+                    const uniqueText = uniqueWords.join(' ').trim();
+                    
+                    if (uniqueText) {
+                        current.text = uniqueText;
+                    } else {
+                        prev.endMs = current.endMs;
+                        continue;
+                    }
+                }
+            }
+        }
+        uniqueSubtitles.push(current);
+    }
+
+
+    // 3. Fix Timestamp Overlaps (Visual Stacking Fix)
+    // Ensure Line N End <= Line N+1 Start
+    uniqueSubtitles.sort((a, b) => a.startMs - b.startMs);
+
+    for (let i = 0; i < uniqueSubtitles.length - 1; i++) {
+        const current = uniqueSubtitles[i];
+        const next = uniqueSubtitles[i + 1];
 
         if (current.endMs > next.startMs) {
             // Snap end time to next start time
@@ -245,8 +311,8 @@ const cleanSrtContent = (srtData) => {
         }
     }
 
-    // 3. Rebuild SRT
-    return subtitles.map((sub, idx) => {
+    // 4. Rebuild SRT
+    return uniqueSubtitles.map((sub, idx) => {
         return `${idx + 1}\n${msToTime(sub.startMs)} --> ${msToTime(sub.endMs)}\n${sub.text}`;
     }).join('\n\n');
 };
@@ -651,7 +717,7 @@ app.get('/api/download-video', async (req, res) => {
         const cleanSubPath = path.join(TEMP_DIR, `${baseId}_clean.srt`);
         const finalPath = path.join(TEMP_DIR, `${baseId}_final.mp4`);
 
-        // 4. Clean Subtitles
+        // 4. Clean Subtitles (Deduplicate & Fix Overlaps)
         console.log(`[Download] Cleaning subtitles for ${baseId}`);
         const rawSub = fs.readFileSync(subPath, 'utf-8');
         const cleanedSub = cleanSrtContent(rawSub);

@@ -43,7 +43,7 @@ export const parseSRT = (data: string): SubtitleNode[] => {
     
     if (timeLineIndex !== -1) {
       const timeLine = lines[timeLineIndex];
-      const times = timeLine.split('-->');
+      const times = timeLine.split(' --> ');
       
       if (times.length === 2) {
         // Extract text: everything after the timestamp line
