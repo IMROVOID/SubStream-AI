@@ -523,7 +523,13 @@ const App = () => {
       try {
           const trackConfig = { lang: selectedCaptionId, isAuto: true };
           const token = btoa(JSON.stringify(trackConfig));
-          const captionText = await downloadCaptionTrack(youtubeMeta.videoUrl, token);
+          
+          // Pass the access token to the service method
+          const captionText = await downloadCaptionTrack(
+              youtubeMeta.videoUrl, 
+              token, 
+              googleAccessToken // New Parameter
+          );
 
           const parsed = parseSRT(captionText);
           if (parsed.length === 0) throw new Error("Downloaded caption file is empty or in an unsupported format.");

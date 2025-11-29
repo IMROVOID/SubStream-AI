@@ -19,6 +19,7 @@ app.use(express.json({ limit: '50mb' }));
 // --- CONFIGURATION ---
 const TEMP_DIR = path.join(__dirname, 'temp');
 const YT_DLP_BINARY_PATH = path.join(__dirname, 'yt-dlp' + (process.platform === 'win32' ? '.exe' : ''));
+const COOKIES_PATH = path.join(__dirname, 'cookies.txt'); // Path for manual cookies
 
 // Ensure temp directory exists
 if (!fs.existsSync(TEMP_DIR)) {
@@ -172,14 +173,20 @@ const makeRequestWithRetry = async (config, retries = 3) => {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION) ---
+// --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION & IP STRATEGY) ---
 
-// 'tv' is often the most permissive for metadata/subs
-// 'android_creator' is a good backup for mobile APIs
-const CLIENTS_TO_TRY = ['tv', 'android_creator', 'ios', 'android', 'mweb', 'web'];
+// Removed 'tv' (bad for subs), 'web' (needs JS), 'android' (needs PO Token)
+// 'android_creator' and 'ios' are currently the most reliable for authenticated requests
+const CLIENTS_TO_TRY = ['android_creator', 'ios', 'mweb'];
 
 const executeYtDlpWithRetry = async (baseArgs) => {
     let lastError;
+
+    // Check for cookies file
+    const hasCookies = fs.existsSync(COOKIES_PATH);
+    if (hasCookies) {
+        console.log("[YT-DLP] Using cookies.txt for authentication.");
+    }
 
     for (const client of CLIENTS_TO_TRY) {
         try {
@@ -188,10 +195,17 @@ const executeYtDlpWithRetry = async (baseArgs) => {
                 ...baseArgs,
                 '--no-playlist',
                 '--no-check-certificates',
-                '--force-ipv4',
+                
+                // Allow IPv6 if proxy supports it (Removed --force-ipv4)
+                
                 '--no-cache-dir', // Critical to prevent caching 429/403 states
+                '--sleep-requests', '1.5', // Slow down to avoid 429
                 '--extractor-args', `youtube:player_client=${client}`
             ];
+
+            if (hasCookies) {
+                currentArgs.push('--cookies', COOKIES_PATH);
+            }
 
             if (PROXY_URL) {
                 currentArgs.push('--proxy', PROXY_URL);
@@ -213,8 +227,8 @@ const executeYtDlpWithRetry = async (baseArgs) => {
             
             lastError = e;
             
-            // Short random delay between retries to avoid hammering
-            await delay(1500 + Math.random() * 1000); 
+            // Exponential backoff delay between client retries
+            await delay(2000 + Math.random() * 2000); 
         }
     }
 
