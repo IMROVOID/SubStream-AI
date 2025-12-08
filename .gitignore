@@ -28,3 +28,4 @@ package-lock.json
 takeout.py
 /server/temp
 server/yt-dlp.exe
+server/cookies.txt
