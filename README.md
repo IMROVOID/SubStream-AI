@@ -8,11 +8,11 @@ A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 
 
 ## ✨ Key Features
 
-*   **Context-Aware Translation:** Uses intelligent batching to process subtitles in groups, allowing Gemini 3 Pro to understand context, gender, and tone across lines.
-*   **Multi-Model Support:** Switch between **Gemini 3 Pro** (High Reasoning), **Gemini 2.5 Flash** (High Speed), and other models instantly via the configuration overlay.
-*   **Client-Side Privacy:** Your API keys and files are processed locally in the browser memory and sent directly to Google. No data is stored on our servers.
-*   **Live Preview & Editing:** View original and translated text side-by-side in real-time as the AI processes the file.
-*   **Smart Quota Management:** Real-time estimation of API request usage and local quota tracking to help you stay within limits.
+* **Context-Aware Translation:** Uses intelligent batching to process subtitles in groups, allowing Gemini 3 Pro to understand context, gender, and tone across lines.
+* **Multi-Model Support:** Switch between **Gemini 3 Pro** (High Reasoning), **Gemini 2.5 Flash** (High Speed), and other models instantly via the configuration overlay.
+* **Client-Side Privacy:** Your API keys and files are processed locally in the browser memory and sent directly to Google. No data is stored on our servers.
+* **Live Preview & Editing:** View original and translated text side-by-side in real-time as the AI processes the file.
+* **Smart Quota Management:** Real-time estimation of API request usage and local quota tracking to help you stay within limits.
 
 ## 📁 Project Structure
 
@@ -32,32 +32,40 @@ The project is organized into a clean and scalable structure to make navigation 
 
 To get a local copy up and running, follow these simple steps.
 
-1.  **Clone the repository:**
+1. **Clone the repository:**
+
     ```sh
     git clone https://github.com/IMROVOID/SubStream-AI.git
     ```
-2.  **Navigate to the project directory:**
+
+2. **Navigate to the project directory:**
+
     ```sh
     cd SubStream-AI
     ```
-3.  **Install NPM packages (Requires Node.js):**
+
+3. **Install NPM packages (Requires Node.js):**
+
     ```sh
     npm install
     ```
-4.  **Run the development server:**
+
+4. **Run the development server:**
+
     ```sh
     npm run dev
     ```
+
     The application will be available at `http://localhost:5173` (or the next available port).
 
 ## 🔧 How to Modify the Page
 
 This project was designed to be easily customizable. Here’s how you can modify its key parts:
 
-*   **AI Logic & Prompts:** The core translation logic, system instructions, and retry mechanisms are located in `services/geminiService.ts`.
-*   **Supported Models:** To add or remove Gemini models, update the `AVAILABLE_MODELS` array in `types.ts`.
-*   **UI Components:** The visual elements like the glassmorphic modals and cards are found in `components/`.
-*   **Styling & Theming:** All global styles, animations, and Tailwind configuration are located in `index.html` and `App.tsx`.
+* **AI Logic & Prompts:** The core translation logic, system instructions, and retry mechanisms are located in `services/geminiService.ts`.
+* **Supported Models:** To add or remove Gemini models, update the `AVAILABLE_MODELS` array in `types.ts`.
+* **UI Components:** The visual elements like the glassmorphic modals and cards are found in `components/`.
+* **Styling & Theming:** All global styles, animations, and Tailwind configuration are located in `index.html` and `App.tsx`.
 
 ## 🛠️ Technologies & Libraries Used
 
@@ -77,12 +85,15 @@ This project leverages several modern libraries and tools to achieve its functio
 
 This repository is pre-configured for easy deployment to GitHub Pages.
 
-1.  **Update Configuration Files:**
-    *   **`package.json`**: Add the homepage field:
+1. **Update Configuration Files:**
+    * **`package.json`**: Add the homepage field:
+
         ```json
         "homepage": "https://imrovoid.github.io/SubStream-AI/",
         ```
-    *   **`vite.config.ts`**: Set the base path:
+
+    * **`vite.config.ts`**: Set the base path:
+
         ```ts
         export default defineConfig({
           base: '/SubStream-AI/',
@@ -90,35 +101,38 @@ This repository is pre-configured for easy deployment to GitHub Pages.
         })
         ```
 
-2.  **Run the deploy script:**
+2. **Run the deploy script:**
     This single command will build your project and push the `dist` folder to the `gh-pages` branch on your repository.
+
     ```sh
     npm run deploy
     ```
+
     *(Ensure you have the `gh-pages` package installed: `npm install gh-pages --save-dev`)*
 
-3.  **Configure GitHub Settings:**
-    *   In your repository settings, navigate to the **Pages** tab.
-    *   Set the **Source** to **"Deploy from a branch"**.
-    *   Set the **Branch** to **`gh-pages`** with the `/root` folder.
-    *   Save your changes. Your site will be live at `https://imrovoid.github.io/SubStream-AI/` within a few minutes.
+3. **Configure GitHub Settings:**
+    * In your repository settings, navigate to the **Pages** tab.
+    * Set the **Source** to **"Deploy from a branch"**.
+    * Set the **Branch** to **`gh-pages`** with the `/root` folder.
+    * Save your changes. Your site will be live at `https://imrovoid.github.io/SubStream-AI/` within a few minutes.
 
 ---
 
 ## 📜 License
 
-This project is open-source and licensed under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE).
+This project is open-source and licensed under the [GNU General Public License v3.0 (GPL-3.0)](/LICENSE).
 
-### Summary of the License:
+### Summary of the License
+
 The GPL-3.0 is a strong copyleft license that ensures the software remains free. If you use, modify, or distribute this code, you must:
 
-*   **Disclose Source:** You must provide the source code of your version.
-*   **License and Copyright Notice:** You must include a copy of the license and the original author's copyright.
-*   **Same License:** Any modifications or derived works must also be licensed under GPL-3.0.
-*   **State Changes:** You must indicate if you have modified the original files.
+* **Disclose Source:** You must provide the source code of your version.
+* **License and Copyright Notice:** You must include a copy of the license and the original author's copyright.
+* **Same License:** Any modifications or derived works must also be licensed under GPL-3.0.
+* **State Changes:** You must indicate if you have modified the original files.
 
-> This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. 
-> 
+> This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+>
 > This program is distributed in the hope that it will be useful, but **WITHOUT ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 ---
@@ -129,9 +143,9 @@ This application was developed and is maintained by **Roham Andarzgou**.
 
 I'm a passionate professional from Iran specializing in Graphic Design, Web Development, and cross-platform app development with Dart & Flutter. I thrive on turning innovative ideas into reality, whether it's a stunning visual, a responsive website, or a polished desktop app like this one. I also develop immersive games using Unreal Engine.
 
-*   **Website:** [rovoid.ir](https://rovoid.ir)
-*   **GitHub:** [IMROVOID](https://github.com/IMROVOID)
-*   **LinkedIn:** [Roham Andarzgou](https://www.linkedin.com/in/roham-andarzgouu)
+* **Website:** [rovoid.ir](https://rovoid.ir)
+* **GitHub:** [IMROVOID](https://github.com/IMROVOID)
+* **LinkedIn:** [Roham Andarzgou](https://www.linkedin.com/in/roham-andarzgouu)
 
 ### 🙏 Support This Project
 
