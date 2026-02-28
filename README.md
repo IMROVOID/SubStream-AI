@@ -2,7 +2,7 @@
 
 A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built from the ground up with a modern tech stack including **React, TypeScript, and Vite**, and features a sleek, glassmorphic dark UI with client-side AI processing.
 
-### [🚀 View Live Demo 🚀](https://imrovoid.github.io/SubStream-AI/)
+## [🚀 View Live Demo 🚀](https://imrovoid.github.io/SubStream-AI/)
 
 ![SubStream AI Screenshot](https://raw.githubusercontent.com/IMROVOID/SubStream-AI/main/public/screenshot.webp)
 
@@ -18,7 +18,7 @@ A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 
 
 The project is organized into a clean and scalable structure to make navigation and modification intuitive.
 
-```
+```bash
 /src
 ├── components/     # Reusable UI components (Modal, SubtitleCard, StepIndicator)
 ├── services/       # AI integration logic (Gemini SDK, batching, retry logic)
