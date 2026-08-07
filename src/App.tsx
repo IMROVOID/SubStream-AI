@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield, ExternalLink } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
-import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, OPENAI_RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
+import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, OPENAI_RPM_OPTIONS, ANTHROPIC_RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
-import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
+import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, validateAnthropicApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
 import { uploadVideoToYouTube, pollForCaptionReady, downloadCaptionTrack, downloadYouTubeVideoWithSubs, getVideoDetails } from './services/youtubeService';
 import { Button } from './components/Button';
@@ -132,9 +132,24 @@ const App = () => {
   const [userOpenAIApiKey, setUserOpenAIApiKey] = useState<string>('');
   const [tempOpenAIApiKey, setTempOpenAIApiKey] = useState<string>('');
   const [openAIApiKeyStatus, setOpenAIApiKeyStatus] = useState<ApiKeyStatus>('idle');
+
+  const [userAnthropicApiKey, setUserAnthropicApiKey] = useState<string>('');
+  const [tempAnthropicApiKey, setTempAnthropicApiKey] = useState<string>('');
+  const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<ApiKeyStatus>('idle');
   
   const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); 
   const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    youtube: true,
+    google: true,
+    openai: true,
+    anthropic: true
+  });
+
+  const toggleGroup = (group: string) => {
+    setOpenGroups(prev => ({ ...prev, [group]: !prev[group] }));
+  };
+
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
   const [selectedGeminiTier, setSelectedGeminiTier] = useState<GeminiTier>('free');
@@ -149,6 +164,7 @@ const App = () => {
   const resultsRef = useRef<HTMLDivElement>(null);
   const debounceGoogleKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const debounceOpenAIKeyTimer = useRef<NodeJS.Timeout | null>(null);
+  const debounceAnthropicKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
 
@@ -182,8 +198,7 @@ const App = () => {
              setSelectedRPM(rpm);
              setGlobalRPM(rpm);
           }
-      } else if (activeModelData.provider === 'openai') {
-          // Keep current Logic for OpenAI or reset if needed
+      } else if (activeModelData.provider === 'openai' || activeModelData.provider === 'anthropic') {
           setGlobalRPM(selectedRPM);
       }
   }, [selectedGeminiTier, activeModelData, selectedRPM]);
@@ -253,6 +268,7 @@ const App = () => {
   useEffect(() => {
     const storedGoogleKey = localStorage.getItem('substream_google_api_key');
     const storedOpenAIKey = localStorage.getItem('substream_openai_api_key');
+    const storedAnthropicKey = localStorage.getItem('substream_anthropic_api_key');
     const storedModel = localStorage.getItem('substream_model_id');
     const storedRPM = localStorage.getItem('substream_rpm');
     const storedGeminiTier = localStorage.getItem('substream_gemini_tier');
@@ -269,6 +285,11 @@ const App = () => {
       setUserOpenAIApiKey(storedOpenAIKey);
       setTempOpenAIApiKey(storedOpenAIKey);
       setOpenAIApiKeyStatus('valid');
+    }
+    if (storedAnthropicKey) {
+      setUserAnthropicApiKey(storedAnthropicKey);
+      setTempAnthropicApiKey(storedAnthropicKey);
+      setAnthropicApiKeyStatus('valid');
     }
 
     if (storedGeminiTier) {
@@ -368,6 +389,27 @@ const App = () => {
 
     return () => { if (debounceOpenAIKeyTimer.current) clearTimeout(debounceOpenAIKeyTimer.current); };
   }, [tempOpenAIApiKey, userOpenAIApiKey]);
+
+  useEffect(() => {
+    if (tempAnthropicApiKey === '') {
+      setAnthropicApiKeyStatus('idle');
+      return;
+    }
+    if (tempAnthropicApiKey === userAnthropicApiKey) {
+        setAnthropicApiKeyStatus('valid');
+        return;
+    }
+    setAnthropicApiKeyStatus('validating');
+    if (debounceAnthropicKeyTimer.current) clearTimeout(debounceAnthropicKeyTimer.current);
+
+    debounceAnthropicKeyTimer.current = setTimeout(() => {
+      validateAnthropicApiKey(tempAnthropicApiKey).then(isValid => {
+        setAnthropicApiKeyStatus(isValid ? 'valid' : 'invalid');
+      });
+    }, 800);
+
+    return () => { if (debounceAnthropicKeyTimer.current) clearTimeout(debounceAnthropicKeyTimer.current); };
+  }, [tempAnthropicApiKey, userAnthropicApiKey]);
 
 
   const showToast = (message: string) => {
@@ -479,6 +521,10 @@ const App = () => {
         localStorage.setItem('substream_openai_api_key', tempOpenAIApiKey);
         setUserOpenAIApiKey(tempOpenAIApiKey);
     }
+    if (anthropicApiKeyStatus === 'valid') {
+        localStorage.setItem('substream_anthropic_api_key', tempAnthropicApiKey);
+        setUserAnthropicApiKey(tempAnthropicApiKey);
+    }
     localStorage.setItem('substream_model_id', selectedModelId);
     localStorage.setItem('substream_rpm', selectedRPM.toString());
     localStorage.setItem('substream_gemini_tier', selectedGeminiTier);
@@ -499,6 +545,13 @@ const App = () => {
     setUserOpenAIApiKey('');
     setTempOpenAIApiKey('');
     setOpenAIApiKeyStatus('idle');
+  };
+
+  const clearAnthropicApiKey = () => {
+    localStorage.removeItem('substream_anthropic_api_key');
+    setUserAnthropicApiKey('');
+    setTempAnthropicApiKey('');
+    setAnthropicApiKeyStatus('idle');
   };
 
   const handleImportYouTube = async (meta: YouTubeVideoMetadata) => {
@@ -707,7 +760,7 @@ const App = () => {
         return;
     }
 
-    const apiKey = activeModelData.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const apiKey = activeModelData.provider === 'openai' ? userOpenAIApiKey : activeModelData.provider === 'anthropic' ? userAnthropicApiKey : userGoogleApiKey;
     if (!ffmpegRef.current || !apiKey) {
         setActiveModal('CONFIG');
         setError(`Please provide an API Key for ${activeModelData.provider} to generate subtitles.`);
@@ -774,7 +827,7 @@ const App = () => {
   const handleTranslate = async () => {
     if (subtitles.length === 0) return;
     
-    const apiKey = activeModelData.provider === 'openai' ? userOpenAIApiKey : userGoogleApiKey;
+    const apiKey = activeModelData.provider === 'openai' ? userOpenAIApiKey : activeModelData.provider === 'anthropic' ? userAnthropicApiKey : userGoogleApiKey;
     if (!apiKey) {
       setActiveModal('CONFIG');
       setError(`Please Provide an API Key for ${activeModelData.provider} to continue.`);
@@ -869,7 +922,7 @@ const App = () => {
 
   const estimatedRequests = subtitles.length > 0 ? Math.ceil(subtitles.length / BATCH_SIZE) : 0;
   const remainingQuota = Math.max(0, ESTIMATED_DAILY_QUOTA - requestsUsed);
-  const hasProAccess = userGoogleApiKey || userOpenAIApiKey;
+  const hasProAccess = userGoogleApiKey || userOpenAIApiKey || userAnthropicApiKey;
 
   const filteredGoogleModels = useMemo(() => {
     return AVAILABLE_MODELS.filter(model => model.provider === 'google' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
@@ -877,6 +930,10 @@ const App = () => {
 
   const filteredOpenAIModels = useMemo(() => {
     return AVAILABLE_MODELS.filter(model => model.provider === 'openai' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
+  }, [modelSearchQuery]);
+
+  const filteredAnthropicModels = useMemo(() => {
+    return AVAILABLE_MODELS.filter(model => model.provider === 'anthropic' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
   }, [modelSearchQuery]);
   
   const youtubeModel = useMemo(() => {
@@ -893,6 +950,7 @@ const App = () => {
   ].includes(videoProcessingStatus);
   
   const selectedOpenAIRpmIndex = useMemo(() => OPENAI_RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
+  const selectedAnthropicRpmIndex = useMemo(() => ANTHROPIC_RPM_OPTIONS.findIndex(o => o.value === selectedRPM), [selectedRPM]);
 
   const isTranslationInProgress = status === TranslationStatus.TRANSLATING;
   const isTranslationComplete = status === TranslationStatus.COMPLETED;
@@ -1311,32 +1369,70 @@ const App = () => {
                 <Search className="absolute left-3 top-3.5 w-5 h-5 text-neutral-500 pointer-events-none" />
                 <input type="text" placeholder="Search models..." value={modelSearchQuery} onChange={(e) => setModelSearchQuery(e.target.value)} className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors" />
               </div>
-              <div className="space-y-4 pr-2 overflow-y-auto max-h-[300px] md:max-h-[450px] custom-scrollbar">
+              <div className="space-y-4 pr-2 overflow-y-auto max-h-[450px] md:max-h-[525px] flex-1 custom-scrollbar">
                 
                 {youtubeModel.length > 0 && (
-                  <details open className="group/youtube">
-                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
+                  <div>
+                    <div 
+                      onClick={() => toggleGroup('youtube')}
+                      className="flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors select-none"
+                    >
                       <span className="font-bold text-neutral-300">YouTube Services</span>
-                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/youtube:rotate-180" />
-                    </summary>
-                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
-                      {youtubeModel.map((model) => {
-                        const isDisabled = !googleUser;
-                        return (
-                            <div 
-                                key={model.id} 
-                                onClick={() => !isDisabled && setSelectedModelId(model.id)} 
-                                className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 
-                                    ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
-                                      selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}
-                                `}
-                            >
+                      <ChevronDown className={`w-5 h-5 text-neutral-500 transition-transform duration-300 ${openGroups.youtube ? 'rotate-180' : ''}`} />
+                    </div>
+                    <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.youtube ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                      <div className="overflow-hidden">
+                        <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
+                          {youtubeModel.map((model) => {
+                            const isDisabled = !googleUser;
+                            return (
+                                <div 
+                                    key={model.id} 
+                                    onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                                    className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 
+                                        ${isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                                          selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}
+                                    `}
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div>
+                                      <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                          {model.name}
+                                          {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
+                                      </h4>
+                                      <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                                    </div>
+                                    {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                                  </div>
+                                  <div className="flex gap-2 mt-3">
+                                    {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                                  </div>
+                                </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {filteredGoogleModels.length > 0 && (
+                  <div>
+                    <div 
+                      onClick={() => toggleGroup('google')}
+                      className="flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors select-none"
+                    >
+                      <span className="font-bold text-neutral-300">Google Gemini Models</span>
+                      <ChevronDown className={`w-5 h-5 text-neutral-500 transition-transform duration-300 ${openGroups.google ? 'rotate-180' : ''}`} />
+                    </div>
+                    <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.google ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                      <div className="overflow-hidden">
+                        <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
+                          {filteredGoogleModels.map((model) => (
+                            <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
-                                      {model.name}
-                                      {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
-                                  </h4>
+                                  <h4 className="font-bold text-white mb-1">{model.name}</h4>
                                   <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                                 </div>
                                 {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
@@ -1345,59 +1441,73 @@ const App = () => {
                                 {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
                               </div>
                             </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                )}
-
-                {filteredGoogleModels.length > 0 && (
-                  <details open className="group/google">
-                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
-                      <span className="font-bold text-neutral-300">Google Gemini Models</span>
-                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/google:rotate-180" />
-                    </summary>
-                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
-                      {filteredGoogleModels.map((model) => (
-                        <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
-                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
-                            </div>
-                            {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
-                          </div>
-                          <div className="flex gap-2 mt-3">
-                            {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
-                          </div>
+                          ))}
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  </details>
+                  </div>
                 )}
                 {filteredOpenAIModels.length > 0 && (
-                   <details open className="group/openai">
-                    <summary className="list-none flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors">
+                  <div>
+                    <div 
+                      onClick={() => toggleGroup('openai')}
+                      className="flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors select-none"
+                    >
                       <span className="font-bold text-neutral-300">OpenAI Models</span>
-                      <ChevronDown className="w-5 h-5 text-neutral-500 transition-transform duration-200 group-open/openai:rotate-180" />
-                    </summary>
-                    <div className="space-y-3 pt-2 pl-2 border-l border-neutral-800 ml-2">
-                      {filteredOpenAIModels.map((model) => (
-                        <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
-                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
-                            </div>
-                            {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
-                          </div>
-                          <div className="flex gap-2 mt-3">
-                            {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
-                          </div>
-                        </div>
-                      ))}
+                      <ChevronDown className={`w-5 h-5 text-neutral-500 transition-transform duration-300 ${openGroups.openai ? 'rotate-180' : ''}`} />
                     </div>
-                  </details>
+                    <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.openai ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                      <div className="overflow-hidden">
+                        <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
+                          {filteredOpenAIModels.map((model) => (
+                            <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                                  <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                                </div>
+                                {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {filteredAnthropicModels.length > 0 && (
+                  <div>
+                    <div 
+                      onClick={() => toggleGroup('anthropic')}
+                      className="flex items-center justify-between p-2 rounded-lg cursor-pointer hover:bg-neutral-800/50 transition-colors select-none"
+                    >
+                      <span className="font-bold text-neutral-300">Anthropic Claude Models</span>
+                      <ChevronDown className={`w-5 h-5 text-neutral-500 transition-transform duration-300 ${openGroups.anthropic ? 'rotate-180' : ''}`} />
+                    </div>
+                    <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.anthropic ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+                      <div className="overflow-hidden">
+                        <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
+                          {filteredAnthropicModels.map((model) => (
+                            <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                                  <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                                </div>
+                                {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
+                              </div>
+                              <div className="flex gap-2 mt-3">
+                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
            </div>
@@ -1410,10 +1520,10 @@ const App = () => {
                         {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
                      </div>
                     <div className="relative">
-                       <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-4 pr-11 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
                        <div className="absolute right-3 top-3.5">
                           {googleApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                          {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                          {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
                           {googleApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
                        </div>
                     </div>
@@ -1426,14 +1536,30 @@ const App = () => {
                         {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
                      </div>
                     <div className="relative">
-                       <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl px-4 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-green-700/50 focus:border-green-500 focus:ring-1 focus:ring-green-500/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-4 pr-11 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
                        <div className="absolute right-3 top-3.5">
                           {openAIApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                          {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+                          {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
                           {openAIApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
                        </div>
                     </div>
                     <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <label className="block text-sm font-bold text-white flex items-center gap-2"><Key className="w-4 h-4" /> Anthropic Claude API Key</label>
+                        {userAnthropicApiKey && ( <button onClick={clearAnthropicApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
+                     </div>
+                    <div className="relative">
+                       <input type="password" placeholder="sk-ant-..." value={tempAnthropicApiKey} onChange={(e) => setTempAnthropicApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-4 pr-11 py-3 text-white focus:outline-none transition-colors ${anthropicApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${anthropicApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${anthropicApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${anthropicApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-3.5">
+                          {anthropicApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
+                          {anthropicApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                          {anthropicApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       </div>
+                    </div>
+                    <p className="text-xs text-neutral-500">For Claude models. Stored locally in your browser.</p>
                   </div>
     
                   {activeModelData.provider !== 'youtube' && (
@@ -1471,8 +1597,24 @@ const App = () => {
                                     })}
                                 </div>
                                 <div className="mt-2 text-center">
-                                    <a href="https://aistudio.google.com/usage?timeRange=last-28-days&tab=rate-limit" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                    <a href="https://aistudio.google.com/rate-limit?timeRange=last-28-days&project=gen-lang-client-0786325536" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
                                         Check your limits on Google AI Studio <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                </div>
+                             </>
+                         ) : activeModelData.provider === 'anthropic' ? (
+                             /* ANTHROPIC RATE LIMIT UI */
+                             <>
+                                <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
+                                    <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${(selectedAnthropicRpmIndex >= 0 ? selectedAnthropicRpmIndex : 0) * 100}%)` }} />
+                                    {ANTHROPIC_RPM_OPTIONS.map((option) => (
+                                        <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-neutral-500 text-center mt-2">{ANTHROPIC_RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
+                                <div className="mt-2 text-center">
+                                    <a href="https://platform.claude.com/docs/en/api/rate-limits" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                        Check your limits on Anthropic Console <ExternalLink className="w-3 h-3" />
                                     </a>
                                 </div>
                              </>
@@ -1480,12 +1622,17 @@ const App = () => {
                              /* OPENAI / STATIC RATE LIMIT UI */
                              <>
                                 <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
-                                    <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${selectedOpenAIRpmIndex * 100}%)` }} />
+                                    <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${(selectedOpenAIRpmIndex >= 0 ? selectedOpenAIRpmIndex : 0) * 100}%)` }} />
                                     {OPENAI_RPM_OPTIONS.map((option) => (
                                         <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
                                     ))}
                                 </div>
                                 <p className="text-xs text-neutral-500 text-center mt-2">{OPENAI_RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
+                                <div className="mt-2 text-center">
+                                    <a href="https://developers.openai.com/api/docs/guides/rate-limits" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                        Check your limits on OpenAI Platform <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                </div>
                              </>
                          )}
                     </div>
@@ -1499,7 +1646,7 @@ const App = () => {
                     onLogout={handleGoogleLogout} 
                     userInfo={googleUser} 
                 />
-                <Button onClick={saveSettings} disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating'}>Save Settings</Button>
+                <Button onClick={saveSettings} disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating' || anthropicApiKeyStatus === 'invalid' || anthropicApiKeyStatus === 'validating'}>Save Settings</Button>
               </div>
            </div>
         </div>

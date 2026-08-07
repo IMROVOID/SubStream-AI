@@ -107,6 +107,41 @@ export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => 
     }
 };
 
+export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> => {
+    if (!apiKey || (!apiKey.startsWith('sk-ant-') && !apiKey.startsWith('sk-'))) return false;
+    try {
+        await enforceRateLimit();
+        const response = await fetch('https://api.anthropic.com/v1/models', {
+            method: 'GET',
+            headers: {
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true'
+            }
+        });
+        if (response.ok) return true;
+
+        // Fallback check via messages endpoint if models endpoint returns non-200
+        const msgResponse = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true',
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'claude-3-5-haiku-20241022',
+                max_tokens: 1,
+                messages: [{ role: 'user', content: 'hi' }]
+            })
+        });
+        return msgResponse.ok;
+    } catch (error) {
+        return false;
+    }
+};
+
 // --- Transcription Logic ---
 
 // Helper to convert JSON response to SRT String
@@ -308,8 +343,8 @@ async function transcribeWithOpenAI(audioBlob: Blob, sourceLang: string, apiKey:
 }
 
 export async function transcribeAudio(audioBlob: Blob, sourceLang: string, apiKey: string, model: AIModel): Promise<string> {
-    if (model.provider === 'openai') {
-        if (!model.transcriptionModel) throw new Error("Transcription model not defined for the selected OpenAI model.");
+    if (model.provider === 'openai' || model.provider === 'anthropic') {
+        if (!model.transcriptionModel) throw new Error(`Transcription model not defined for ${model.name}.`);
         return transcribeWithOpenAI(audioBlob, sourceLang, apiKey, model.transcriptionModel);
     }
     return transcribeWithGoogle(audioBlob, sourceLang, apiKey, model.id);
@@ -369,6 +404,44 @@ async function translateWithOpenAI(subtitles: SubtitleNode[], sourceLang: string
     return arrayResult;
 }
 
+async function translateWithAnthropic(subtitles: SubtitleNode[], sourceLang: string, targetLang: string, apiKey: string, modelId: string): Promise<{ id: number; text: string }[]> {
+    const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
+    const systemPrompt = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
+
+    await enforceRateLimit();
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: modelId,
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: 'Respond ONLY with the requested JSON array.' }]
+        })
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `Anthropic API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const responseText = data.content?.[0]?.text;
+    if (!responseText) throw new Error("Received empty response from Anthropic.");
+
+    const cleanedText = cleanAndRepairJSON(responseText);
+    const parsed = JSON.parse(cleanedText);
+    const arrayResult = Array.isArray(parsed) ? parsed : Object.values(parsed).find(Array.isArray);
+
+    if (!arrayResult) throw new Error("Invalid JSON format from Anthropic.");
+    return arrayResult;
+}
+
 export const translateBatch = async (
   subtitles: SubtitleNode[],
   sourceLang: string,
@@ -381,6 +454,9 @@ export const translateBatch = async (
     try {
       if (model.provider === 'openai') {
         return await translateWithOpenAI(subtitles, sourceLang, targetLang, apiKey, model.id);
+      }
+      if (model.provider === 'anthropic') {
+        return await translateWithAnthropic(subtitles, sourceLang, targetLang, apiKey, model.id);
       }
       return await translateWithGoogle(subtitles, sourceLang, targetLang, apiKey, model.id);
     } catch (error: any) {

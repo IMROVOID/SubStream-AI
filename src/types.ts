@@ -57,7 +57,7 @@ export interface AIModel {
   name: string;
   description: string;
   tags: string[];
-  provider: 'google' | 'openai' | 'youtube';
+  provider: 'google' | 'openai' | 'youtube' | 'anthropic';
   transcriptionModel?: string;
   rateLimits?: GeminiRateLimits; // New property for Dynamic Limits
 }
@@ -307,6 +307,48 @@ export const AVAILABLE_MODELS: AIModel[] = [
     provider: 'openai',
     transcriptionModel: 'whisper-1'
   },
+
+  // --- ANTHROPIC CLAUDE MODELS (Version Descending) ---
+  {
+    id: 'claude-opus-5',
+    name: 'Claude Opus 5',
+    description: 'Highest reasoning capability for complex, long-context subtitles and nuanced cultural translation.',
+    tags: ['Opus', 'Most Powerful', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
+    description: 'Flagship balanced model delivering exceptional speed, intelligence, and translation precision.',
+    tags: ['Sonnet', 'Flagship', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-3-7-sonnet-20250219',
+    name: 'Claude 3.7 Sonnet',
+    description: 'High-performance reasoning and hybrid thinking model for accurate subtitle translation.',
+    tags: ['Hybrid Thinking', 'Stable', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-3-5-sonnet-20241022',
+    name: 'Claude 3.5 Sonnet',
+    description: 'Industry-standard model for high-speed, highly accurate translation and nuance.',
+    tags: ['Sonnet', 'Popular', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-3-5-haiku-20241022',
+    name: 'Claude 3.5 Haiku',
+    description: 'Fastest, lightweight Claude model ideal for rapid, high-volume subtitle processing.',
+    tags: ['Haiku', 'Ultra Fast', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
 ];
 
 
@@ -361,4 +403,12 @@ export const OPENAI_RPM_OPTIONS: { value: RPMLimit; label: string; description: 
     { value: 15, label: 'Medium', description: 'Recommended default. Good balance of speed and safety (15 RPM).' },
     { value: 30, label: 'High', description: 'Faster, but higher risk of rate limits (30 RPM).' },
     { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. Only for high-tier paid keys.' },
+];
+
+// Used for Anthropic Only
+export const ANTHROPIC_RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
+    { value: 5, label: 'Low', description: 'Safe limit for initial Anthropic tier (5 RPM).' },
+    { value: 20, label: 'Medium', description: 'Recommended default for Anthropic Build tier (20 RPM).' },
+    { value: 50, label: 'High', description: 'Faster throughput for Scale tier users (50 RPM).' },
+    { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. For high-tier enterprise keys.' },
 ];

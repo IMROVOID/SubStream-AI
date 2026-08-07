@@ -219,9 +219,9 @@ const DOCS_DATA: DocItem[] = [
            </div>
 
            <div className="p-4 bg-neutral-800 rounded-xl border border-neutral-700">
-             <h4 className="font-bold text-white mb-2">OpenAI Manual Settings</h4>
+             <h4 className="font-bold text-white mb-2">OpenAI & Anthropic Settings</h4>
              <p className="text-sm text-neutral-400">
-               For OpenAI models, you can manually select Low, Medium, High, or Unlimited RPM based on your account's usage tier.
+               For OpenAI and Anthropic Claude models, you can manually select Low, Medium, High, or Unlimited RPM based on your account's usage tier.
              </p>
            </div>
         </div>
