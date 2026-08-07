@@ -166,10 +166,10 @@ const DOCS_DATA: DocItem[] = [
         <div className="flex items-start gap-4 p-4 rounded-xl bg-neutral-900/50 border border-neutral-800 mt-4">
            <Cpu className="w-6 h-6 text-green-400 shrink-0 mt-1" />
            <div>
-              <h4 className="font-bold text-white">Changing Models</h4>
+              <h4 className="font-bold text-white">Dynamic Model Discovery & Selection</h4>
               <p className="text-sm text-neutral-400 mt-2 mb-3">
-                 Click the Model Name in the top right of the navigation bar. 
-                 This opens the Configuration overlay where you can switch between <strong>Gemini 3 Pro</strong>, <strong>GPT-4o</strong>, and <strong>YouTube Services</strong>.
+                 Click the Model Name in the top right of the navigation bar to open the Configuration overlay.
+                 SubStream AI automatically fetches and updates the list of latest frontier models (Google Gemini, OpenAI GPT, Anthropic Claude) via free public API endpoints (OpenRouter & LiteLLM) without requiring any API keys or account signups. Deprecated models are automatically removed from the list.
               </p>
            </div>
         </div>

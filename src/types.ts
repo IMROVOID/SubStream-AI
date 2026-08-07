@@ -60,6 +60,10 @@ export interface AIModel {
   provider: 'google' | 'openai' | 'youtube' | 'anthropic';
   transcriptionModel?: string;
   rateLimits?: GeminiRateLimits; // New property for Dynamic Limits
+  contextLength?: number;
+  releaseDate?: string;
+  docUrl?: string;
+  isDynamic?: boolean;
 }
 
 export interface YouTubeVideoMetadata {

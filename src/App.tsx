@@ -4,6 +4,7 @@ import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, OPENAI_RPM_OPTIONS, ANTHROPIC_RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
 import { processFullSubtitleFile, BATCH_SIZE, validateGoogleApiKey, validateOpenAIApiKey, validateAnthropicApiKey, transcribeAudio, setGlobalRPM } from './services/aiService';
+import { syncModels, getCachedModels, getSyncInfo, ModelSyncInfo } from './services/modelSyncService';
 import { loadFFmpeg, analyzeVideoFile, extractSrt, extractAudio, addSrtToVideo } from './services/ffmpegService';
 import { uploadVideoToYouTube, pollForCaptionReady, downloadCaptionTrack, downloadYouTubeVideoWithSubs, getVideoDetails } from './services/youtubeService';
 import { Button } from './components/Button';
@@ -137,7 +138,31 @@ const App = () => {
   const [tempAnthropicApiKey, setTempAnthropicApiKey] = useState<string>('');
   const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<ApiKeyStatus>('idle');
   
-  const [selectedModelId, setSelectedModelId] = useState<string>(AVAILABLE_MODELS[1].id); 
+  const [modelsList, setModelsList] = useState<AIModel[]>(() => getCachedModels() || AVAILABLE_MODELS);
+  const [syncInfo, setSyncInfo] = useState<ModelSyncInfo | null>(() => getSyncInfo());
+  const [isSyncingModels, setIsSyncingModels] = useState<boolean>(false);
+
+  const handleSyncModels = async (force = false) => {
+    setIsSyncingModels(true);
+    try {
+      const result = await syncModels(force);
+      setModelsList(result.models);
+      setSyncInfo(result.info);
+    } catch (e) {
+      console.error('Failed to sync models:', e);
+    } finally {
+      setIsSyncingModels(false);
+    }
+  };
+
+  useEffect(() => {
+    handleSyncModels(false);
+  }, []);
+
+  const [selectedModelId, setSelectedModelId] = useState<string>(() => {
+    const cached = getCachedModels() || AVAILABLE_MODELS;
+    return cached[1]?.id || cached[0]?.id || 'gemini-2.5-flash';
+  }); 
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     youtube: true,
@@ -178,8 +203,8 @@ const App = () => {
 
   // --- MODEL & RATE LIMIT LOGIC ---
   const activeModelData = useMemo(() => {
-      return AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0];
-  }, [selectedModelId]);
+      return modelsList.find(m => m.id === selectedModelId) || modelsList[0] || AVAILABLE_MODELS[0];
+  }, [selectedModelId, modelsList]);
 
   // Update RPM when model or tier changes for Google
   useEffect(() => {
@@ -330,9 +355,9 @@ const App = () => {
         }
     }
 
-    if (storedModel && AVAILABLE_MODELS.find(m => m.id === storedModel)) {
+    if (storedModel && (modelsList.find(m => m.id === storedModel) || AVAILABLE_MODELS.find(m => m.id === storedModel))) {
         if (storedModel === 'youtube-auto' && !isValidAuth) {
-            setSelectedModelId(AVAILABLE_MODELS[1].id);
+            setSelectedModelId(modelsList[1]?.id || AVAILABLE_MODELS[1].id);
         } else {
             setSelectedModelId(storedModel);
         }
@@ -925,20 +950,20 @@ const App = () => {
   const hasProAccess = userGoogleApiKey || userOpenAIApiKey || userAnthropicApiKey;
 
   const filteredGoogleModels = useMemo(() => {
-    return AVAILABLE_MODELS.filter(model => model.provider === 'google' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
-  }, [modelSearchQuery]);
+    return modelsList.filter(model => model.provider === 'google' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
+  }, [modelsList, modelSearchQuery]);
 
   const filteredOpenAIModels = useMemo(() => {
-    return AVAILABLE_MODELS.filter(model => model.provider === 'openai' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
-  }, [modelSearchQuery]);
+    return modelsList.filter(model => model.provider === 'openai' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
+  }, [modelsList, modelSearchQuery]);
 
   const filteredAnthropicModels = useMemo(() => {
-    return AVAILABLE_MODELS.filter(model => model.provider === 'anthropic' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
-  }, [modelSearchQuery]);
+    return modelsList.filter(model => model.provider === 'anthropic' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
+  }, [modelsList, modelSearchQuery]);
   
   const youtubeModel = useMemo(() => {
-      return AVAILABLE_MODELS.filter(model => model.provider === 'youtube' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
-  }, [modelSearchQuery]);
+      return modelsList.filter(model => model.provider === 'youtube' && (model.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) || model.description.toLowerCase().includes(modelSearchQuery.toLowerCase())));
+  }, [modelsList, modelSearchQuery]);
 
   const showProgressBar = [
     VideoProcessingStatus.EXTRACTING_AUDIO, 
@@ -1365,11 +1390,34 @@ const App = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
            <div className="flex flex-col gap-4">
               <label className="block text-sm font-bold text-white flex items-center gap-2"><Cpu className="w-4 h-4" /> Select AI Model</label>
+              
+              {/* Dynamic Model Sync Status Banner */}
+              <div className="flex items-center justify-between bg-neutral-900/80 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-neutral-400">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span>
+                    Auto-synced via <strong className="text-white">{syncInfo?.provider || 'OpenRouter'}</strong> ({modelsList.length} models)
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleSyncModels(true)}
+                  disabled={isSyncingModels}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/40 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-800 transition-colors disabled:opacity-50"
+                  title="Fetch latest models from free public API"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingModels ? 'animate-spin text-emerald-400' : ''}`} />
+                  <span>{isSyncingModels ? 'Syncing...' : 'Refresh'}</span>
+                </button>
+              </div>
+
               <div className="relative">
-                <Search className="absolute left-3 top-3.5 w-5 h-5 text-neutral-500 pointer-events-none" />
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-neutral-500 pointer-events-none" />
                 <input type="text" placeholder="Search models..." value={modelSearchQuery} onChange={(e) => setModelSearchQuery(e.target.value)} className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors" />
               </div>
-              <div className="space-y-4 pr-2 overflow-y-auto max-h-[450px] md:max-h-[525px] flex-1 custom-scrollbar">
+              <div className="space-y-4 pr-2 overflow-y-auto max-h-[380px] md:max-h-[430px] flex-1 custom-scrollbar">
                 
                 {youtubeModel.length > 0 && (
                   <div>
@@ -1404,8 +1452,10 @@ const App = () => {
                                     </div>
                                     {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
                                   </div>
-                                  <div className="flex gap-2 mt-3">
-                                    {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                                  <div className="flex items-center justify-between gap-2 mt-3">
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                                    </div>
                                   </div>
                                 </div>
                             );
@@ -1432,13 +1482,18 @@ const App = () => {
                             <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                    {model.name}
+                                    {model.isDynamic && <span className="text-[9px] bg-emerald-900/40 text-emerald-400 border border-emerald-800/60 px-1.5 py-0.5 rounded font-mono">LIVE</span>}
+                                  </h4>
                                   <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                                 </div>
                                 {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
                               </div>
-                              <div className="flex gap-2 mt-3">
-                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              <div className="flex items-center justify-between gap-2 mt-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -1463,13 +1518,18 @@ const App = () => {
                             <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                    {model.name}
+                                    {model.isDynamic && <span className="text-[9px] bg-emerald-900/40 text-emerald-400 border border-emerald-800/60 px-1.5 py-0.5 rounded font-mono">LIVE</span>}
+                                  </h4>
                                   <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                                 </div>
                                 {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
                               </div>
-                              <div className="flex gap-2 mt-3">
-                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              <div className="flex items-center justify-between gap-2 mt-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -1494,13 +1554,18 @@ const App = () => {
                             <div key={model.id} onClick={() => setSelectedModelId(model.id)} className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'}`}>
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <h4 className="font-bold text-white mb-1">{model.name}</h4>
+                                  <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                    {model.name}
+                                    {model.isDynamic && <span className="text-[9px] bg-emerald-900/40 text-emerald-400 border border-emerald-800/60 px-1.5 py-0.5 rounded font-mono">LIVE</span>}
+                                  </h4>
                                   <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                                 </div>
                                 {selectedModelId === model.id && ( <CheckCircle2 className="w-5 h-5 text-white shrink-0" /> )}
                               </div>
-                              <div className="flex gap-2 mt-3">
-                                {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                              <div className="flex items-center justify-between gap-2 mt-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {model.tags.map(tag => ( <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span> ))}
+                                </div>
                               </div>
                             </div>
                           ))}
@@ -1512,7 +1577,7 @@ const App = () => {
               </div>
            </div>
            
-           <div className="space-y-6 flex flex-col h-full">
+           <div className="space-y-6 flex flex-col h-full justify-between">
               <div className="space-y-6 flex-grow">
                   <div className="space-y-2">
                      <div className="flex items-center justify-between">
@@ -1520,11 +1585,11 @@ const App = () => {
                         {userGoogleApiKey && ( <button onClick={clearGoogleApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
                      </div>
                     <div className="relative">
-                       <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-4 pr-11 py-3 text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
-                       <div className="absolute right-3 top-3.5">
-                          {googleApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                          {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                          {googleApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       <input type="password" placeholder="AIzaSy..." value={tempGoogleApiKey} onChange={(e) => setTempGoogleApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-3.5 pr-10 py-2 text-sm text-white focus:outline-none transition-colors ${googleApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${googleApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${googleApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${googleApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          {googleApiKeyStatus === 'validating' && <Loader2 className="w-3.5 h-3.5 text-neutral-500 animate-spin" />}
+                          {googleApiKeyStatus === 'valid' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+                          {googleApiKeyStatus === 'invalid' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
                        </div>
                     </div>
                     <p className="text-xs text-neutral-500">For Gemini models. Stored locally in your browser.</p>
@@ -1536,11 +1601,11 @@ const App = () => {
                         {userOpenAIApiKey && ( <button onClick={clearOpenAIApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
                      </div>
                     <div className="relative">
-                       <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-4 pr-11 py-3 text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
-                       <div className="absolute right-3 top-3.5">
-                          {openAIApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                          {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                          {openAIApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       <input type="password" placeholder="sk-..." value={tempOpenAIApiKey} onChange={(e) => setTempOpenAIApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-3.5 pr-10 py-2 text-sm text-white focus:outline-none transition-colors ${openAIApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${openAIApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${openAIApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${openAIApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          {openAIApiKeyStatus === 'validating' && <Loader2 className="w-3.5 h-3.5 text-neutral-500 animate-spin" />}
+                          {openAIApiKeyStatus === 'valid' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+                          {openAIApiKeyStatus === 'invalid' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
                        </div>
                     </div>
                     <p className="text-xs text-neutral-500">For GPT models. Stored locally in your browser.</p>
@@ -1552,11 +1617,11 @@ const App = () => {
                         {userAnthropicApiKey && ( <button onClick={clearAnthropicApiKey} className="text-xs text-red-500 hover:text-red-400">Clear Key</button> )}
                      </div>
                     <div className="relative">
-                       <input type="password" placeholder="sk-ant-..." value={tempAnthropicApiKey} onChange={(e) => setTempAnthropicApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-4 pr-11 py-3 text-white focus:outline-none transition-colors ${anthropicApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${anthropicApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${anthropicApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${anthropicApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
-                       <div className="absolute right-3 top-3.5">
-                          {anthropicApiKeyStatus === 'validating' && <Loader2 className="w-5 h-5 text-neutral-500 animate-spin" />}
-                          {anthropicApiKeyStatus === 'valid' && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
-                          {anthropicApiKeyStatus === 'invalid' && <XCircle className="w-5 h-5 text-red-500" />}
+                       <input type="password" placeholder="sk-ant-..." value={tempAnthropicApiKey} onChange={(e) => setTempAnthropicApiKey(e.target.value)} className={`w-full bg-black border rounded-xl pl-3.5 pr-10 py-2 text-sm text-white focus:outline-none transition-colors ${anthropicApiKeyStatus === 'idle' ? 'border-neutral-800 focus:border-white' : ''} ${anthropicApiKeyStatus === 'validating' ? 'border-neutral-700 animate-pulse' : ''} ${anthropicApiKeyStatus === 'valid' ? 'border-emerald-800/90 focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/50' : ''} ${anthropicApiKeyStatus === 'invalid' ? 'border-red-700/50 focus:border-red-500 focus:ring-1 focus:ring-red-500/50' : ''}`} />
+                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          {anthropicApiKeyStatus === 'validating' && <Loader2 className="w-3.5 h-3.5 text-neutral-500 animate-spin" />}
+                          {anthropicApiKeyStatus === 'valid' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+                          {anthropicApiKeyStatus === 'invalid' && <XCircle className="w-3.5 h-3.5 text-red-500" />}
                        </div>
                     </div>
                     <p className="text-xs text-neutral-500">For Claude models. Stored locally in your browser.</p>
@@ -1640,13 +1705,20 @@ const App = () => {
 
               </div>
               
-              <div className="flex items-center justify-between w-full pt-6 mt-8 border-t border-neutral-800">
+              <div className="flex items-center justify-between w-full pt-4 mt-6 border-t border-neutral-800">
                 <YouTubeAuth 
                     onLoginSuccess={handleGoogleLoginSuccess} 
                     onLogout={handleGoogleLogout} 
                     userInfo={googleUser} 
                 />
-                <Button onClick={saveSettings} disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating' || anthropicApiKeyStatus === 'invalid' || anthropicApiKeyStatus === 'validating'}>Save Settings</Button>
+                <Button 
+                    onClick={saveSettings} 
+                    variant="secondary"
+                    className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all flex items-center justify-center"
+                    disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating' || anthropicApiKeyStatus === 'invalid' || anthropicApiKeyStatus === 'validating'}
+                >
+                    Save Settings
+                </Button>
               </div>
            </div>
         </div>
