@@ -2,7 +2,7 @@
 
 A modern, high-performance SRT subtitle translator powered by Google's Gemini 3 Pro. This project is built from the ground up with a modern tech stack including **React, TypeScript, and Vite**, and features a sleek, glassmorphic dark UI with client-side AI processing.
 
-### [🚀 View Live Demo 🚀](https://substream-ai.onrender.com/SubStream-AI)
+### [🚀 View Live Demo 🚀](https://substream-ai.onrender.com/)
 
 ![SubStream AI Screenshot](https://raw.githubusercontent.com/IMROVOID/SubStream-AI/main/public/screenshot.webp)
 
@@ -146,7 +146,7 @@ This application was developed and is maintained by **Roham Andarzgou**.
 
 I'm a passionate professional from Iran specializing in Graphic Design, Web Development, and cross-platform app development with Dart & Flutter. I thrive on turning innovative ideas into reality, whether it's a stunning visual, a responsive website, or a polished desktop app like this one. I also develop immersive games using Unreal Engine.
 
-* **Website:** [rovoid.ir](https://rovoid.ir)
+* **Website:** [rovoid.netlify.app](https://rovoid.netlify.app)
 * **GitHub:** [IMROVOID](https://github.com/IMROVOID)
 * **LinkedIn:** [Roham Andarzgou](https://www.linkedin.com/in/roham-andarzgouu)
 

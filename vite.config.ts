@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      base: '/SubStream-AI/', // Critical for GitHub Pages
+      base: process.env.VITE_BASE || '/',
       server: {
         port: 3000,
         host: '0.0.0.0',

@@ -976,7 +976,7 @@ const App = () => {
                 </h1>
                 <p className="text-base md:text-lg text-neutral-400 max-w-2xl mx-auto leading-relaxed animate-slide-up" style={{animationDelay: '0.1s'}}>
                     Transform your subtitles with context-aware AI. 
-                    Powered by {activeModelData.provider === 'google' ? "Google's" : "OpenAI's"} {activeModelData.name} for nuance and accuracy across {LANGUAGES.length}+ languages.
+                    Powered by state-of-the-art frontier AI models for nuance and accuracy across {LANGUAGES.length}+ languages.
                 </p>
             </section>
 
@@ -1292,7 +1292,7 @@ const App = () => {
                 </div>
             </div>
             <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-xs text-neutral-500 w-full">
-                <span>Developed by <a href="https://rovoid.ir" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
+                <span>Developed by <a href="https://rovoid.netlify.app" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
                 <span className="hidden md:block w-1 h-1 rounded-full bg-neutral-800"></span>
                 <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
                     <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
