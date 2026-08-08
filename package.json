@@ -6,6 +6,7 @@
   "homepage": "https://imrovoid.github.io/SubStream-AI/",
   "scripts": {
     "dev": "vite",
+    "server": "node server/index.js",
     "build": "vite build",
     "preview": "vite preview",
     "predeploy": "npm run build",

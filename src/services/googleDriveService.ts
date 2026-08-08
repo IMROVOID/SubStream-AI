@@ -33,20 +33,44 @@ export async function listDriveFiles(accessToken: string, folderId: string = 'ro
     const fields = "files(id, name, mimeType, thumbnailLink, iconLink, size, createdTime, modifiedTime, videoMediaMetadata, fileExtension)";
     const orderBy = "folder,modifiedTime desc";
 
-    const params = new URLSearchParams({
-        token: accessToken,
-        query: query,
+    // 1. Try Local Proxy first
+    try {
+        const params = new URLSearchParams({
+            token: accessToken,
+            query: query,
+            fields: fields,
+            orderBy: orderBy,
+            pageSize: '1000'
+        });
+
+        const url = `${BACKEND_URL}/drive/list?${params.toString()}`;
+        const response = await fetch(url);
+
+        if (response.ok) {
+            const data = await response.json();
+            return data.files || [];
+        }
+    } catch {
+        // Local proxy server offline, proceed to direct Google Drive API fallback
+    }
+
+    // 2. Direct Google Drive API Fallback
+    const directParams = new URLSearchParams({
+        q: query,
         fields: fields,
         orderBy: orderBy,
         pageSize: '1000'
     });
 
-    const url = `${BACKEND_URL}/drive/list?${params.toString()}`;
+    const directUrl = `https://www.googleapis.com/drive/v3/files?${directParams.toString()}`;
+    const directResponse = await fetch(directUrl, {
+        headers: {
+            'Authorization': `Bearer ${accessToken}`
+        }
+    });
 
-    const response = await fetch(url);
-
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
+    if (!directResponse.ok) {
+        const err = await directResponse.json().catch(() => ({}));
         let errMsg = "Unknown Drive Error";
 
         if (err.error) {
@@ -56,33 +80,50 @@ export async function listDriveFiles(accessToken: string, folderId: string = 'ro
                 errMsg = err.error.message || JSON.stringify(err.error);
             }
         } else {
-            errMsg = response.statusText || "Server Error";
+            errMsg = directResponse.statusText || "Server Error";
         }
 
         throw new Error(errMsg);
     }
 
-    const data = await response.json();
+    const data = await directResponse.json();
     return data.files || [];
 }
 
 /**
- * Downloads a file from Google Drive via the Local Proxy.
+ * Downloads a file from Google Drive via the Local Proxy, falling back to direct API download.
  */
 export async function downloadDriveFile(accessToken: string, fileId: string, fileName: string): Promise<File> {
     const driveDownloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-    const proxyUrl = `${BACKEND_URL}/file-get?url=${encodeURIComponent(driveDownloadUrl)}`;
+    
+    // 1. Try Local Proxy first
+    try {
+        const proxyUrl = `${BACKEND_URL}/file-get?url=${encodeURIComponent(driveDownloadUrl)}`;
+        const response = await fetch(proxyUrl, {
+            headers: {
+                'x-proxy-auth': `Bearer ${accessToken}`
+            }
+        });
 
-    const response = await fetch(proxyUrl, {
+        if (response.ok) {
+            const blob = await response.blob();
+            return new File([blob], fileName, { type: blob.type });
+        }
+    } catch {
+        // Local proxy server offline, fallback to direct download
+    }
+
+    // 2. Direct Google Drive API Download Fallback
+    const directResponse = await fetch(driveDownloadUrl, {
         headers: {
-            'x-proxy-auth': `Bearer ${accessToken}`
+            'Authorization': `Bearer ${accessToken}`
         }
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to download file from Drive via proxy.`);
+    if (!directResponse.ok) {
+        throw new Error(`Failed to download file from Drive.`);
     }
 
-    const blob = await response.blob();
+    const blob = await directResponse.blob();
     return new File([blob], fileName, { type: blob.type });
 }

@@ -266,12 +266,18 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
         setUserInfo(data);
 
         if (data.picture) {
-            const proxyUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(data.picture)}`;
-            const imgRes = await fetch(proxyUrl);
-            if (imgRes.ok) {
-                const blob = await imgRes.blob();
-                const blobUrl = URL.createObjectURL(blob);
-                setUserProfileBlob(blobUrl);
+            try {
+                const proxyUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(data.picture)}`;
+                const imgRes = await fetch(proxyUrl);
+                if (imgRes.ok) {
+                    const blob = await imgRes.blob();
+                    const blobUrl = URL.createObjectURL(blob);
+                    setUserProfileBlob(blobUrl);
+                } else {
+                    setUserProfileBlob(data.picture);
+                }
+            } catch {
+                setUserProfileBlob(data.picture);
             }
         }
 
@@ -622,6 +628,12 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                                                     src={`http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(file.thumbnailLink)}&token=${encodeURIComponent(accessToken)}`} 
                                                                     className="w-full h-full object-cover opacity-80 group-hover:opacity-100" 
                                                                     alt="" 
+                                                                    referrerPolicy="no-referrer"
+                                                                    onError={(e) => {
+                                                                        if (e.currentTarget.src !== file.thumbnailLink) {
+                                                                            e.currentTarget.src = file.thumbnailLink;
+                                                                        }
+                                                                    }}
                                                                 />
                                                             ) : (
                                                                 <div className="text-neutral-600">
@@ -674,6 +686,13 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                                             src={`http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(selectedFile.thumbnailLink.replace('s220', 's600'))}&token=${encodeURIComponent(accessToken)}`} 
                                                             className="w-full h-full object-cover" 
                                                             alt="Preview" 
+                                                            referrerPolicy="no-referrer"
+                                                            onError={(e) => {
+                                                                const fallback = selectedFile.thumbnailLink.replace('s220', 's600');
+                                                                if (e.currentTarget.src !== fallback) {
+                                                                    e.currentTarget.src = fallback;
+                                                                }
+                                                            }}
                                                         />
                                                     ) : (
                                                         <div className="text-neutral-600">
