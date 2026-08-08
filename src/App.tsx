@@ -1170,8 +1170,15 @@ const App = () => {
   const isConfigureStepActive = !!file && !isTranslationInProgress && !isTranslationComplete;
   const isYouTubeWorkflow = fileType === 'youtube';
 
-  const sourceLangFont = useMemo(() => LANGUAGES.find(l => l.name === sourceLang)?.font, [sourceLang]);
-  const targetLangFont = useMemo(() => LANGUAGES.find(l => l.name === targetLang)?.font, [targetLang]);
+  const sourceLangFont = useMemo(() => {
+      if (isYouTubeWorkflow && selectedCaptionId) {
+          const matched = LANGUAGES.find(l => l.code === selectedCaptionId || l.name === selectedCaptionId);
+          if (matched?.font) return matched.font;
+      }
+      return LANGUAGES.find(l => l.name === sourceLang || l.code === sourceLang)?.font;
+  }, [sourceLang, selectedCaptionId, isYouTubeWorkflow]);
+
+  const targetLangFont = useMemo(() => LANGUAGES.find(l => l.name === targetLang || l.code === targetLang)?.font, [targetLang]);
 
   if (isYouTubeAuthCallback || isDriveAuthCallback) {
       return (

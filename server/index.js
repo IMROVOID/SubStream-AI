@@ -3,6 +3,7 @@ const cors = require('cors');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 const ffmpegPath = require('ffmpeg-static'); 
 const axios = require('axios');
+const net = require('net');
 // Import HttpsProxyAgent to handle v2ray/local proxy tunnels correctly
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const path = require('path');
@@ -29,20 +30,91 @@ if (!fs.existsSync(TEMP_DIR)) {
 const ytDlpWrap = new YTDlpWrap(YT_DLP_BINARY_PATH);
 
 // --- PROXY CONFIGURATION HELPER ---
-const getSystemProxy = () => {
-    // 1. Check Environment Variables first
-    const envProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-    if (envProxy) return envProxy;
-
-    // 2. Fallback: Assume v2rayN default HTTP port (10809) on Windows
-    return 'http://127.0.0.1:10809';
+const checkPortOpen = (host, port, timeout = 300) => {
+    return new Promise((resolve) => {
+        const socket = new net.Socket();
+        socket.setTimeout(timeout);
+        socket.on('connect', () => {
+            socket.destroy();
+            resolve(true);
+        });
+        socket.on('timeout', () => {
+            socket.destroy();
+            resolve(false);
+        });
+        socket.on('error', () => {
+            socket.destroy();
+            resolve(false);
+        });
+        socket.connect(port, host);
+    });
 };
 
-const PROXY_URL = getSystemProxy();
-console.log(`[Server] Network Proxy Configuration: ${PROXY_URL ? PROXY_URL : 'Direct Connection'}`);
+const getWindowsRegistryProxy = () => {
+    if (process.platform !== 'win32') return null;
+    try {
+        const out = require('child_process').execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        const enabledMatch = out.match(/ProxyEnable\s+REG_DWORD\s+(0x[0-9a-fA-F]+)/);
+        const serverMatch = out.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/);
+        if (enabledMatch && parseInt(enabledMatch[1], 16) === 1 && serverMatch) {
+            let rawProxy = serverMatch[1].trim();
+            if (rawProxy.includes('=')) {
+                const httpPart = rawProxy.split(';').find(p => p.startsWith('http=') || p.startsWith('https='));
+                if (httpPart) rawProxy = httpPart.split('=')[1];
+            }
+            if (!rawProxy.startsWith('http://') && !rawProxy.startsWith('https://') && !rawProxy.startsWith('socks://')) {
+                rawProxy = 'http://' + rawProxy;
+            }
+            return rawProxy;
+        }
+    } catch (e) {}
+    return null;
+};
 
-// --- AXIOS CLIENT CONFIGURATION ---
-const createAxiosClient = () => {
+const getSystemProxy = async () => {
+    // 1. Check Environment Variables first
+    const envProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
+    if (envProxy) return envProxy;
+
+    // 2. Check Windows System Registry proxy configuration
+    const regProxy = getWindowsRegistryProxy();
+    if (regProxy) {
+        try {
+            const parsed = new URL(regProxy);
+            const port = parseInt(parsed.port || '80', 10);
+            const host = parsed.hostname || '127.0.0.1';
+            if (await checkPortOpen(host, port)) {
+                return regProxy;
+            }
+        } catch (e) {}
+    }
+
+    // 3. Scan common local proxy ports
+    const commonPorts = [12334, 10809, 7890, 7897, 10808, 1080, 8080];
+    for (const port of commonPorts) {
+        if (await checkPortOpen('127.0.0.1', port)) {
+            return `http://127.0.0.1:${port}`;
+        }
+    }
+
+    return null;
+};
+
+let PROXY_URL = null;
+let axiosClient = null;
+
+const directAxiosClient = axios.create({
+    timeout: 60000,
+    headers: { 
+        'Cache-Control': 'no-cache',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+    },
+    maxBodyLength: Infinity, 
+    maxContentLength: Infinity,
+    proxy: false
+});
+
+const createAxiosClient = (proxyUrl) => {
     const config = {
         timeout: 60000, // Default 60s timeout
         headers: { 
@@ -54,10 +126,10 @@ const createAxiosClient = () => {
         maxContentLength: Infinity
     };
 
-    if (PROXY_URL) {
+    if (proxyUrl) {
         try {
             // Use HttpsProxyAgent for robust tunneling
-            const agent = new HttpsProxyAgent(PROXY_URL);
+            const agent = new HttpsProxyAgent(proxyUrl);
             config.httpsAgent = agent;
             
             // IMPORTANT: Disable axios native proxy logic to prevent conflicts
@@ -74,23 +146,44 @@ const createAxiosClient = () => {
     return axios.create(config);
 };
 
-const axiosClient = createAxiosClient();
+let cachedProxyUrl = null;
+let lastProxyCheckTime = 0;
+const PROXY_RECHECK_INTERVAL = 3000; // 3 seconds TTL for instant, dynamic adaptation
+
+const getActiveProxyConfig = async () => {
+    const now = Date.now();
+    if (lastProxyCheckTime === 0 || (now - lastProxyCheckTime) > PROXY_RECHECK_INTERVAL) {
+        const detected = await getSystemProxy();
+        if (detected !== cachedProxyUrl) {
+            cachedProxyUrl = detected;
+            console.log(`[Server] Network Proxy Configuration: ${cachedProxyUrl ? cachedProxyUrl : 'Direct Connection'}`);
+        }
+        lastProxyCheckTime = now;
+    }
+    return cachedProxyUrl;
+};
+
+// Initialize Proxy and Axios Client on Startup
+(async () => {
+    await getActiveProxyConfig();
+})();
 
 // --- BINARY MANAGEMENT (Self-Healing) ---
 
 const downloadBinaryWithProxy = async () => {
     const platform = process.platform;
-    // Determine correct filename for GitHub releases
     let fileName = 'yt-dlp';
     if (platform === 'win32') fileName = 'yt-dlp.exe';
     else if (platform === 'darwin') fileName = 'yt-dlp_macos';
 
     const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${fileName}`;
-    console.log(`[Server] Downloading ${fileName} from GitHub using Proxy...`);
+    console.log(`[Server] Downloading ${fileName} from GitHub...`);
 
     const writer = fs.createWriteStream(YT_DLP_BINARY_PATH);
 
-    const response = await axiosClient({
+    const currentProxyUrl = await getActiveProxyConfig();
+    const client = createAxiosClient(currentProxyUrl);
+    const response = await client({
         url,
         method: 'GET',
         responseType: 'stream',
@@ -148,11 +241,26 @@ ensureBinary();
 
 // --- HELPERS ---
 
-// Retry Helper for Axios
+// Retry Helper for Axios with Proxy Fallback
 const makeRequestWithRetry = async (config, retries = 3) => {
+    const currentProxyUrl = await getActiveProxyConfig();
+    const client = createAxiosClient(currentProxyUrl);
     try {
-        return await axiosClient(config);
+        return await client(config);
     } catch (error) {
+        const isProxyError = error.code === 'ECONNREFUSED' || 
+                             error.code === 'ENOTFOUND' || 
+                             (error.message && (error.message.includes('ECONNREFUSED') || error.message.includes('Unable to connect to proxy')));
+
+        if (isProxyError && currentProxyUrl) {
+            console.warn(`[Proxy] Proxy request failed (${error.message || error.code}). Retrying with direct connection...`);
+            try {
+                return await directAxiosClient(config);
+            } catch (directErr) {
+                throw directErr;
+            }
+        }
+
         const isNetworkError = !error.response && (
             error.code === 'ECONNRESET' || 
             error.code === 'ETIMEDOUT' || 
@@ -172,14 +280,16 @@ const makeRequestWithRetry = async (config, retries = 3) => {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION) ---
+// --- YT-DLP EXECUTION HELPER (WITH CLIENT ROTATION & DYNAMIC PROXY FALLBACK) ---
 
-// 'tv' is often the most permissive for metadata/subs
+// 'android_vr' and 'tv' are often the most permissive for metadata/subs
 // 'android_creator' is a good backup for mobile APIs
-const CLIENTS_TO_TRY = ['tv', 'android_creator', 'ios', 'android', 'mweb', 'web'];
+const CLIENTS_TO_TRY = ['android_vr', 'tv', 'android_creator', 'ios', 'android', 'mweb', 'web'];
 
 const executeYtDlpWithRetry = async (baseArgs) => {
     let lastError;
+    const currentProxyUrl = await getActiveProxyConfig();
+    let proxyActive = !!currentProxyUrl;
 
     for (const client of CLIENTS_TO_TRY) {
         try {
@@ -193,28 +303,75 @@ const executeYtDlpWithRetry = async (baseArgs) => {
                 '--extractor-args', `youtube:player_client=${client}`
             ];
 
-            if (PROXY_URL) {
-                currentArgs.push('--proxy', PROXY_URL);
+            if (proxyActive && currentProxyUrl) {
+                currentArgs.push('--proxy', currentProxyUrl);
             }
 
-            console.log(`[YT-DLP] Attempting with client: ${client}`);
+            console.log(`[YT-DLP] Attempting with client: ${client}${proxyActive ? ` (via proxy)` : ' (direct)'}`);
             const result = await ytDlpWrap.execPromise(currentArgs);
             console.log(`[YT-DLP] Success with client: ${client}`);
             return result;
 
         } catch (e) {
             const msg = e.message || '';
-            const isRateLimit = msg.includes('HTTP Error 429') || msg.includes('Too Many Requests');
-            const isForbidden = msg.includes('HTTP Error 403') || msg.includes('Sign in to confirm');
-            const isPOToken = msg.includes('PO Token');
-            const isFormat = msg.includes('Requested format is not available');
+            const isProxyError = msg.includes('Unable to connect to proxy') || 
+                                 msg.includes('ProxyError') || 
+                                 msg.includes('WinError 10061') || 
+                                 msg.includes('ECONNREFUSED');
 
-            console.warn(`[YT-DLP] Client '${client}' failed. (Error: ${isRateLimit ? 'Rate Limited' : isForbidden ? 'Forbidden' : isPOToken ? 'PO Token' : isFormat ? 'Format Unavail' : 'Generic'})`);
-            
-            lastError = e;
+            if (isProxyError && proxyActive) {
+                console.warn(`[YT-DLP] Proxy failed (${msg.split('\n')[0]}). Disabling proxy and retrying client '${client}' directly...`);
+                proxyActive = false; // Disable proxy for remainder of execution
+                try {
+                    const directArgs = [
+                        ...baseArgs,
+                        '--no-playlist',
+                        '--no-check-certificates',
+                        '--force-ipv4',
+                        '--no-cache-dir',
+                        '--extractor-args', `youtube:player_client=${client}`
+                    ];
+                    console.log(`[YT-DLP] Attempting with client: ${client} (direct fallback)`);
+                    const result = await ytDlpWrap.execPromise(directArgs);
+                    console.log(`[YT-DLP] Success with client: ${client} (direct fallback)`);
+                    return result;
+                } catch (directErr) {
+                    lastError = directErr;
+                }
+            } else {
+                const isRateLimit = msg.includes('HTTP Error 429') || msg.includes('Too Many Requests');
+                const isForbidden = msg.includes('HTTP Error 403') || msg.includes('Sign in to confirm');
+                const isPOToken = msg.includes('PO Token');
+                const isFormat = msg.includes('Requested format is not available');
+
+                console.warn(`[YT-DLP] Client '${client}' failed. (Error: ${isRateLimit ? 'Rate Limited' : isForbidden ? 'Forbidden' : isPOToken ? 'PO Token' : isFormat ? 'Format Unavail' : 'Generic'})`);
+                lastError = e;
+            }
             
             // Short random delay between retries to avoid hammering
             await delay(1500 + Math.random() * 1000); 
+        }
+    }
+
+    // Final fallback: if proxy was attempted and everything failed, try a direct connection pass
+    if (currentProxyUrl && proxyActive) {
+        console.warn("[YT-DLP] All proxy attempts failed. Performing final direct connection attempt...");
+        for (const client of ['tv', 'mweb', 'web']) {
+            try {
+                const directArgs = [
+                    ...baseArgs,
+                    '--no-playlist',
+                    '--no-check-certificates',
+                    '--force-ipv4',
+                    '--no-cache-dir',
+                    '--extractor-args', `youtube:player_client=${client}`
+                ];
+                const result = await ytDlpWrap.execPromise(directArgs);
+                console.log(`[YT-DLP] Direct connection fallback succeeded with client: ${client}`);
+                return result;
+            } catch (err) {
+                lastError = err;
+            }
         }
     }
 
@@ -274,12 +431,29 @@ app.get('/api/proxy/file-get', async (req, res) => {
         const headers = {};
         if (proxyAuth) headers['Authorization'] = proxyAuth;
 
-        const response = await axiosClient({
-            method: 'get',
-            url: url,
-            responseType: 'stream',
-            headers: headers
-        });
+        let response;
+        try {
+            const currentProxyUrl = await getActiveProxyConfig();
+            const client = createAxiosClient(currentProxyUrl);
+            response = await client({
+                method: 'get',
+                url: url,
+                responseType: 'stream',
+                headers: headers
+            });
+        } catch (err) {
+            if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+                console.warn('[Proxy] Proxy file-get failed, retrying directly...');
+                response = await directAxiosClient({
+                    method: 'get',
+                    url: url,
+                    responseType: 'stream',
+                    headers: headers
+                });
+            } else {
+                throw err;
+            }
+        }
 
         const contentType = response.headers['content-type'];
         const contentLength = response.headers['content-length'];
@@ -369,22 +543,43 @@ app.put('/api/proxy/upload-finish', async (req, res) => {
     try {
         console.log("Proxy: Streaming binary upload to Google...");
         
-        // Stream the incoming request directly to Google
-        // We use req as the data stream. express.json() ignores non-json content types, 
-        // so the stream should be intact for video files.
-        const response = await axiosClient({
-            method: 'put',
-            url: uploadUrl,
-            data: req, 
-            headers: {
-                'Content-Type': contentType,
-                'Content-Length': contentLength
-            },
-            maxBodyLength: Infinity,
-            maxContentLength: Infinity,
-            timeout: 0, // IMPORTANT: Disable timeout for large video uploads
-            responseType: 'json' 
-        });
+        let response;
+        try {
+            const currentProxyUrl = await getActiveProxyConfig();
+            const client = createAxiosClient(currentProxyUrl);
+            response = await client({
+                method: 'put',
+                url: uploadUrl,
+                data: req, 
+                headers: {
+                    'Content-Type': contentType,
+                    'Content-Length': contentLength
+                },
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity,
+                timeout: 0, // IMPORTANT: Disable timeout for large video uploads
+                responseType: 'json' 
+            });
+        } catch (err) {
+            if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+                console.warn('[Proxy] Proxy upload-finish failed, retrying directly...');
+                response = await directAxiosClient({
+                    method: 'put',
+                    url: uploadUrl,
+                    data: req, 
+                    headers: {
+                        'Content-Type': contentType,
+                        'Content-Length': contentLength
+                    },
+                    maxBodyLength: Infinity,
+                    maxContentLength: Infinity,
+                    timeout: 0,
+                    responseType: 'json' 
+                });
+            } else {
+                throw err;
+            }
+        }
 
         console.log("Proxy: Upload completed successfully.");
         res.json(response.data);
@@ -522,6 +717,49 @@ app.get('/api/info', async (req, res) => {
     }
 });
 
+const translateSrtChunk = async (text, targetLang) => {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t`;
+    const client = axiosClient || directAxiosClient;
+    const body = new URLSearchParams({ q: text }).toString();
+    const response = await client.post(url, body, {
+        timeout: 15000,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+    if (response.data && response.data[0]) {
+        return response.data[0].map(x => x[0]).join('');
+    }
+    throw new Error('Translation API returned invalid structure');
+};
+
+const translateSrtContent = async (srtContent, targetLang) => {
+    if (!srtContent || targetLang === 'en') return srtContent;
+
+    const blocks = srtContent.trim().split(/\r?\n\r?\n/);
+    const translatedBlocks = [];
+
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < blocks.length; i += CHUNK_SIZE) {
+        const chunkBlocks = blocks.slice(i, i + CHUNK_SIZE);
+        const chunkText = chunkBlocks.join('\n\n');
+        try {
+            const translatedText = await translateSrtChunk(chunkText, targetLang);
+            translatedBlocks.push(translatedText);
+        } catch (err) {
+            console.warn(`[Translate] Chunk translation warning (${err.message}). Retrying block by block...`);
+            for (const b of chunkBlocks) {
+                try {
+                    const singleTranslated = await translateSrtChunk(b, targetLang);
+                    translatedBlocks.push(singleTranslated);
+                } catch (e) {
+                    translatedBlocks.push(b);
+                }
+            }
+        }
+    }
+
+    return translatedBlocks.join('\n\n');
+};
+
 app.get('/api/caption', async (req, res) => {
     const rawToken = req.query.token || req.query.trackId;
     const url = req.query.url;
@@ -555,6 +793,11 @@ app.get('/api/caption', async (req, res) => {
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
 
     try {
+        let subLangParam = lang;
+        if (lang !== 'en') {
+            subLangParam = `${lang},en`;
+        }
+
         let args = [
             url,
             '--skip-download',
@@ -563,21 +806,58 @@ app.get('/api/caption', async (req, res) => {
             '--ffmpeg-location', ffmpegPath,
         ];
 
-        if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
-        else args.push('--write-sub', '--sub-lang', lang);
+        if (isAuto) args.push('--write-auto-sub', '--sub-lang', subLangParam);
+        else args.push('--write-sub', '--sub-lang', subLangParam);
 
-        await executeYtDlpWithRetry(args);
+        try {
+            await executeYtDlpWithRetry(args);
+        } catch (ytErr) {
+            if (lang !== 'en') {
+                console.warn(`[Caption] Direct subtitle fetch for '${lang}' failed (${ytErr.message}). Retrying with native track 'en'...`);
+                let fallbackArgs = [
+                    url,
+                    '--skip-download',
+                    '--convert-subs', 'srt',
+                    '--output', outputTemplate,
+                    '--ffmpeg-location', ffmpegPath,
+                    '--write-auto-sub', '--sub-lang', 'en'
+                ];
+                await executeYtDlpWithRetry(fallbackArgs);
+            } else {
+                throw ytErr;
+            }
+        }
 
         const files = fs.readdirSync(TEMP_DIR);
-        const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
+        let generatedFile = files.find(f => f.startsWith(tempId) && (f.includes(`.${lang}.`) || f.endsWith(`.${lang}`)) && (f.endsWith('.srt') || f.endsWith('.vtt')));
+        let isFallback = false;
+
+        if (!generatedFile) {
+            generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
+            if (generatedFile && lang !== 'en' && !generatedFile.includes(`.${lang}.`)) {
+                isFallback = true;
+            }
+        }
 
         if (!generatedFile) {
             throw new Error(`Subtitle file not generated.`);
         }
 
         const filePath = path.join(TEMP_DIR, generatedFile);
-        const content = fs.readFileSync(filePath, 'utf-8');
-        fs.unlinkSync(filePath);
+        let content = fs.readFileSync(filePath, 'utf-8');
+
+        if (isFallback && lang !== 'en') {
+            console.log(`[Caption] Translating fallback subtitle track to '${lang}'...`);
+            try {
+                content = await translateSrtContent(content, lang);
+            } catch (transErr) {
+                console.warn(`[Caption] Auto-translation failed (${transErr.message}), returning original track.`);
+            }
+        }
+
+        files.filter(f => f.startsWith(tempId)).forEach(f => {
+            try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch (e) {}
+        });
 
         res.send(content);
 

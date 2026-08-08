@@ -2,18 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Define the Local Font */
+/* Define the Local Font with Unicode Range for Persian/Arabic Script */
 @font-face {
   font-family: 'Vazirmatn';
   src: url('/fonts/Vazirmatn-VariableFont_wght.ttf') format('truetype');
   font-weight: 100 900; /* Supports variable weights */
   font-style: normal;
   font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
 }
 
 body {
   background-color: #000000;
   color: #ffffff;
+  font-family: 'Inter', 'Vazirmatn', system-ui, -apple-system, sans-serif;
+}
+
+.font-vazirmatn, [lang="fa"], :lang(fa) {
+  font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif !important;
 }
 
 /* Custom Scrollbar for the sleek look */

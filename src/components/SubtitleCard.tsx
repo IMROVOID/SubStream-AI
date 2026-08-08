@@ -9,7 +9,15 @@ interface SubtitleCardProps {
   targetFont?: string;
 }
 
+const isPersianScript = (text: string) => /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
+
 export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive, isSingleColumn, sourceFont, targetFont }) => {
+  const isOriginalPersian = isPersianScript(subtitle.originalText);
+  const isTranslatedPersian = isPersianScript(subtitle.text);
+
+  const origFontClass = isOriginalPersian ? 'font-vazirmatn' : (sourceFont || 'font-sans');
+  const transFontClass = isTranslatedPersian ? 'font-vazirmatn' : (targetFont || 'font-display');
+
   return (
     <div className={`group relative p-6 transition-all duration-300 border-b border-neutral-900 hover:bg-neutral-900/50 ${isActive ? 'bg-neutral-900' : ''}`}>
       <div className="flex items-start gap-4">
@@ -25,7 +33,7 @@ export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive, 
         <div className={`w-full ${isSingleColumn ? 'block' : 'grid grid-cols-1 md:grid-cols-2 gap-6'}`}>
           {/* Original */}
           <div className="relative">
-            <p className={`font-medium leading-relaxed ${isSingleColumn ? 'text-white text-lg' : 'text-sm text-neutral-400'} ${sourceFont || 'font-sans'}`}>
+            <p dir={isOriginalPersian ? 'rtl' : 'ltr'} className={`font-medium leading-relaxed ${isSingleColumn ? 'text-white text-lg' : 'text-sm text-neutral-400'} ${origFontClass}`}>
               {subtitle.originalText}
             </p>
           </div>
@@ -33,7 +41,7 @@ export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive, 
           {/* Translated (Only show if not single column mode) */}
           {!isSingleColumn && (
               <div className="relative">
-                <p className={`text-base font-medium leading-relaxed transition-colors duration-500 ${subtitle.text === subtitle.originalText ? 'text-neutral-600 italic' : 'text-white'} ${targetFont || 'font-display'}`}>
+                <p dir={isTranslatedPersian ? 'rtl' : 'ltr'} className={`text-base font-medium leading-relaxed transition-colors duration-500 ${subtitle.text === subtitle.originalText ? 'text-neutral-600 italic' : 'text-white'} ${transFontClass}`}>
                   {subtitle.text === subtitle.originalText ? '(Pending...)' : subtitle.text}
                 </p>
               </div>
