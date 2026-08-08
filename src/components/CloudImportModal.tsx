@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { HardDrive, Search, ArrowLeft, Folder, FileVideo, FileText, ChevronRight, ChevronDown, Download, Loader2, LogOut, LayoutGrid, AlertCircle, Clock, Database, Calendar, RefreshCw, Film, Captions, Menu, X } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { HardDrive, Search, ArrowLeft, Folder, FileVideo, FileText, ChevronRight, ChevronLeft, ChevronDown, Download, Loader2, LogOut, LayoutGrid, AlertCircle, Clock, Database, Calendar, RefreshCw, Film, Captions, Menu, X, Grid, List, LayoutList, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './Button';
 import { DriveFile } from '../types';
@@ -12,7 +12,46 @@ interface CloudImportModalProps {
 }
 
 type Step = 'PROVIDERS' | 'AUTH_GDRIVE' | 'EXPLORER';
-type ViewMode = 'GRID' | 'LIST';
+type ViewMode = 'GRID' | 'LARGE_GRID' | 'CARDS' | 'LIST';
+
+interface DriveThumbnailProps {
+    file: DriveFile;
+    className?: string;
+    iconClassName?: string;
+}
+
+const DriveThumbnail: React.FC<DriveThumbnailProps> = ({ file, className, iconClassName }) => {
+    const [imgError, setImgError] = useState(false);
+    const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+
+    if (isFolder || !file.thumbnailLink || imgError) {
+        return (
+            <div className="text-neutral-500 flex items-center justify-center">
+                {isFolder ? (
+                    <Folder className={iconClassName || "w-7 h-7 text-neutral-300"} />
+                ) : file.mimeType.includes('video') ? (
+                    <FileVideo className={iconClassName || "w-7 h-7 text-red-400"} />
+                ) : (
+                    <FileText className={iconClassName || "w-7 h-7 text-blue-400"} />
+                )}
+            </div>
+        );
+    }
+
+    // Replace size thumbnail query to higher res or fallback cleanly
+    const thumbUrl = file.thumbnailLink.replace(/=s\d+$/, '=s400');
+
+    return (
+        <img
+            src={thumbUrl}
+            className={className || "w-full h-full object-cover opacity-80 group-hover:opacity-100"}
+            alt=""
+            referrerPolicy="no-referrer"
+            crossOrigin="anonymous"
+            onError={() => setImgError(true)}
+        />
+    );
+};
 
 // --- SVG ICONS ---
 const GoogleDriveIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -93,7 +132,7 @@ const FolderTreeItem: React.FC<{
         <div>
             <div 
                 className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-sm
-                    ${isSelected ? 'bg-indigo-900/40 text-white' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}
+                    ${isSelected ? 'bg-neutral-800 text-white font-medium border border-neutral-700/60' : 'text-neutral-400 hover:text-white hover:bg-neutral-800/60'}
                 `}
                 style={{ paddingLeft: `${level * 12 + 8}px` }}
                 onClick={() => onSelect(folder.id, folder.name)}
@@ -104,7 +143,7 @@ const FolderTreeItem: React.FC<{
                 >
                     {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                 </button>
-                <Folder className={`w-4 h-4 ${isSelected ? 'text-indigo-400' : 'text-neutral-500'}`} />
+                <Folder className={`w-4 h-4 ${isSelected ? 'text-neutral-200' : 'text-neutral-500'}`} />
                 <span className="truncate">{folder.name}</span>
             </div>
             {isExpanded && (
@@ -144,6 +183,14 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<DriveFile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+  useEffect(() => {
+      const timer = setTimeout(() => {
+          setDebouncedSearchQuery(searchQuery);
+      }, 300);
+      return () => clearTimeout(timer);
+  }, [searchQuery]);
   const [refreshKey, setRefreshKey] = useState(0);
   
   const [isImporting, setIsImporting] = useState(false);
@@ -151,6 +198,129 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
   // Mobile State
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+
+  // Profile picture fallback state
+  const [profileImageError, setProfileImageError] = useState(false);
+
+  // View Mode & Layout Dropdown State (Persisted in localStorage)
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+      return (localStorage.getItem('substream_drive_view_mode') as ViewMode) || 'GRID';
+  });
+  const [showLayoutMenu, setShowLayoutMenu] = useState(false);
+  const layoutMenuRef = useRef<HTMLDivElement>(null);
+
+  // Sorting / Order State (Persisted in localStorage, Default A-Z Name)
+  type SortBy = 'NAME' | 'DATE' | 'SIZE';
+  type SortDir = 'ASC' | 'DESC';
+
+  const [sortBy, setSortBy] = useState<SortBy>(() => {
+      return (localStorage.getItem('substream_drive_sort_by') as SortBy) || 'NAME';
+  });
+  const [sortDir, setSortDir] = useState<SortDir>(() => {
+      return (localStorage.getItem('substream_drive_sort_dir') as SortDir) || 'ASC';
+  });
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+
+  // Breadcrumb Path Horizontal Scroll State & Handlers
+  const breadcrumbRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const scrollIntervalRef = useRef<number | null>(null);
+
+  const checkBreadcrumbScroll = () => {
+      if (breadcrumbRef.current) {
+          const { scrollLeft, scrollWidth, clientWidth } = breadcrumbRef.current;
+          setCanScrollLeft(scrollLeft > 2);
+          setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 2);
+      }
+  };
+
+  useEffect(() => {
+      checkBreadcrumbScroll();
+      if (breadcrumbRef.current) {
+          breadcrumbRef.current.scrollTo({
+              left: breadcrumbRef.current.scrollWidth,
+              behavior: 'smooth'
+          });
+      }
+  }, [folderPath]);
+
+  const startScroll = (direction: 'left' | 'right') => {
+      if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
+      const amount = direction === 'left' ? -8 : 8;
+      scrollIntervalRef.current = window.setInterval(() => {
+          if (breadcrumbRef.current) {
+              breadcrumbRef.current.scrollLeft += amount;
+              checkBreadcrumbScroll();
+          }
+      }, 16);
+  };
+
+  const stopScroll = () => {
+      if (scrollIntervalRef.current) {
+          clearInterval(scrollIntervalRef.current);
+          scrollIntervalRef.current = null;
+      }
+  };
+
+  useEffect(() => {
+      localStorage.setItem('substream_drive_view_mode', viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+      localStorage.setItem('substream_drive_sort_by', sortBy);
+  }, [sortBy]);
+
+  useEffect(() => {
+      localStorage.setItem('substream_drive_sort_dir', sortDir);
+  }, [sortDir]);
+
+  useEffect(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+          if (layoutMenuRef.current && !layoutMenuRef.current.contains(event.target as Node)) {
+              setShowLayoutMenu(false);
+          }
+          if (sortMenuRef.current && !sortMenuRef.current.contains(event.target as Node)) {
+              setShowSortMenu(false);
+          }
+      };
+      if (showLayoutMenu || showSortMenu) {
+          document.addEventListener('mousedown', handleClickOutside);
+      }
+      return () => {
+          document.removeEventListener('mousedown', handleClickOutside);
+      };
+  }, [showLayoutMenu, showSortMenu]);
+
+  // Compute Sorted Files List
+  const sortedFiles = useMemo(() => {
+      if (!files) return [];
+      
+      return [...files].sort((a, b) => {
+          const isFolderA = a.mimeType === 'application/vnd.google-apps.folder';
+          const isFolderB = b.mimeType === 'application/vnd.google-apps.folder';
+
+          // Folders always stay at the top
+          if (isFolderA && !isFolderB) return -1;
+          if (!isFolderA && isFolderB) return 1;
+
+          let comparison = 0;
+          if (sortBy === 'NAME') {
+              comparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+          } else if (sortBy === 'DATE') {
+              const timeA = a.modifiedTime ? new Date(a.modifiedTime).getTime() : 0;
+              const timeB = b.modifiedTime ? new Date(b.modifiedTime).getTime() : 0;
+              comparison = timeA - timeB;
+          } else if (sortBy === 'SIZE') {
+              const sizeA = a.size ? parseInt(a.size, 10) : 0;
+              const sizeB = b.size ? parseInt(b.size, 10) : 0;
+              comparison = sizeA - sizeB;
+          }
+
+          return sortDir === 'ASC' ? comparison : -comparison;
+      });
+  }, [files, sortBy, sortDir]);
 
   // --- INITIAL LOAD: CHECK STORAGE ---
   useEffect(() => {
@@ -235,27 +405,42 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
   // --- FETCH FILES ---
   useEffect(() => {
     if (step === 'EXPLORER' && accessToken) {
+        let isCancelled = false;
         setIsLoading(true);
         setError(null);
         setFiles([]); // Clear old files immediately on refetch
         
-        listDriveFiles(accessToken, currentFolderId, searchQuery)
-            .then(setFiles)
-            .catch(err => {
-                console.error("List Error:", err);
-                let msg = err.message || "Failed to load files";
-                if (typeof msg === 'object') msg = JSON.stringify(msg);
-                
-                if (msg.includes("403")) msg = "Access Denied: Please enable 'Google Drive API' in your Google Cloud Console.";
-                if (msg.includes("socket disconnected") || msg.includes("500")) msg = "Connection Error: Server could not connect to Google Drive. Please retry.";
-                if (msg.includes("400")) msg = "Invalid Request: Malformed query or missing permissions.";
-                if (msg.includes("timeout")) msg = "Connection Timed Out: Google Drive is taking too long to respond. Please retry.";
-                
-                setError(msg);
+        listDriveFiles(accessToken, currentFolderId, debouncedSearchQuery)
+            .then(data => {
+                if (!isCancelled) {
+                    setFiles(data);
+                }
             })
-            .finally(() => setIsLoading(false));
+            .catch(err => {
+                if (!isCancelled) {
+                    console.error("List Error:", err);
+                    let msg = err.message || "Failed to load files";
+                    if (typeof msg === 'object') msg = JSON.stringify(msg);
+                    
+                    if (msg.includes("403")) msg = "Access Denied: Please enable 'Google Drive API' in your Google Cloud Console.";
+                    if (msg.includes("socket disconnected") || msg.includes("500")) msg = "Connection Error: Server could not connect to Google Drive. Please retry.";
+                    if (msg.includes("400")) msg = "Invalid Request: Malformed query or missing permissions.";
+                    if (msg.includes("timeout")) msg = "Connection Timed Out: Google Drive is taking too long to respond. Please retry.";
+                    
+                    setError(msg);
+                }
+            })
+            .finally(() => {
+                if (!isCancelled) {
+                    setIsLoading(false);
+                }
+            });
+
+        return () => {
+            isCancelled = true;
+        };
     }
-  }, [currentFolderId, accessToken, searchQuery, step, refreshKey]);
+  }, [currentFolderId, accessToken, debouncedSearchQuery, step, refreshKey]);
 
   const fetchDriveProfile = async (token: string) => {
       try {
@@ -266,19 +451,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
         setUserInfo(data);
 
         if (data.picture) {
-            try {
-                const proxyUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(data.picture)}`;
-                const imgRes = await fetch(proxyUrl);
-                if (imgRes.ok) {
-                    const blob = await imgRes.blob();
-                    const blobUrl = URL.createObjectURL(blob);
-                    setUserProfileBlob(blobUrl);
-                } else {
-                    setUserProfileBlob(data.picture);
-                }
-            } catch {
-                setUserProfileBlob(data.picture);
-            }
+            setUserProfileBlob(data.picture);
         }
 
       } catch (e) { console.error("Profile fetch failed", e); }
@@ -304,11 +477,13 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
       } else if (id === 'root') {
           setFolderPath([{id: 'root', name: 'My Drive'}]);
       } else {
-          const idx = folderPath.findIndex(p => p.id === id);
+          // Real folder: Remove virtual folders from breadcrumb path
+          const cleanBasePath = folderPath.filter(p => p.id !== 'virtual-videos' && p.id !== 'virtual-subtitles');
+          const idx = cleanBasePath.findIndex(p => p.id === id);
           if (idx !== -1) {
-              setFolderPath(folderPath.slice(0, idx + 1));
+              setFolderPath(cleanBasePath.slice(0, idx + 1));
           } else {
-              setFolderPath([...folderPath, {id, name}]);
+              setFolderPath([...cleanBasePath, {id, name}]);
           }
       }
       setCurrentFolderId(id);
@@ -318,9 +493,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
   const handleFileClick = (file: DriveFile) => {
       if (file.mimeType === 'application/vnd.google-apps.folder') {
-          setFolderPath([...folderPath, {id: file.id, name: file.name}]);
-          setCurrentFolderId(file.id);
-          setSelectedFile(null);
+          handleFolderSelect(file.id, file.name);
       } else {
           setSelectedFile(file);
       }
@@ -458,11 +631,18 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
                                 {/* Mobile: User & Logout shows here on row 1 */}
                                 <div className="flex items-center gap-3 md:hidden">
-                                    {userProfileBlob ? (
-                                        <img src={userProfileBlob} className="w-7 h-7 rounded-full border border-neutral-700 object-cover" alt="User" />
+                                    {!profileImageError && (userProfileBlob || userInfo?.picture) ? (
+                                        <img 
+                                            src={userProfileBlob || userInfo?.picture} 
+                                            className="w-7 h-7 rounded-full border border-neutral-700 object-cover" 
+                                            alt={userInfo?.name || "User"} 
+                                            referrerPolicy="no-referrer"
+                                            crossOrigin="anonymous"
+                                            onError={() => setProfileImageError(true)}
+                                        />
                                     ) : userInfo ? (
-                                        <div className="w-7 h-7 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-xs">
-                                            {userInfo.name.charAt(0)}
+                                        <div className="w-7 h-7 rounded-full bg-neutral-800 text-neutral-200 flex items-center justify-center font-bold text-xs shrink-0 border border-neutral-700">
+                                            {userInfo.name ? userInfo.name.charAt(0).toUpperCase() : 'U'}
                                         </div>
                                     ) : null}
                                     <button onClick={handleDisconnect} title="Logout" className="p-1.5 hover:bg-neutral-800 rounded-full transition-colors text-neutral-500 hover:text-red-400">
@@ -481,12 +661,12 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                     <Menu className="w-5 h-5" />
                                 </button>
 
-                                <div className="relative flex-1 md:flex-none md:w-full md:max-w-md h-12">
-                                    <Search className="absolute left-3 top-3.5 w-4 h-4 text-neutral-500" />
+                                <div className="relative flex-1 md:flex-none md:w-full md:max-w-md h-[38px]">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 pointer-events-none" />
                                     <input 
                                         type="text" 
                                         placeholder="Search Drive..." 
-                                        className="w-full h-full bg-black border border-neutral-800 rounded-lg py-3 pl-9 pr-4 text-sm text-white focus:outline-none focus:border-white"
+                                        className="w-full h-full bg-black border border-neutral-800 rounded-lg py-2 pl-9 pr-4 text-sm text-white focus:outline-none focus:border-white"
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
                                     />
@@ -494,11 +674,18 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
                                 {/* Desktop: User & Logout */}
                                 <div className="hidden md:flex items-center gap-3">
-                                    {userProfileBlob ? (
-                                        <img src={userProfileBlob} className="w-8 h-8 rounded-full border border-neutral-700 object-cover" alt="User" />
+                                    {!profileImageError && (userProfileBlob || userInfo?.picture) ? (
+                                        <img 
+                                            src={userProfileBlob || userInfo?.picture} 
+                                            className="w-8 h-8 rounded-full border border-neutral-700 object-cover" 
+                                            alt={userInfo?.name || "User"} 
+                                            referrerPolicy="no-referrer"
+                                            crossOrigin="anonymous"
+                                            onError={() => setProfileImageError(true)}
+                                        />
                                     ) : userInfo ? (
-                                        <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-xs">
-                                            {userInfo.name.charAt(0)}
+                                        <div className="w-8 h-8 rounded-full bg-neutral-800 text-neutral-200 flex items-center justify-center font-bold text-xs shrink-0 border border-neutral-700">
+                                            {userInfo.name ? userInfo.name.charAt(0).toUpperCase() : 'U'}
                                         </div>
                                     ) : null}
                                     <button onClick={handleDisconnect} title="Logout" className="p-2 hover:bg-neutral-800 rounded-full transition-colors text-neutral-500 hover:text-red-400">
@@ -528,7 +715,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                     {/* Virtual Folders */}
                                     <div 
                                         className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-sm mb-1
-                                            ${currentFolderId === 'virtual-videos' ? 'bg-indigo-900/40 text-white' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}
+                                            ${currentFolderId === 'virtual-videos' ? 'bg-neutral-800 text-white font-medium border border-neutral-700/60' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}
                                         `}
                                         onClick={() => handleFolderSelect('virtual-videos', 'All Videos')}
                                     >
@@ -537,7 +724,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                     </div>
                                     <div 
                                         className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors text-sm mb-3
-                                            ${currentFolderId === 'virtual-subtitles' ? 'bg-indigo-900/40 text-white' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}
+                                            ${currentFolderId === 'virtual-subtitles' ? 'bg-neutral-800 text-white font-medium border border-neutral-700/60' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}
                                         `}
                                         onClick={() => handleFolderSelect('virtual-subtitles', 'All Subtitles')}
                                     >
@@ -566,21 +753,264 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                 />
                             )}
 
-                            {/* MIDDLE: FILE GRID */}
+                             {/* MIDDLE: FILE GRID */}
                             <div className="flex-1 flex flex-col min-w-0 relative">
-                                {/* Breadcrumbs */}
-                                <div className="flex items-center gap-2 p-3 text-sm text-neutral-400 border-b border-neutral-800 overflow-x-auto whitespace-nowrap bg-neutral-900/20 no-scrollbar">
-                                    {folderPath.map((folder, idx) => (
-                                        <React.Fragment key={folder.id}>
-                                            <button 
-                                                onClick={() => handleFolderSelect(folder.id, folder.name)}
-                                                className="hover:text-white transition-colors shrink-0"
+                                {/* Breadcrumbs & Layout Switcher */}
+                                <div className="flex items-center justify-between gap-2 p-3 text-sm text-neutral-400 border-b border-neutral-800 bg-neutral-900/20">
+                                    {/* Breadcrumbs Track & Blur Navigation Arrows */}
+                                    <div className="relative flex-1 min-w-0 flex items-center group">
+                                        {/* Left Scroll Arrow with Fade Effect */}
+                                        {canScrollLeft && (
+                                            <div className="absolute left-0 top-0 bottom-0 flex items-center pr-3 pl-0.5 bg-gradient-to-r from-[#171717] via-[#171717]/90 to-transparent backdrop-blur-sm z-10">
+                                                <button
+                                                    onMouseDown={() => startScroll('left')}
+                                                    onMouseUp={stopScroll}
+                                                    onMouseLeave={stopScroll}
+                                                    onTouchStart={() => startScroll('left')}
+                                                    onTouchEnd={stopScroll}
+                                                    onClick={() => {
+                                                        if (breadcrumbRef.current) {
+                                                            breadcrumbRef.current.scrollBy({ left: -80, behavior: 'smooth' });
+                                                        }
+                                                    }}
+                                                    className="p-1 rounded-md bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-white transition-colors border border-neutral-700/50 shadow-md"
+                                                    title="Scroll path left"
+                                                >
+                                                    <ChevronLeft className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {/* Scrollable Track (Scrollbars Hidden) */}
+                                        <div
+                                            ref={breadcrumbRef}
+                                            onScroll={checkBreadcrumbScroll}
+                                            onWheel={(e) => {
+                                                if (breadcrumbRef.current) {
+                                                    breadcrumbRef.current.scrollLeft += e.deltaY;
+                                                    checkBreadcrumbScroll();
+                                                }
+                                            }}
+                                            className="flex items-center gap-2 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden w-full py-0.5"
+                                        >
+                                            {folderPath.map((folder, idx) => (
+                                                <React.Fragment key={folder.id}>
+                                                    <button 
+                                                        onClick={() => handleFolderSelect(folder.id, folder.name)}
+                                                        className="hover:text-white transition-colors shrink-0 font-medium text-neutral-200 text-xs"
+                                                    >
+                                                        {folder.name}
+                                                    </button>
+                                                    {idx < folderPath.length - 1 && <ChevronRight className="w-3.5 h-3.5 text-neutral-600 shrink-0" />}
+                                                </React.Fragment>
+                                            ))}
+                                        </div>
+
+                                        {/* Right Scroll Arrow with Fade Effect */}
+                                        {canScrollRight && (
+                                            <div className="absolute right-0 top-0 bottom-0 flex items-center pl-3 pr-0.5 bg-gradient-to-l from-[#171717] via-[#171717]/90 to-transparent backdrop-blur-sm z-10">
+                                                <button
+                                                    onMouseDown={() => startScroll('right')}
+                                                    onMouseUp={stopScroll}
+                                                    onMouseLeave={stopScroll}
+                                                    onTouchStart={() => startScroll('right')}
+                                                    onTouchEnd={stopScroll}
+                                                    onClick={() => {
+                                                        if (breadcrumbRef.current) {
+                                                            breadcrumbRef.current.scrollBy({ left: 80, behavior: 'smooth' });
+                                                        }
+                                                    }}
+                                                    className="p-1 rounded-md bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 hover:text-white transition-colors border border-neutral-700/50 shadow-md"
+                                                    title="Scroll path right"
+                                                >
+                                                    <ChevronRight className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Order & Layout Controls */}
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {/* Order / Sort Button & Dropdown Overlay */}
+                                        <div className="relative shrink-0" ref={sortMenuRef}>
+                                            <button
+                                                onClick={() => setShowSortMenu(prev => !prev)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1b1b1b]/90 hover:bg-[#262626]/90 border border-neutral-800 text-xs font-medium text-neutral-300 hover:text-white transition-all shadow-sm"
+                                                title="Sort Order"
                                             >
-                                                {folder.name}
+                                                <ArrowUpDown className="w-3.5 h-3.5 text-neutral-300" />
+                                                <span className="hidden sm:inline">
+                                                    {sortBy === 'NAME' && (sortDir === 'ASC' ? 'Name (A-Z)' : 'Name (Z-A)')}
+                                                    {sortBy === 'DATE' && (sortDir === 'DESC' ? 'Date (Newest)' : 'Date (Oldest)')}
+                                                    {sortBy === 'SIZE' && (sortDir === 'DESC' ? 'Size (Largest)' : 'Size (Smallest)')}
+                                                </span>
+                                                <ChevronDown className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-200 ${showSortMenu ? 'rotate-180' : ''}`} />
                                             </button>
-                                            {idx < folderPath.length - 1 && <ChevronRight className="w-4 h-4 text-neutral-600 shrink-0" />}
-                                        </React.Fragment>
-                                    ))}
+
+                                            {/* Dropdown Overlay */}
+                                            {showSortMenu && (
+                                                <div className="absolute right-0 top-full mt-1.5 w-52 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl p-1.5 z-30 flex flex-col gap-1 animate-in fade-in slide-in-from-top-2 duration-150 text-xs">
+                                                    <div className="px-2 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                                                        Sort By
+                                                    </div>
+
+                                                    <button
+                                                        onClick={() => setSortBy('NAME')}
+                                                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition-colors ${
+                                                            sortBy === 'NAME' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <span>Name</span>
+                                                        <span className="text-[10px] text-neutral-500 font-normal">A to Z</span>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => setSortBy('DATE')}
+                                                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition-colors ${
+                                                            sortBy === 'DATE' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <span>Date Modified</span>
+                                                        <span className="text-[10px] text-neutral-500 font-normal">Modification date</span>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => setSortBy('SIZE')}
+                                                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition-colors ${
+                                                            sortBy === 'SIZE' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <span>File Size</span>
+                                                        <span className="text-[10px] text-neutral-500 font-normal">Byte size</span>
+                                                    </button>
+
+                                                    <div className="h-px bg-neutral-800 my-1"></div>
+
+                                                    <div className="px-2 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                                                        Order Direction
+                                                    </div>
+
+                                                    {/* Smooth Sliding Toggle Container */}
+                                                    <div className="relative flex w-full p-1 bg-neutral-950 rounded-lg border border-neutral-800 select-none">
+                                                        <div 
+                                                            className="absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/2)] bg-neutral-800 border border-neutral-700 rounded-md transition-transform duration-300 ease-out shadow-sm"
+                                                            style={{ transform: `translateX(${sortDir === 'DESC' ? '100%' : '0%'})` }}
+                                                        />
+                                                        <button
+                                                            onClick={() => setSortDir('ASC')}
+                                                            className={`relative z-10 flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                                                                sortDir === 'ASC' ? 'text-white' : 'text-neutral-400 hover:text-neutral-200'
+                                                            }`}
+                                                        >
+                                                            <ArrowUp className="w-3 h-3" />
+                                                            <span>Asc</span>
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setSortDir('DESC')}
+                                                            className={`relative z-10 flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                                                                sortDir === 'DESC' ? 'text-white' : 'text-neutral-400 hover:text-neutral-200'
+                                                            }`}
+                                                        >
+                                                            <ArrowDown className="w-3 h-3" />
+                                                            <span>Desc</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Layout Switcher Button & Dropdown Overlay */}
+                                        <div className="relative shrink-0" ref={layoutMenuRef}>
+                                            <button
+                                                onClick={() => setShowLayoutMenu(prev => !prev)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1b1b1b]/90 hover:bg-[#262626]/90 border border-neutral-800 text-xs font-medium text-neutral-300 hover:text-white transition-all shadow-sm"
+                                                title="Change Layout Mode"
+                                            >
+                                                {viewMode === 'GRID' && <Grid className="w-3.5 h-3.5 text-neutral-300" />}
+                                                {viewMode === 'LARGE_GRID' && <LayoutGrid className="w-3.5 h-3.5 text-neutral-300" />}
+                                                {viewMode === 'CARDS' && <LayoutList className="w-3.5 h-3.5 text-neutral-300" />}
+                                                {viewMode === 'LIST' && <List className="w-3.5 h-3.5 text-neutral-300" />}
+                                                <span className="hidden sm:inline">
+                                                    {viewMode === 'GRID' && 'Grid'}
+                                                    {viewMode === 'LARGE_GRID' && 'Large Grid'}
+                                                    {viewMode === 'CARDS' && 'Cards'}
+                                                    {viewMode === 'LIST' && 'List'}
+                                                </span>
+                                                <ChevronDown className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-200 ${showLayoutMenu ? 'rotate-180' : ''}`} />
+                                            </button>
+
+                                            {/* Dropdown Overlay */}
+                                            {showLayoutMenu && (
+                                                <div className="absolute right-0 top-full mt-1.5 w-44 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl p-1 z-30 flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-2 duration-150">
+                                                    <button
+                                                        onClick={() => { setViewMode('GRID'); setShowLayoutMenu(false); }}
+                                                        className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg transition-colors ${
+                                                            viewMode === 'GRID' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <Grid className="w-4 h-4 text-neutral-300 shrink-0" />
+                                                        <div className="flex flex-col text-left">
+                                                            <span>Grid View</span>
+                                                            <span className="text-[10px] text-neutral-500 font-normal">Standard 4-col grid</span>
+                                                        </div>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => { setViewMode('LARGE_GRID'); setShowLayoutMenu(false); }}
+                                                        className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg transition-colors ${
+                                                            viewMode === 'LARGE_GRID' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <LayoutGrid className="w-4 h-4 text-neutral-300 shrink-0" />
+                                                        <div className="flex flex-col text-left">
+                                                            <span>Large Grid</span>
+                                                            <span className="text-[10px] text-neutral-500 font-normal">Spacious cards</span>
+                                                        </div>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => { setViewMode('CARDS'); setShowLayoutMenu(false); }}
+                                                        className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg transition-colors ${
+                                                            viewMode === 'CARDS' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <LayoutList className="w-4 h-4 text-neutral-300 shrink-0" />
+                                                        <div className="flex flex-col text-left">
+                                                            <span>Cards</span>
+                                                            <span className="text-[10px] text-neutral-500 font-normal">Horizontal preview cards</span>
+                                                        </div>
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => { setViewMode('LIST'); setShowLayoutMenu(false); }}
+                                                        className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg transition-colors ${
+                                                            viewMode === 'LIST' 
+                                                                ? 'bg-neutral-800 text-white font-semibold border border-neutral-700' 
+                                                                : 'text-neutral-300 hover:bg-neutral-800 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <List className="w-4 h-4 text-neutral-300 shrink-0" />
+                                                        <div className="flex flex-col text-left">
+                                                            <span>Compact List</span>
+                                                            <span className="text-[10px] text-neutral-500 font-normal">Detailed list rows</span>
+                                                        </div>
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {/* Content */}
@@ -601,14 +1031,92 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                                 Try Again
                                             </Button>
                                         </div>
-                                    ) : files.length === 0 ? (
+                                    ) : sortedFiles.length === 0 ? (
                                         <div className="h-full flex flex-col items-center justify-center text-neutral-500 gap-3 opacity-50">
                                             <Folder className="w-12 h-12" />
                                             <span>Folder is empty</span>
                                         </div>
+                                    ) : viewMode === 'CARDS' ? (
+                                        /* CARDS VIEW MODE */
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            {sortedFiles.map(file => {
+                                                const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+                                                const isSelected = selectedFile?.id === file.id;
+
+                                                return (
+                                                    <div 
+                                                        key={file.id}
+                                                        onClick={() => handleFileClick(file)}
+                                                        onDoubleClick={() => isFolder && handleFolderSelect(file.id, file.name)}
+                                                        className={`
+                                                            group flex items-center gap-3.5 p-3 rounded-xl border cursor-pointer transition-all
+                                                            ${isSelected ? 'bg-neutral-800/90 border-neutral-600' : 'bg-neutral-900/40 border-neutral-800 hover:bg-neutral-800'}
+                                                        `}
+                                                    >
+                                                        <div className="w-16 h-16 shrink-0 bg-neutral-950 rounded-lg overflow-hidden relative flex items-center justify-center border border-neutral-800">
+                                                            <DriveThumbnail file={file} iconClassName="w-7 h-7" />
+                                                            {file.videoMediaMetadata && (
+                                                                <span className="absolute bottom-1 right-1 bg-black/80 text-[9px] text-white px-1 py-0.5 rounded">
+                                                                    {formatDuration(file.videoMediaMetadata.durationMillis)}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0 space-y-1">
+                                                            <h4 className="text-xs font-semibold text-white truncate" title={file.name}>{file.name}</h4>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 font-mono">
+                                                                    {isFolder ? 'Folder' : (file.fileExtension ? file.fileExtension.toUpperCase() : 'File')}
+                                                                </span>
+                                                                {!isFolder && file.size && (
+                                                                    <span className="text-[10px] text-neutral-500">{formatSize(file.size)}</span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-[10px] text-neutral-500">
+                                                                {file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString() : ''}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : viewMode === 'LIST' ? (
+                                        /* COMPACT LIST VIEW */
+                                        <div className="flex flex-col gap-1.5">
+                                            {sortedFiles.map(file => {
+                                                const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
+                                                const isSelected = selectedFile?.id === file.id;
+
+                                                return (
+                                                    <div 
+                                                        key={file.id}
+                                                        onClick={() => handleFileClick(file)}
+                                                        onDoubleClick={() => isFolder && handleFolderSelect(file.id, file.name)}
+                                                        className={`
+                                                            group flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all
+                                                            ${isSelected ? 'bg-neutral-800/90 border-neutral-600' : 'bg-neutral-900/40 border-neutral-800 hover:bg-neutral-800'}
+                                                        `}
+                                                    >
+                                                        <div className="w-10 h-10 shrink-0 bg-neutral-950 rounded-lg overflow-hidden flex items-center justify-center border border-neutral-800">
+                                                            <DriveThumbnail file={file} iconClassName="w-5 h-5" />
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <h4 className="text-xs font-medium text-white truncate" title={file.name}>{file.name}</h4>
+                                                            <span className="text-[10px] text-neutral-500">{isFolder ? 'Folder' : (file.fileExtension ? file.fileExtension.toUpperCase() : 'File')}</span>
+                                                        </div>
+                                                        <div className="hidden sm:block text-[11px] text-neutral-400 w-20 text-right shrink-0">
+                                                            {isFolder ? '--' : formatSize(file.size)}
+                                                        </div>
+                                                        <div className="hidden md:block text-[11px] text-neutral-500 w-24 text-right shrink-0">
+                                                            {file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString() : ''}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
                                     ) : (
-                                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                            {files.map(file => {
+                                        /* GRID / LARGE_GRID VIEW MODE */
+                                        <div className={viewMode === 'LARGE_GRID' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" : "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"}>
+                                            {sortedFiles.map(file => {
                                                 const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
                                                 const isSelected = selectedFile?.id === file.id;
 
@@ -618,28 +1126,12 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                                         onClick={() => handleFileClick(file)}
                                                         className={`
                                                             group relative p-3 rounded-xl border cursor-pointer transition-all flex flex-col gap-3
-                                                            ${isSelected ? 'bg-indigo-900/30 border-indigo-500/50' : 'bg-neutral-900/40 border-neutral-800 hover:bg-neutral-800'}
+                                                            ${isSelected ? 'bg-neutral-800/90 border-neutral-600' : 'bg-neutral-900/40 border-neutral-800 hover:bg-neutral-800'}
                                                         `}
                                                         onDoubleClick={() => isFolder && handleFolderSelect(file.id, file.name)}
                                                     >
                                                         <div className="aspect-video bg-neutral-950 rounded-lg overflow-hidden relative flex items-center justify-center">
-                                                            {file.thumbnailLink && !isFolder ? (
-                                                                <img 
-                                                                    src={`http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(file.thumbnailLink)}&token=${encodeURIComponent(accessToken)}`} 
-                                                                    className="w-full h-full object-cover opacity-80 group-hover:opacity-100" 
-                                                                    alt="" 
-                                                                    referrerPolicy="no-referrer"
-                                                                    onError={(e) => {
-                                                                        if (e.currentTarget.src !== file.thumbnailLink) {
-                                                                            e.currentTarget.src = file.thumbnailLink;
-                                                                        }
-                                                                    }}
-                                                                />
-                                                            ) : (
-                                                                <div className="text-neutral-600">
-                                                                    {isFolder ? <Folder className="w-10 h-10" /> : file.mimeType.includes('video') ? <FileVideo className="w-10 h-10" /> : <FileText className="w-10 h-10" />}
-                                                                </div>
-                                                            )}
+                                                            <DriveThumbnail file={file} iconClassName="w-10 h-10" />
                                                             {file.videoMediaMetadata && (
                                                                 <span className="absolute bottom-1 right-1 bg-black/80 text-[10px] text-white px-1.5 py-0.5 rounded">
                                                                     {formatDuration(file.videoMediaMetadata.durationMillis)}
@@ -681,24 +1173,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                         <>
                                             <div className="space-y-4 flex-1">
                                                 <div className="aspect-video bg-neutral-950 rounded-xl overflow-hidden flex items-center justify-center border border-neutral-800">
-                                                    {selectedFile.thumbnailLink ? (
-                                                        <img 
-                                                            src={`http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(selectedFile.thumbnailLink.replace('s220', 's600'))}&token=${encodeURIComponent(accessToken)}`} 
-                                                            className="w-full h-full object-cover" 
-                                                            alt="Preview" 
-                                                            referrerPolicy="no-referrer"
-                                                            onError={(e) => {
-                                                                const fallback = selectedFile.thumbnailLink.replace('s220', 's600');
-                                                                if (e.currentTarget.src !== fallback) {
-                                                                    e.currentTarget.src = fallback;
-                                                                }
-                                                            }}
-                                                        />
-                                                    ) : (
-                                                        <div className="text-neutral-600">
-                                                            {selectedFile.mimeType.includes('video') ? <FileVideo className="w-16 h-16" /> : <FileText className="w-16 h-16" />}
-                                                        </div>
-                                                    )}
+                                                    <DriveThumbnail file={selectedFile} iconClassName="w-16 h-16" />
                                                 </div>
                                                 <div>
                                                     <h3 className="font-bold text-white text-lg leading-tight break-words">{selectedFile.name}</h3>

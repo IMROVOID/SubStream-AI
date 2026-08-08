@@ -3,9 +3,28 @@ import { DriveFile } from "../types";
 // PROXY URL for Drive API Calls
 const BACKEND_URL = "http://localhost:4000/api/proxy";
 
+let isProxyChecked = false;
+let isProxyOnline = false;
+
+async function checkProxyAvailability(): Promise<boolean> {
+    if (isProxyChecked) return isProxyOnline;
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 150);
+        const res = await fetch("http://localhost:4000/api/proxy/drive/list?token=test", { 
+            signal: controller.signal 
+        }).catch(() => null);
+        clearTimeout(timeoutId);
+        isProxyOnline = res !== null && res.status !== 0;
+    } catch {
+        isProxyOnline = false;
+    }
+    isProxyChecked = true;
+    return isProxyOnline;
+}
+
 /**
- * Fetches the contents of a specific folder via Local Proxy.
- * This bypasses CORS and 403 restrictions from the browser.
+ * Fetches the contents of a specific folder via Local Proxy or Direct REST API.
  */
 export async function listDriveFiles(accessToken: string, folderId: string = 'root', searchQuery: string = ''): Promise<DriveFile[]> {
     let query = '';
@@ -29,29 +48,34 @@ export async function listDriveFiles(accessToken: string, folderId: string = 'ro
         query += ` and name contains '${safeSearch}'`;
     }
 
-    // FIX: Added 'fileExtension' to requested fields
     const fields = "files(id, name, mimeType, thumbnailLink, iconLink, size, createdTime, modifiedTime, videoMediaMetadata, fileExtension)";
-    const orderBy = "folder,modifiedTime desc";
+    const orderBy = "folder,name";
 
-    // 1. Try Local Proxy first
-    try {
-        const params = new URLSearchParams({
-            token: accessToken,
-            query: query,
-            fields: fields,
-            orderBy: orderBy,
-            pageSize: '1000'
-        });
+    // 1. Try Local Proxy only if proxy is online
+    const hasProxy = await checkProxyAvailability();
+    if (hasProxy) {
+        try {
+            const params = new URLSearchParams({
+                token: accessToken,
+                query: query,
+                fields: fields,
+                orderBy: orderBy,
+                pageSize: '1000'
+            });
 
-        const url = `${BACKEND_URL}/drive/list?${params.toString()}`;
-        const response = await fetch(url);
+            const url = `${BACKEND_URL}/drive/list?${params.toString()}`;
+            const response = await fetch(url);
 
-        if (response.ok) {
-            const data = await response.json();
-            return data.files || [];
+            if (response.ok) {
+                const data = await response.json();
+                const files: DriveFile[] = data.files || [];
+                const uniqueMap = new Map<string, DriveFile>();
+                files.forEach(f => uniqueMap.set(f.id, f));
+                return Array.from(uniqueMap.values());
+            }
+        } catch {
+            isProxyOnline = false;
         }
-    } catch {
-        // Local proxy server offline, proceed to direct Google Drive API fallback
     }
 
     // 2. Direct Google Drive API Fallback
@@ -87,7 +111,10 @@ export async function listDriveFiles(accessToken: string, folderId: string = 'ro
     }
 
     const data = await directResponse.json();
-    return data.files || [];
+    const rawFiles: DriveFile[] = data.files || [];
+    const uniqueMap = new Map<string, DriveFile>();
+    rawFiles.forEach(f => uniqueMap.set(f.id, f));
+    return Array.from(uniqueMap.values());
 }
 
 /**

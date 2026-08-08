@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Link, Youtube, Download, AlertCircle, Loader2, PlayCircle, FileText, Film, ArrowLeft, Search, SortDesc, Globe, Lock, EyeOff, Check } from 'lucide-react';
+import { Link, Youtube, Download, AlertCircle, Loader2, PlayCircle, FileText, Film, ArrowLeft, Search, SortDesc, Globe, Lock, EyeOff, Check, Clipboard } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './Button';
 import { extractYouTubeId, getVideoDetails, fetchUserVideos } from '../services/youtubeService';
@@ -26,6 +26,18 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState<'IDLE' | 'LOADING' | 'PREVIEW'>('IDLE');
   const [error, setError] = useState<string | null>(null);
+
+  const handlePaste = async () => {
+      try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+              setUrl(text);
+              setError(null);
+          }
+      } catch (err) {
+          console.error("Failed to read clipboard:", err);
+      }
+  };
   
   // URL Specific State
   const [detectedType, setDetectedType] = useState<'VIDEO' | 'SRT' | null>(null);
@@ -232,16 +244,24 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
                             </p>
                             <div className="relative">
                                 <div className="absolute left-4 top-3.5 text-neutral-500">
-                                {type === 'YOUTUBE' ? <Youtube className="w-5 h-5" /> : <Link className="w-5 h-5" />}
+                                {type === 'YOUTUBE' ? <Youtube className="w-5 h-5 text-red-500" /> : <Link className="w-5 h-5" />}
                                 </div>
                                 <input 
                                     type="text" 
                                     placeholder={type === 'YOUTUBE' ? "https://www.youtube.com/watch?v=..." : "https://example.com/movie.srt"}
-                                    className="w-full bg-black border border-neutral-800 rounded-xl py-3 pl-12 pr-4 text-white focus:outline-none focus:border-white transition-colors"
+                                    className="w-full bg-black border border-neutral-800 rounded-xl py-3 pl-12 pr-12 text-white focus:outline-none focus:border-white transition-colors"
                                     value={url}
                                     onChange={(e) => setUrl(e.target.value)}
                                     onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
                                 />
+                                <button
+                                    type="button"
+                                    onClick={handlePaste}
+                                    className="absolute right-2.5 top-2.5 p-1.5 text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg border border-neutral-800 transition-colors flex items-center justify-center"
+                                    title="Paste from clipboard"
+                                >
+                                    <Clipboard className="w-4 h-4" />
+                                </button>
                             </div>
                             {error && <div className="p-3 bg-red-900/20 border border-red-900/50 rounded-lg text-red-400 text-sm flex gap-2"><AlertCircle className="w-4 h-4 mt-0.5" />{error}</div>}
                             
@@ -261,6 +281,8 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
                                 <Button 
                                     onClick={handleUrlSubmit} 
                                     disabled={!url || status === 'LOADING'} 
+                                    variant="secondary"
+                                    className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
                                     icon={status === 'LOADING' ? <Loader2 className="animate-spin w-4 h-4"/> : undefined}
                                 >
                                     {status === 'LOADING' ? 'Checking...' : 'Continue'}
