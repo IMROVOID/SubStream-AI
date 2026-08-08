@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
         headers: {
           'Cross-Origin-Opener-Policy': 'same-origin',
           'Cross-Origin-Embedder-Policy': 'require-corp',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
         },
       },
       optimizeDeps: {
