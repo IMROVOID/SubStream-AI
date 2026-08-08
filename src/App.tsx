@@ -17,6 +17,7 @@ import { TrackSelector } from './components/TrackSelector';
 import { YouTubeAuth } from './components/YouTubeAuth';
 import { ImportUrlModal } from './components/ImportUrlModal';
 import { CloudImportModal } from './components/CloudImportModal';
+import { getAuthItem, setAuthItem, removeAuthItem } from './utils/cookieUtils';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
 type Page = 'HOME' | 'DOCS';
@@ -350,18 +351,23 @@ const App = () => {
       localStorage.setItem('substream_daily_usage', '0');
     }
 
-    const savedUser = localStorage.getItem('substream_google_user');
-    const savedToken = localStorage.getItem('substream_google_token');
-    const savedTimestamp = localStorage.getItem('substream_google_token_timestamp');
+    const savedUser = getAuthItem('substream_google_user');
+    const savedToken = getAuthItem('substream_google_token');
+    const savedTimestamp = getAuthItem('substream_google_token_timestamp');
     
     let isValidAuth = false;
 
     if (savedUser && savedToken && savedTimestamp) {
         const tokenAge = Date.now() - parseInt(savedTimestamp, 10);
-        if (tokenAge < 3000000) {
-            setGoogleUser(JSON.parse(savedUser));
-            setGoogleAccessToken(savedToken);
-            isValidAuth = true;
+        if (tokenAge < 30 * 24 * 60 * 60 * 1000) {
+            try {
+                setGoogleUser(JSON.parse(savedUser));
+                setGoogleAccessToken(savedToken);
+                isValidAuth = true;
+            } catch (e) {
+                console.error("Failed to parse saved user", e);
+                handleGoogleLogout();
+            }
         } else {
             console.warn("Google Token Expired. Clearing session.");
             handleGoogleLogout(); 
@@ -526,8 +532,8 @@ const App = () => {
     
     const accessToken = tokenResponse.access_token;
     setGoogleAccessToken(accessToken);
-    localStorage.setItem('substream_google_token', accessToken);
-    localStorage.setItem('substream_google_token_timestamp', Date.now().toString());
+    setAuthItem('substream_google_token', accessToken);
+    setAuthItem('substream_google_token_timestamp', Date.now().toString());
     
     fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -535,7 +541,7 @@ const App = () => {
     .then(res => res.json())
     .then(data => {
         setGoogleUser(data);
-        localStorage.setItem('substream_google_user', JSON.stringify(data));
+        setAuthItem('substream_google_user', JSON.stringify(data));
         showToast(`Welcome, ${data.name}!`); 
     })
     .catch(error => {
@@ -551,9 +557,9 @@ const App = () => {
     }
     setGoogleUser(null);
     setGoogleAccessToken(null);
-    localStorage.removeItem('substream_google_token');
-    localStorage.removeItem('substream_google_user');
-    localStorage.removeItem('substream_google_token_timestamp');
+    removeAuthItem('substream_google_token');
+    removeAuthItem('substream_google_user');
+    removeAuthItem('substream_google_token_timestamp');
     showToast("Disconnected from YouTube.");
   };
 

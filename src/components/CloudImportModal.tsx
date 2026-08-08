@@ -4,6 +4,7 @@ import { Modal } from './Modal';
 import { Button } from './Button';
 import { DriveFile } from '../types';
 import { listDriveFiles, downloadDriveFile } from '../services/googleDriveService';
+import { getAuthItem, setAuthItem, removeAuthItem } from '../utils/cookieUtils';
 
 interface CloudImportModalProps {
   isOpen: boolean;
@@ -324,19 +325,19 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
   // --- INITIAL LOAD: CHECK STORAGE ---
   useEffect(() => {
-      const storedToken = localStorage.getItem('substream_drive_token');
-      const storedExpiry = localStorage.getItem('substream_drive_token_timestamp');
+      const storedToken = getAuthItem('substream_drive_token');
+      const storedExpiry = getAuthItem('substream_drive_token_timestamp');
 
       if (storedToken && storedExpiry) {
           const now = Date.now();
           const age = now - parseInt(storedExpiry, 10);
           
-          if (age < 50 * 60 * 1000) {
+          if (age < 30 * 24 * 60 * 60 * 1000) {
               setAccessToken(storedToken);
               fetchDriveProfile(storedToken);
           } else {
-              localStorage.removeItem('substream_drive_token');
-              localStorage.removeItem('substream_drive_token_timestamp');
+              removeAuthItem('substream_drive_token');
+              removeAuthItem('substream_drive_token_timestamp');
           }
       }
   }, []);
@@ -372,8 +373,8 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
   const handleLoginSuccess = (token: string) => {
       setAccessToken(token);
-      localStorage.setItem('substream_drive_token', token);
-      localStorage.setItem('substream_drive_token_timestamp', Date.now().toString());
+      setAuthItem('substream_drive_token', token);
+      setAuthItem('substream_drive_token_timestamp', Date.now().toString());
       
       setStep('EXPLORER');
       setProvider('GDRIVE'); 
@@ -386,8 +387,8 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
       setProvider(null);
       setFiles([]);
       setError(null);
-      localStorage.removeItem('substream_drive_token');
-      localStorage.removeItem('substream_drive_token_timestamp');
+      removeAuthItem('substream_drive_token');
+      removeAuthItem('substream_drive_token_timestamp');
       if (userProfileBlob) URL.revokeObjectURL(userProfileBlob);
       setUserProfileBlob(null);
       setUserInfo(null);
