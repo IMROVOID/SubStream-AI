@@ -399,20 +399,20 @@ export const SUPPORTED_VIDEO_FORMATS = [
   'video/x-msvideo', // AVI
 ];
 
-export type RPMLimit = number | 'unlimited';
+export type RPMLimit = number | 'custom' | 'unlimited';
 
 // Used for OpenAI Only
-export const OPENAI_RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
+export const OPENAI_RPM_OPTIONS: { value: number | 'custom'; label: string; description: string }[] = [
     { value: 2, label: 'Low', description: 'Best for avoiding strict rate limits on free tiers (2 RPM).' },
     { value: 15, label: 'Medium', description: 'Recommended default. Good balance of speed and safety (15 RPM).' },
     { value: 30, label: 'High', description: 'Faster, but higher risk of rate limits (30 RPM).' },
-    { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. Only for high-tier paid keys.' },
+    { value: 'custom', label: 'Custom', description: 'Specify a custom Requests Per Minute (RPM) limit.' },
 ];
 
 // Used for Anthropic Only
-export const ANTHROPIC_RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
+export const ANTHROPIC_RPM_OPTIONS: { value: number | 'custom'; label: string; description: string }[] = [
     { value: 5, label: 'Low', description: 'Safe limit for initial Anthropic tier (5 RPM).' },
     { value: 20, label: 'Medium', description: 'Recommended default for Anthropic Build tier (20 RPM).' },
     { value: 50, label: 'High', description: 'Faster throughput for Scale tier users (50 RPM).' },
-    { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. For high-tier enterprise keys.' },
+    { value: 'custom', label: 'Custom', description: 'Specify a custom Requests Per Minute (RPM) limit.' },
 ];

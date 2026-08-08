@@ -21,17 +21,19 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const enforceRateLimit = async () => {
     if (currentRPM === 'unlimited') return;
+    const rpmLimit = typeof currentRPM === 'number' ? currentRPM : 15;
+    if (rpmLimit <= 0) return;
 
     const now = Date.now();
     // Remove timestamps older than 1 minute
     requestTimestamps = requestTimestamps.filter(t => now - t < 60000);
 
-    if (requestTimestamps.length >= currentRPM) {
+    if (requestTimestamps.length >= rpmLimit) {
         // Find how long until the oldest request expires
         const oldestRequest = requestTimestamps[0];
         const timeToWait = 60000 - (now - oldestRequest) + 100; // +100ms buffer
         
-        console.warn(`Rate limit (${currentRPM} RPM) hit. Waiting ${timeToWait}ms...`);
+        console.warn(`Rate limit (${rpmLimit} RPM) hit. Waiting ${timeToWait}ms...`);
         await delay(timeToWait);
         // Recursively check again after waiting to ensure slot is clear
         await enforceRateLimit();

@@ -160,6 +160,8 @@ const App = () => {
   }, []);
 
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
+    const saved = localStorage.getItem('substream_model_id');
+    if (saved) return saved;
     const cached = getCachedModels() || AVAILABLE_MODELS;
     return cached[1]?.id || cached[0]?.id || 'gemini-2.5-flash';
   }); 
@@ -177,6 +179,8 @@ const App = () => {
 
   const [requestsUsed, setRequestsUsed] = useState<number>(0);
   const [selectedRPM, setSelectedRPM] = useState<RPMLimit>(15);
+  const [isCustomRPM, setIsCustomRPM] = useState<boolean>(false);
+  const [customRPMInput, setCustomRPMInput] = useState<string>('60');
   const [selectedGeminiTier, setSelectedGeminiTier] = useState<GeminiTier>('free');
   
   // YouTube Auth State
@@ -322,9 +326,18 @@ const App = () => {
     }
 
     if (storedRPM) {
-        const rpm = (storedRPM === 'unlimited' ? 'unlimited' : parseInt(storedRPM, 10)) as RPMLimit;
-        setSelectedRPM(rpm);
-        setGlobalRPM(rpm);
+        const parsedRpm = parseInt(storedRPM, 10);
+        if (!isNaN(parsedRpm) && parsedRpm > 0) {
+            setSelectedRPM(parsedRpm);
+            setGlobalRPM(parsedRpm);
+            if (![2, 5, 15, 20, 30, 50].includes(parsedRpm)) {
+                setIsCustomRPM(true);
+                setCustomRPMInput(parsedRpm.toString());
+            }
+        } else {
+            setSelectedRPM(15);
+            setGlobalRPM(15);
+        }
     } else {
         setGlobalRPM(15); 
     }
@@ -355,7 +368,7 @@ const App = () => {
         }
     }
 
-    if (storedModel && (modelsList.find(m => m.id === storedModel) || AVAILABLE_MODELS.find(m => m.id === storedModel))) {
+    if (storedModel) {
         if (storedModel === 'youtube-auto' && !isValidAuth) {
             setSelectedModelId(modelsList[1]?.id || AVAILABLE_MODELS[1].id);
         } else {
@@ -366,6 +379,13 @@ const App = () => {
     setIsAuthLoaded(true);
 
   }, []);
+
+  // Auto-persist model selection whenever user selects a model
+  useEffect(() => {
+    if (selectedModelId) {
+      localStorage.setItem('substream_model_id', selectedModelId);
+    }
+  }, [selectedModelId]);
 
   useEffect(() => {
       if (isAuthLoaded && selectedModelId === 'youtube-auto' && !googleUser) {
@@ -1627,81 +1647,142 @@ const App = () => {
                     <p className="text-xs text-neutral-500">For Claude models. Stored locally in your browser.</p>
                   </div>
     
-                  {activeModelData.provider !== 'youtube' && (
-                    <div className="space-y-2">
-                         <div className="flex items-center justify-between mb-2">
-                            <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
-                            <p className="font-medium text-white text-sm">{selectedRPM === 'unlimited' ? 'Unlimited' : `${selectedRPM} RPM`}</p>
-                         </div>
-                        
-                         {/* GOOGLE DYNAMIC RATE LIMIT UI */}
-                         {activeModelData.provider === 'google' && activeModelData.rateLimits ? (
-                             <>
-                                <div className="grid grid-cols-4 gap-1 w-full bg-neutral-900 border border-neutral-800 rounded-xl p-1">
-                                    {(['free', 'tier1', 'tier2', 'tier3'] as GeminiTier[]).map((tier) => {
-                                        const rpm = activeModelData.rateLimits![tier];
-                                        const isDisabled = rpm === undefined;
-                                        const isActive = selectedGeminiTier === tier;
-                                        const labelMap = { free: 'Free Tier', tier1: 'Tier 1', tier2: 'Tier 2', tier3: 'Tier 3' };
-                                        
-                                        return (
-                                            <button
-                                                key={tier}
-                                                onClick={() => !isDisabled && setSelectedGeminiTier(tier)}
-                                                disabled={isDisabled}
-                                                className={`
-                                                    relative flex flex-col items-center justify-center py-2 rounded-lg text-xs transition-all duration-200
-                                                    ${isDisabled ? 'opacity-30 cursor-not-allowed text-neutral-600' : 
-                                                        isActive ? 'bg-neutral-700 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'}
-                                                `}
-                                            >
-                                                <span className="font-bold mb-0.5">{labelMap[tier]}</span>
-                                                <span className="text-[10px] opacity-80">{rpm ? rpm : 'N/A'}</span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                                <div className="mt-2 text-center">
-                                    <a href="https://aistudio.google.com/rate-limit?timeRange=last-28-days&project=gen-lang-client-0786325536" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
-                                        Check your limits on Google AI Studio <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                </div>
-                             </>
-                         ) : activeModelData.provider === 'anthropic' ? (
-                             /* ANTHROPIC RATE LIMIT UI */
-                             <>
-                                <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
-                                    <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${(selectedAnthropicRpmIndex >= 0 ? selectedAnthropicRpmIndex : 0) * 100}%)` }} />
-                                    {ANTHROPIC_RPM_OPTIONS.map((option) => (
-                                        <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
-                                    ))}
-                                </div>
-                                <p className="text-xs text-neutral-500 text-center mt-2">{ANTHROPIC_RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
-                                <div className="mt-2 text-center">
-                                    <a href="https://platform.claude.com/docs/en/api/rate-limits" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
-                                        Check your limits on Anthropic Console <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                </div>
-                             </>
-                         ) : (
-                             /* OPENAI / STATIC RATE LIMIT UI */
-                             <>
-                                <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl">
-                                    <div className="absolute top-1 bottom-1 left-1 w-1/4 bg-neutral-700 rounded-lg transition-all duration-300 ease-out" style={{ transform: `translateX(${(selectedOpenAIRpmIndex >= 0 ? selectedOpenAIRpmIndex : 0) * 100}%)` }} />
-                                    {OPENAI_RPM_OPTIONS.map((option) => (
-                                        <button key={option.value} onClick={() => setSelectedRPM(option.value)} className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg ${selectedRPM === option.value ? 'text-white' : 'text-neutral-400 hover:text-white'}`}>{option.label}</button>
-                                    ))}
-                                </div>
-                                <p className="text-xs text-neutral-500 text-center mt-2">{OPENAI_RPM_OPTIONS.find(o => o.value === selectedRPM)?.description}</p>
-                                <div className="mt-2 text-center">
-                                    <a href="https://developers.openai.com/api/docs/guides/rate-limits" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
-                                        Check your limits on OpenAI Platform <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                </div>
-                             </>
-                         )}
-                    </div>
-                  )}
+                  {activeModelData.provider !== 'youtube' && (() => {
+                    const currentRpmOptions = activeModelData.provider === 'anthropic' ? ANTHROPIC_RPM_OPTIONS : OPENAI_RPM_OPTIONS;
+                    const standardIdx = currentRpmOptions.findIndex(o => o.value === selectedRPM);
+                    const currentRpmOptionIndex = isCustomRPM ? 3 : (standardIdx >= 0 ? standardIdx : 1);
+
+                    return (
+                      <div className="space-y-2">
+                           <div className="flex items-center justify-between mb-2">
+                              <label className="block text-sm font-bold text-white flex items-center gap-2"><Gauge className="w-4 h-4" /> Rate Limit</label>
+                              <p className="font-medium text-white text-sm">{`${typeof selectedRPM === 'number' ? selectedRPM : 15} RPM`}</p>
+                           </div>
+                          
+                           {/* GOOGLE STATIC TIER RATE LIMIT UI */}
+                           {activeModelData.provider === 'google' && activeModelData.rateLimits ? (
+                               <>
+                                  <div className="grid grid-cols-4 gap-1 w-full bg-neutral-900 border border-neutral-800 rounded-xl p-1">
+                                      {(['free', 'tier1', 'tier2', 'tier3'] as GeminiTier[]).map((tier) => {
+                                          const rpm = activeModelData.rateLimits![tier];
+                                          const isDisabled = rpm === undefined;
+                                          const isActive = selectedGeminiTier === tier;
+                                          const labelMap = { free: 'Free Tier', tier1: 'Tier 1', tier2: 'Tier 2', tier3: 'Tier 3' };
+                                          
+                                          return (
+                                              <button
+                                                  key={tier}
+                                                  onClick={() => !isDisabled && setSelectedGeminiTier(tier)}
+                                                  disabled={isDisabled}
+                                                  className={`
+                                                      relative flex flex-col items-center justify-center py-2 rounded-lg text-xs transition-all duration-200
+                                                      ${isDisabled ? 'opacity-30 cursor-not-allowed text-neutral-600' : 
+                                                          isActive ? 'bg-neutral-700 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'}
+                                                  `}
+                                              >
+                                                  <span className="font-bold mb-0.5">{labelMap[tier]}</span>
+                                                  <span className="text-[10px] opacity-80">{rpm ? rpm : 'N/A'}</span>
+                                              </button>
+                                          );
+                                      })}
+                                  </div>
+                                  <div className="mt-2 text-center">
+                                      <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                          Check your limits on Google AI Studio <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                  </div>
+                               </>
+                           ) : (
+                               /* STANDARD & DYNAMIC RATE LIMIT UI (Google, OpenAI, Anthropic) */
+                               <>
+                                   <div className="relative flex w-full p-1 bg-neutral-900 border border-neutral-800 rounded-xl select-none">
+                                       <div 
+                                         className="absolute top-1 bottom-1 left-1 w-[calc((100%-8px)/4)] bg-neutral-700 rounded-lg transition-transform duration-300 ease-out shadow-sm" 
+                                         style={{ transform: `translateX(calc(${currentRpmOptionIndex} * 100%))` }} 
+                                       />
+                                       {currentRpmOptions.map((option, idx) => (
+                                           <button 
+                                             key={option.label} 
+                                             onClick={() => {
+                                               if (option.value === 'custom') {
+                                                 setIsCustomRPM(true);
+                                                 const num = parseInt(customRPMInput, 10);
+                                                 if (num && num > 0) {
+                                                   setSelectedRPM(num);
+                                                   setGlobalRPM(num);
+                                                 } else {
+                                                   setCustomRPMInput('60');
+                                                   setSelectedRPM(60);
+                                                   setGlobalRPM(60);
+                                                 }
+                                               } else {
+                                                 setIsCustomRPM(false);
+                                                 const num = option.value as number;
+                                                 setSelectedRPM(num);
+                                                 setGlobalRPM(num);
+                                               }
+                                             }} 
+                                             className={`relative z-10 w-1/4 py-2 text-sm font-medium transition-colors duration-300 rounded-lg text-center ${currentRpmOptionIndex === idx ? 'text-white font-semibold' : 'text-neutral-400 hover:text-white'}`}
+                                           >
+                                             {option.label}
+                                           </button>
+                                       ))}
+                                   </div>
+
+                                  {isCustomRPM && (
+                                    <div className="mt-3 flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                        <label className="text-xs text-neutral-400 font-medium whitespace-nowrap">Custom RPM:</label>
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          step="1"
+                                          placeholder="e.g. 60"
+                                          value={customRPMInput}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setCustomRPMInput(val);
+                                            const num = parseInt(val, 10);
+                                            if (num && num > 0) {
+                                              setSelectedRPM(num);
+                                              setGlobalRPM(num);
+                                            }
+                                          }}
+                                          className="w-full bg-black border border-neutral-800 focus:border-white rounded-xl px-3 py-1.5 text-sm text-white focus:outline-none transition-colors"
+                                        />
+                                      </div>
+                                      {(!parseInt(customRPMInput, 10) || parseInt(customRPMInput, 10) <= 0) && (
+                                        <p className="text-[10px] text-red-400 pl-2">RPM must be greater than 0.</p>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  <p className="text-xs text-neutral-500 text-center mt-2">
+                                    {isCustomRPM 
+                                      ? 'Custom rate limit specified by user.' 
+                                      : currentRpmOptions.find(o => o.value === selectedRPM)?.description || 'Rate limit per minute.'}
+                                  </p>
+
+                                  <div className="mt-2 text-center">
+                                    {activeModelData.provider === 'google' ? (
+                                      <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                          Check your limits on Google AI Studio <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                    ) : activeModelData.provider === 'anthropic' ? (
+                                      <a href="https://platform.claude.com/docs/en/api/rate-limits" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                          Check your limits on Anthropic Console <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                    ) : (
+                                      <a href="https://developers.openai.com/api/docs/guides/rate-limits" target="_blank" rel="noopener noreferrer" className="text-[10px] text-neutral-500 hover:text-white flex items-center justify-center gap-1 transition-colors">
+                                          Check your limits on OpenAI Platform <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                    )}
+                                  </div>
+                               </>
+                           )}
+                      </div>
+                    );
+                  })()}
 
               </div>
               
