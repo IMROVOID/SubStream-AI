@@ -57,9 +57,13 @@ export interface AIModel {
   name: string;
   description: string;
   tags: string[];
-  provider: 'google' | 'openai' | 'youtube';
+  provider: 'google' | 'openai' | 'youtube' | 'anthropic';
   transcriptionModel?: string;
   rateLimits?: GeminiRateLimits; // New property for Dynamic Limits
+  contextLength?: number;
+  releaseDate?: string;
+  docUrl?: string;
+  isDynamic?: boolean;
 }
 
 export interface YouTubeVideoMetadata {
@@ -307,6 +311,48 @@ export const AVAILABLE_MODELS: AIModel[] = [
     provider: 'openai',
     transcriptionModel: 'whisper-1'
   },
+
+  // --- ANTHROPIC CLAUDE MODELS (Version Descending) ---
+  {
+    id: 'claude-opus-5',
+    name: 'Claude Opus 5',
+    description: 'Highest reasoning capability for complex, long-context subtitles and nuanced cultural translation.',
+    tags: ['Opus', 'Most Powerful', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
+    description: 'Flagship balanced model delivering exceptional speed, intelligence, and translation precision.',
+    tags: ['Sonnet', 'Flagship', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-3-7-sonnet-20250219',
+    name: 'Claude 3.7 Sonnet',
+    description: 'High-performance reasoning and hybrid thinking model for accurate subtitle translation.',
+    tags: ['Hybrid Thinking', 'Stable', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-3-5-sonnet-20241022',
+    name: 'Claude 3.5 Sonnet',
+    description: 'Industry-standard model for high-speed, highly accurate translation and nuance.',
+    tags: ['Sonnet', 'Popular', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
+  {
+    id: 'claude-3-5-haiku-20241022',
+    name: 'Claude 3.5 Haiku',
+    description: 'Fastest, lightweight Claude model ideal for rapid, high-volume subtitle processing.',
+    tags: ['Haiku', 'Ultra Fast', 'Anthropic'],
+    provider: 'anthropic',
+    transcriptionModel: 'whisper-1'
+  },
 ];
 
 
@@ -353,12 +399,20 @@ export const SUPPORTED_VIDEO_FORMATS = [
   'video/x-msvideo', // AVI
 ];
 
-export type RPMLimit = number | 'unlimited';
+export type RPMLimit = number | 'custom' | 'unlimited';
 
 // Used for OpenAI Only
-export const OPENAI_RPM_OPTIONS: { value: RPMLimit; label: string; description: string }[] = [
+export const OPENAI_RPM_OPTIONS: { value: number | 'custom'; label: string; description: string }[] = [
     { value: 2, label: 'Low', description: 'Best for avoiding strict rate limits on free tiers (2 RPM).' },
     { value: 15, label: 'Medium', description: 'Recommended default. Good balance of speed and safety (15 RPM).' },
     { value: 30, label: 'High', description: 'Faster, but higher risk of rate limits (30 RPM).' },
-    { value: 'unlimited', label: 'Unlimited', description: 'No artificial delay. Only for high-tier paid keys.' },
+    { value: 'custom', label: 'Custom', description: 'Specify a custom Requests Per Minute (RPM) limit.' },
+];
+
+// Used for Anthropic Only
+export const ANTHROPIC_RPM_OPTIONS: { value: number | 'custom'; label: string; description: string }[] = [
+    { value: 5, label: 'Low', description: 'Safe limit for initial Anthropic tier (5 RPM).' },
+    { value: 20, label: 'Medium', description: 'Recommended default for Anthropic Build tier (20 RPM).' },
+    { value: 50, label: 'High', description: 'Faster throughput for Scale tier users (50 RPM).' },
+    { value: 'custom', label: 'Custom', description: 'Specify a custom Requests Per Minute (RPM) limit.' },
 ];
