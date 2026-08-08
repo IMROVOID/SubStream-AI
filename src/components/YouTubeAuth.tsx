@@ -14,7 +14,7 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
 
   const handleLogin = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const redirectUri = window.location.href.split('#')[0]; // Current URL
+    const redirectUri = (window.location.origin + window.location.pathname).replace(/\/$/, '') || window.location.origin;
     
     // Add specific state to identify this request later
     const state = 'youtube_auth';
