@@ -42,3 +42,17 @@ body {
     background-color: #333;
     border-radius: 20px;
 }
+
+/* Animated moving dashed outline for dropzone */
+@keyframes marching-ants {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -16;
+  }
+}
+
+.animate-marching-ants {
+  animation: marching-ants 0.8s linear infinite;
+}

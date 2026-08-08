@@ -80,6 +80,106 @@ const generateVideoThumbnail = (videoFile: File): Promise<string> => {
     });
 };
 
+interface DraggedFileInfo {
+  name: string;
+  size: string;
+  type: 'video' | 'subtitle' | 'unknown';
+  extension: string;
+  subtitleLabel?: string;
+}
+
+const formatFileSize = (bytes: number): string => {
+  if (!bytes || bytes === 0) return '';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const extractDraggedFileInfo = (e: DragEvent): DraggedFileInfo | null => {
+  if (!e.dataTransfer) return null;
+
+  // 1. Try reading real File object if available (e.g. drop or un-sandboxed environments)
+  let file: File | null = null;
+  try {
+    file = e.dataTransfer.files?.[0] || null;
+    if (!file && e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const item = e.dataTransfer.items[i];
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f && f.name && f.name !== 'item') {
+            file = f;
+            break;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // protected mode in browser
+  }
+
+  if (file && file.name && file.name !== 'item') {
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const mime = file.type ? file.type.toLowerCase() : '';
+    const isSub = ext === 'srt' || ext === 'vtt' || mime.includes('subrip') || mime.includes('caption');
+    const isVid = ['mp4', 'mkv', 'mov', 'webm', 'avi', 'm4v', 'flv', 'wmv'].includes(ext) || mime.startsWith('video/');
+
+    return {
+      name: file.name,
+      size: formatFileSize(file.size),
+      type: isSub ? 'subtitle' : isVid ? 'video' : 'unknown',
+      extension: ext ? ext.toUpperCase() : isSub ? 'SRT' : isVid ? 'VIDEO' : 'FILE',
+      subtitleLabel: isSub ? 'Release to process SRT subtitles' : isVid ? 'Release to import video file' : 'Release to load file',
+    };
+  }
+
+  // 2. HTML5 Protected Mode fallback (browser hides filename until drop)
+  if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+    for (let i = 0; i < e.dataTransfer.items.length; i++) {
+      const item = e.dataTransfer.items[i];
+      if (item.kind === 'file') {
+        const mime = item.type ? item.type.toLowerCase() : '';
+        
+        const isVid = mime.startsWith('video/');
+        const isSub = mime.includes('subrip') || mime.includes('caption') || mime.includes('srt') || mime.includes('vtt') || mime.includes('text/plain');
+
+        let extLabel = 'SRT / VIDEO';
+        let nameLabel = 'Subtitle or Video File';
+        let typeVal: 'video' | 'subtitle' | 'unknown' = 'unknown';
+
+        if (isVid) {
+          typeVal = 'video';
+          nameLabel = 'Video File Detected';
+          if (mime.includes('mp4')) extLabel = 'MP4 VIDEO';
+          else if (mime.includes('webm')) extLabel = 'WEBM VIDEO';
+          else if (mime.includes('matroska') || mime.includes('mkv')) extLabel = 'MKV VIDEO';
+          else extLabel = 'VIDEO FILE';
+        } else if (isSub) {
+          typeVal = 'subtitle';
+          nameLabel = 'Subtitle File Detected';
+          if (mime.includes('subrip') || mime.includes('srt')) extLabel = 'SRT SUBTITLE';
+          else if (mime.includes('vtt')) extLabel = 'VTT SUBTITLE';
+          else extLabel = 'SUBTITLE FILE';
+        }
+
+        return {
+          name: nameLabel,
+          size: 'Ready to import',
+          type: typeVal,
+          extension: extLabel,
+          subtitleLabel: isVid ? 'Release mouse to process video' : isSub ? 'Release mouse to parse subtitles' : 'Release mouse to drop file',
+        };
+      }
+    }
+  }
+
+  return {
+    name: 'Subtitle or Video File',
+    size: 'Ready to import',
+    type: 'unknown',
+    extension: 'SRT / VIDEO',
+    subtitleLabel: 'Release mouse to drop & load file',
+  };
+};
 
 const App = () => {
   // Navigation & Modal State
@@ -189,6 +289,10 @@ const App = () => {
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
   const [isAuthLoaded, setIsAuthLoaded] = useState(false);
 
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [draggedFileInfo, setDraggedFileInfo] = useState<DraggedFileInfo | null>(null);
+  const dragCounter = useRef(0);
+
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -197,6 +301,61 @@ const App = () => {
   const debounceAnthropicKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => {
+      if (e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        dragCounter.current += 1;
+        if (dragCounter.current === 1) {
+          setIsDraggingFile(true);
+          const info = extractDraggedFileInfo(e);
+          if (info) setDraggedFileInfo(info);
+        }
+      }
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        const info = extractDraggedFileInfo(e);
+        if (info) setDraggedFileInfo(info);
+      }
+    };
+
+    const handleDragLeave = (e: DragEvent) => {
+      if (e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        dragCounter.current -= 1;
+        if (dragCounter.current <= 0) {
+          dragCounter.current = 0;
+          setIsDraggingFile(false);
+          setDraggedFileInfo(null);
+        }
+      }
+    };
+
+    const handleWindowDrop = (e: DragEvent) => {
+      if (e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        dragCounter.current = 0;
+        setIsDraggingFile(false);
+        setDraggedFileInfo(null);
+      }
+    };
+
+    window.addEventListener('dragenter', handleDragEnter);
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleWindowDrop);
+
+    return () => {
+      window.removeEventListener('dragenter', handleDragEnter);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleWindowDrop);
+    };
+  }, []);
 
   const isYouTubeAuthCallback = useMemo(() => {
     return window.location.hash.includes('access_token') && window.location.hash.includes('state=youtube_auth');
@@ -651,6 +810,9 @@ const App = () => {
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
+    dragCounter.current = 0;
+    setIsDraggingFile(false);
+    setDraggedFileInfo(null);
     const droppedFile = e.dataTransfer.files[0];
     if (droppedFile) processFile(droppedFile);
   };
@@ -1119,33 +1281,90 @@ const App = () => {
                     </div>
                 )}
 
-                <div className="group relative rounded-3xl border border-neutral-800 bg-neutral-900/20 p-6 hover:bg-neutral-900/30 transition-all duration-300">
+                <div className={`group relative rounded-3xl p-6 transition-all duration-300 overflow-hidden ${
+                  isDraggingFile && !file
+                    ? 'border border-transparent bg-neutral-900/60 scale-[1.01]'
+                    : 'border border-neutral-800 bg-neutral-900/20 hover:bg-neutral-900/30'
+                }`}>
+                   {isDraggingFile && !file && (
+                     <svg className="absolute inset-0 w-full h-full pointer-events-none rounded-3xl text-neutral-200 z-10" style={{ overflow: 'visible' }}>
+                       <rect
+                         x="1"
+                         y="1"
+                         width="calc(100% - 2px)"
+                         height="calc(100% - 2px)"
+                         rx="24"
+                         fill="none"
+                         stroke="currentColor"
+                         strokeWidth="2"
+                         strokeDasharray="8 8"
+                         className="animate-marching-ants"
+                       />
+                     </svg>
+                   )}
                    {!file ? (
-                     <div className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[200px]"
+                     <div className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[220px] w-full relative transition-all duration-300"
                        onDragOver={(e) => e.preventDefault()}
                        onDrop={handleDrop}
+                       onClick={() => fileInputRef.current?.click()}
                      >
                         <input type="file" ref={fileInputRef} className="hidden" accept={`.srt, ${SUPPORTED_VIDEO_FORMATS.join(',')}`} onChange={handleFileChange} />
-                        <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform" onClick={() => fileInputRef.current?.click()}>
-                          <Upload className="text-white w-8 h-8" />
-                        </div>
-                        <h2 className="text-xl font-bold text-white mb-2" onClick={() => fileInputRef.current?.click()}>Drop your SRT or Video file here</h2>
-                        <p className="text-neutral-500 mb-8" onClick={() => fileInputRef.current?.click()}>or click to browse local files</p>
                         
-                        <div className="flex gap-4 z-20">
-                           <button onClick={() => { setImportType('URL'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-neutral-500 transition-all group/btn" title="Import from URL">
-                             <LinkIcon className="w-5 h-5 text-neutral-400 group-hover/btn:text-white" />
-                           </button>
-                           <button onClick={() => { setImportType('YOUTUBE'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-red-500/50 transition-all group/btn" title="Import from YouTube">
-                             <Youtube className="w-5 h-5 text-neutral-400 group-hover/btn:text-red-500" />
-                           </button>
-                           <button onClick={() => setCloudModalOpen(true)} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn" title="Import from Cloud Drive">
-                             <HardDrive className="w-5 h-5 text-neutral-400 group-hover/btn:text-blue-500" />
-                           </button>
-                           <button onClick={() => showToast("Social Media Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-pink-500/50 transition-all group/btn" title="Other Sources">
-                             <Instagram className="w-5 h-5 text-neutral-400 group-hover/btn:text-pink-500" />
-                           </button>
-                        </div>
+                        {isDraggingFile ? (
+                           <div className="flex flex-col items-center justify-center my-auto transition-all duration-300 animate-fade-in z-20 w-full px-4 text-center">
+                             <div className="w-14 h-14 rounded-2xl bg-neutral-800 border border-neutral-700/80 flex items-center justify-center mb-4 shadow-xl shadow-black/50">
+                               {draggedFileInfo?.type === 'subtitle' ? (
+                                 <FileText className="w-7 h-7 text-white" />
+                               ) : (
+                                 <Film className="w-7 h-7 text-white" />
+                               )}
+                             </div>
+                             
+                             <h2 className="text-xl font-bold text-white mb-1.5">
+                               {draggedFileInfo?.type === 'subtitle' 
+                                 ? 'Drop Subtitle File Here' 
+                                 : draggedFileInfo?.type === 'video'
+                                 ? 'Drop Video File Here'
+                                 : 'Drop File Here to Import'}
+                             </h2>
+                             
+                             <p className="text-sm text-neutral-400 font-medium">
+                               {draggedFileInfo?.type === 'subtitle'
+                                 ? 'Supports SRT & VTT formats'
+                                 : draggedFileInfo?.type === 'video'
+                                 ? 'Supports MP4, MKV, MOV, WEBM & AVI'
+                                 : 'Release mouse button to upload file'}
+                             </p>
+                           </div>
+                         ) : (
+                          <>
+                            <div className="w-16 h-16 rounded-2xl bg-neutral-800 flex items-center justify-center mb-6 group-hover:scale-110 transition-all duration-300">
+                              <Upload className="w-8 h-8 text-white" />
+                            </div>
+                            
+                            <h2 className="text-xl font-bold text-white mb-2">
+                              Drop your SRT or Video file here
+                            </h2>
+                            <p className="text-neutral-500 mb-8">
+                              or click to browse local files
+                            </p>
+                            
+                            <div className="flex gap-4 z-20" onClick={(e) => e.stopPropagation()}>
+                               <button onClick={() => { setImportType('URL'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-neutral-500 transition-all group/btn" title="Import from URL">
+                                 <LinkIcon className="w-5 h-5 text-neutral-400 group-hover/btn:text-white" />
+                               </button>
+                               <button onClick={() => { setImportType('YOUTUBE'); setImportModalOpen(true); }} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-red-500/50 transition-all group/btn" title="Import from YouTube">
+                                 <Youtube className="w-5 h-5 text-neutral-400 group-hover/btn:text-red-500" />
+                               </button>
+                               <button onClick={() => setCloudModalOpen(true)} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-blue-500/50 transition-all group/btn" title="Import from Cloud Drive">
+                                 <HardDrive className="w-5 h-5 text-neutral-400 group-hover/btn:text-blue-500" />
+                               </button>
+                               <button onClick={() => showToast("Social Media Integration Coming Soon!")} className="p-3 rounded-xl bg-neutral-800/50 border border-neutral-700 hover:bg-neutral-800 hover:border-pink-500/50 transition-all group/btn" title="Other Sources">
+                                 <Instagram className="w-5 h-5 text-neutral-400 group-hover/btn:text-pink-500" />
+                               </button>
+                            </div>
+                          </>
+                        )}
                      </div>
                    ) : (videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE && videoProcessingStatus !== VideoProcessingStatus.ERROR) ? (
                      <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
