@@ -1545,7 +1545,7 @@ const App = () => {
               </div>
               <div className="flex items-center relative">
                   {(fileType === 'video' || fileType === 'youtube') ? (
-                      <div className="inline-flex items-center rounded-xl border border-neutral-800 bg-neutral-950 p-0.5 shadow-sm">
+                      <div className="inline-flex items-center p-1 bg-neutral-950 border border-neutral-800 rounded-2xl gap-1 shadow-sm">
                         <div className="relative" ref={resolutionMenuRef}>
                           <Button 
                               variant="secondary" 
@@ -1555,7 +1555,7 @@ const App = () => {
                               completed={isDownloadComplete}
                               disabled={downloadProgress !== undefined || isTranslationInProgress}
                               icon={<Film className="w-4 h-4" />}
-                              className="!bg-neutral-950 hover:!bg-neutral-900 !text-neutral-300 hover:!text-white !border-r !border-neutral-800 !border-l-0 !border-t-0 !border-b-0 rounded-l-xl px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center"
+                              className="!bg-transparent hover:!bg-neutral-900 !text-neutral-400 hover:!text-white !border-0 rounded-xl px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center"
                           >
                               Download Video
                           </Button>
@@ -1591,7 +1591,7 @@ const App = () => {
                             onClick={handleDownloadSrt} 
                             disabled={isTranslationInProgress} 
                             icon={<Download className="w-4 h-4"/>}
-                            className="!bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white border border-neutral-800 rounded-xl px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center"
+                            className="!bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white border border-neutral-700/60 rounded-xl px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center shadow-sm"
                         >
                             Download SRT
                         </Button>
