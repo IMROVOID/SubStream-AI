@@ -20,12 +20,12 @@ export const Button: React.FC<ButtonProps> = ({
   disabled,
   ...props 
 }) => {
-  const baseStyles = "relative inline-flex items-center justify-center font-medium transition-all duration-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black overflow-hidden whitespace-nowrap";
+  const baseStyles = "relative inline-flex items-center justify-center font-semibold transition-all duration-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black overflow-hidden whitespace-nowrap px-[1.2rem] py-[0.8rem] text-[0.8rem]";
   
   const variants = {
-    primary: "bg-white text-black hover:bg-neutral-200 focus:ring-white border border-transparent",
-    secondary: "bg-neutral-800 text-white hover:bg-neutral-700 focus:ring-neutral-700 border border-neutral-700",
-    outline: "bg-transparent text-neutral-300 border border-neutral-800 hover:border-white hover:text-white"
+    primary: "bg-neutral-800 text-neutral-200 hover:bg-neutral-700 hover:text-white focus:ring-neutral-700 border border-neutral-700 hover:border-neutral-600",
+    secondary: "bg-neutral-900 text-neutral-300 hover:bg-neutral-800 hover:text-white focus:ring-neutral-800 border border-neutral-700/80 hover:border-neutral-600",
+    outline: "bg-transparent text-neutral-300 border border-neutral-800 hover:border-neutral-700 hover:text-white"
   };
 
   // If progress is active
@@ -36,7 +36,7 @@ export const Button: React.FC<ButtonProps> = ({
       className={`
         ${baseStyles} 
         ${isProgressActive ? 'bg-neutral-800 border-neutral-700 text-white w-64 md:w-80' : variants[variant]} 
-        ${isProgressActive ? 'px-0 py-0' : 'px-6 py-3'}
+        ${isProgressActive ? '!px-0 !py-0' : ''}
         ${className}
       `} 
       disabled={disabled || isProgressActive}

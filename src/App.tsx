@@ -1543,50 +1543,70 @@ const App = () => {
                     {isYouTubeWorkflow ? 'Review the generated transcription below.' : 'Comparing original vs translated output.'}
                 </p>
               </div>
-              <div className="flex items-center gap-4 relative">
-                  {(fileType === 'video' || fileType === 'youtube') && (
-                      <div className="relative" ref={resolutionMenuRef}>
+              <div className="flex items-center relative">
+                  {(fileType === 'video' || fileType === 'youtube') ? (
+                      <div className="inline-flex items-center rounded-xl border border-neutral-700 bg-neutral-950 overflow-hidden shadow-sm">
+                        <div className="relative" ref={resolutionMenuRef}>
+                          <Button 
+                              variant="secondary" 
+                              onClick={() => setShowResolutionMenu(!showResolutionMenu)} 
+                              progress={downloadProgress}
+                              statusText={downloadStatusText}
+                              completed={isDownloadComplete}
+                              disabled={downloadProgress !== undefined || isTranslationInProgress}
+                              icon={<Film className="w-4 h-4" />}
+                              className="!bg-neutral-950 hover:!bg-neutral-900 !text-neutral-300 hover:!text-white !border-r !border-neutral-700 !border-l-0 !border-t-0 !border-b-0 !rounded-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center"
+                          >
+                              Download Video
+                          </Button>
+                          {showResolutionMenu && (
+                              <div className="absolute right-0 top-full mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden z-20 animate-fade-in">
+                                  <div>
+                                      {isYouTubeWorkflow && youtubeMeta?.availableResolutions && youtubeMeta.availableResolutions.length > 0 ? (
+                                          youtubeMeta.availableResolutions.map((res) => (
+                                              <button
+                                                  key={res}
+                                                  onClick={() => handleDownloadVideo(res)}
+                                                  className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
+                                              >
+                                                  <span>{res}p</span>
+                                                  <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">MP4</span>
+                                              </button>
+                                          ))
+                                      ) : (
+                                          <button
+                                              onClick={() => handleDownloadVideo()}
+                                              className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
+                                          >
+                                              <span>Best Quality</span>
+                                              <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">{isYouTubeWorkflow ? 'MP4' : 'MKV'}</span>
+                                          </button>
+                                      )}
+                                  </div>
+                              </div>
+                          )}
+                        </div>
                         <Button 
-                            variant="secondary" 
-                            onClick={() => setShowResolutionMenu(!showResolutionMenu)} 
-                            progress={downloadProgress}
-                            statusText={downloadStatusText}
-                            completed={isDownloadComplete}
-                            disabled={downloadProgress !== undefined || isTranslationInProgress}
-                            icon={<Film className="w-4 h-4" />}
-                            className=""
+                            variant="primary" 
+                            onClick={handleDownloadSrt} 
+                            disabled={isTranslationInProgress} 
+                            icon={<Download className="w-4 h-4"/>}
+                            className="!bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white !border-0 !rounded-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center"
                         >
-                            Download Video
+                            Download SRT
                         </Button>
-                        {showResolutionMenu && (
-                            <div className="absolute right-0 top-full mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden z-20 animate-fade-in">
-                                <div>
-                                    {isYouTubeWorkflow && youtubeMeta?.availableResolutions && youtubeMeta.availableResolutions.length > 0 ? (
-                                        youtubeMeta.availableResolutions.map((res) => (
-                                            <button
-                                                key={res}
-                                                onClick={() => handleDownloadVideo(res)}
-                                                className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
-                                            >
-                                                <span>{res}p</span>
-                                                <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">MP4</span>
-                                            </button>
-                                        ))
-                                    ) : (
-                                        <button
-                                            onClick={() => handleDownloadVideo()}
-                                            className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
-                                        >
-                                            <span>Best Quality</span>
-                                            <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">{isYouTubeWorkflow ? 'MP4' : 'MKV'}</span>
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        )}
                       </div>
+                  ) : (
+                      <Button 
+                          variant="primary" 
+                          onClick={handleDownloadSrt} 
+                          disabled={isTranslationInProgress} 
+                          icon={<Download className="w-4 h-4"/>}
+                          className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all"
+                      >
+                          Download SRT
+                      </Button>
                   )}
-                  <Button variant="primary" onClick={handleDownloadSrt} disabled={isTranslationInProgress} icon={<Download className="w-4 h-4"/>}>Download SRT</Button>
               </div>
             </div>
             <div className="rounded-3xl border border-neutral-800 bg-black/50 backdrop-blur overflow-hidden min-h-[400px]">
