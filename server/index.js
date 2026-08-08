@@ -254,7 +254,8 @@ app.get('/api/proxy/file-head', async (req, res) => {
                 ok: true
             });
         } catch (innerError) {
-            res.status(400).json({ error: "Could not access URL", details: innerError.message });
+            console.error("Proxy file-head inner error:", innerError.message);
+            res.status(400).json({ error: "Could not access URL" });
         }
     }
 });
@@ -587,7 +588,7 @@ app.get('/api/caption', async (req, res) => {
         } catch (e) {}
 
         console.error("YT-DLP Caption Error:", error.message);
-        res.status(500).send(error.message || "Unknown error during subtitle download");
+        res.status(500).send("Subtitle download failed.");
     }
 });
 
@@ -665,7 +666,7 @@ app.get('/api/download-video', async (req, res) => {
              files.filter(f => f.startsWith(tempId)).forEach(f => fs.unlinkSync(path.join(TEMP_DIR, f)));
         } catch (e) {}
         console.error("YT-DLP Video Error:", error.message);
-        res.status(500).send(`Video processing failed: ${error.message}`);
+        res.status(500).send("Video processing failed.");
     }
 });
 

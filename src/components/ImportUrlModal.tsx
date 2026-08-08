@@ -143,7 +143,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
               console.log("Direct fetch failed, trying proxy...", e);
               checkUrl(targetUrl, true);
           } else {
-              setError(`Failed to access URL: ${e.message}`);
+              setError("Unable to access URL. Please check the link and try again.");
               setStatus('IDLE');
           }
       }
@@ -193,7 +193,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
               onImportFile(file);
               onClose();
           } catch (e: any) {
-              setError("Download Failed: " + e.message);
+              setError("Download failed. Please check the URL and try again.");
           }
       }
   };

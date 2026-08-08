@@ -39,7 +39,8 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
     } catch (e: any) {
         console.error("Backend API Error:", e);
         if (e.name === 'TypeError' && e.message === 'Failed to fetch') {
-            throw new Error("Could not connect to local server. Please run 'npm start' in the 'server' folder.");
+            // ponytail: sanitize error message to avoid revealing server paths or npm hints
+            throw new Error("Unable to connect to backend server. Please check your connection and try again.");
         }
         throw new Error(e.message || "Failed to fetch video details.");
     }
@@ -204,17 +205,17 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
         console.error("YouTube Upload Init Failed Response:", err);
 
         if (initResp.status === 403) {
-             throw new Error(`YouTube Permission Denied (403): ${errorMessage}. Ensure 'YouTube Data API v3' is ENABLED in Google Cloud Console and Quota is not exceeded.`);
+             throw new Error("YouTube Permission Denied. Access forbidden or API quota exceeded.");
         }
         if (initResp.status === 401) {
-            throw new Error("Session Expired (401). Please re-authenticate YouTube.");
+            throw new Error("Session Expired. Please re-authenticate YouTube.");
         }
         
-        throw new Error(`Upload Init Failed (${initResp.status}): ${errorMessage}`);
+        throw new Error("Upload initialization failed. Please try again.");
     }
 
     const { location: uploadUrl } = await initResp.json();
-    if (!uploadUrl) throw new Error("Backend did not return an upload location.");
+    if (!uploadUrl) throw new Error("Upload failed to initialize.");
 
     // 2. Upload binary VIA LOCAL PROXY to avoid CORS
     return new Promise((resolve, reject) => {
@@ -241,12 +242,11 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
                     reject(new Error("Failed to parse YouTube response after upload."));
                 }
             } else {
-                 const errorText = xhr.responseText || xhr.statusText;
-                 reject(new Error(`Binary Upload Failed (${xhr.status}): ${errorText}`));
+                 reject(new Error("Binary upload failed. Please try again."));
             }
         };
 
-        xhr.onerror = () => reject(new Error("Network Error during Binary Upload (Check Backend Connection)."));
+        xhr.onerror = () => reject(new Error("Network connection error during binary upload."));
         
         xhr.send(videoFile);
     });
