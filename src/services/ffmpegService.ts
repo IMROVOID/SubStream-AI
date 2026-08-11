@@ -21,7 +21,7 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
       console.log(`FFmpeg Progress: ${(progress * 100).toFixed(2)}%`);
     });
 
-    onProgress('Loading core video engine...');
+    onProgress('Initializing video engine...');
     
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
     
@@ -126,9 +126,8 @@ export async function extractAudio(ffmpeg: FFmpeg): Promise<Blob> {
 }
 
 /**
- * Embeds two subtitle tracks: 
- * 1. The Translated Text (Default)
- * 2. The Original Transcription (Secondary)
+ * Embeds softsub subtitle tracks into video while retaining any existing softsubs.
+ * Also supports video scaling if a target resolution is specified.
  */
 export async function addSrtToVideo(
     ffmpeg: FFmpeg, 
@@ -136,7 +135,8 @@ export async function addSrtToVideo(
     translatedSrt: string, 
     targetLangCode: string,
     originalSrt?: string,
-    sourceLangCode?: string
+    sourceLangCode?: string,
+    targetResolution?: number
 ): Promise<Blob> {
     
     // Write Inputs
@@ -155,26 +155,32 @@ export async function addSrtToVideo(
 
     const outputFileName = 'output.mkv';
 
-    // Base maps: Video + Audio from input
-    command.push(
-        '-c', 'copy',
-        '-map', '0:v', 
-        '-map', '0:a'
-    );
+    // Map all video, audio, subtitle, and data streams from input 0 bit-for-bit
+    command.push('-map', '0:v?', '-map', '0:a?', '-map', '0:s?', '-map', '0:d?');
 
-    // Map Translated (Input 1) -> Stream 0 (Subtitle)
+    // Video codec & scaling handling
+    if (targetResolution && targetResolution > 0) {
+        // When scaling, copy audio bit-for-bit (bitrate, sample rate, multi-tracks preserved)
+        command.push('-vf', `scale=-2:min(${targetResolution}\\,ih)`, '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-c:a', 'copy');
+    } else {
+        // Direct stream copy preserving video & audio bit-for-bit (exact bitrate, sample rate, color range, HDR)
+        command.push('-c', 'copy');
+    }
+
+    // Map Translated Subtitle -> Appended Subtitle Stream
     command.push(
         '-map', '1', 
         '-c:s', 'srt',
         '-metadata:s:s:0', `language=${targetLangCode}`, 
-        '-metadata:s:s:0', `title=Translated (${targetLangCode})`,
+        '-metadata:s:s:0', `title=SubStream Translated (${targetLangCode})`,
         '-disposition:s:s:0', 'default'
     );
 
-    // Map Original (Input 2) -> Stream 1 (Subtitle) if exists
+    // Map Original Subtitle if provided
     if (originalSrt) {
         command.push(
             '-map', '2',
+            '-c:s', 'srt',
             '-metadata:s:s:1', `language=${sourceLangCode || 'und'}`,
             '-metadata:s:s:1', `title=Original (${sourceLangCode || 'Original'})`
         );

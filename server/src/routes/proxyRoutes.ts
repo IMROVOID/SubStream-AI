@@ -15,32 +15,71 @@ proxyRouter.get('/file-head', async (req, res) => {
 
     if (!url) return res.status(400).json({ error: "Missing URL" });
 
+    const baseHeaders: Record<string, string> = {};
+    if (proxyAuth) baseHeaders['Authorization'] = proxyAuth;
+
+    // Tier 1: Try HEAD request
     try {
-        const headers: Record<string, string> = {};
-        if (proxyAuth) headers['Authorization'] = proxyAuth;
-
-        const response = await makeRequestWithRetry({ method: 'head', url, headers });
-        return res.json({
-            contentType: response.headers['content-type'],
-            contentLength: response.headers['content-length'],
-            ok: true
-        });
-    } catch (e) {
-        try {
-            const headers: Record<string, string> = { Range: 'bytes=0-1' };
-            if (proxyAuth) headers['Authorization'] = proxyAuth;
-
-            const response = await makeRequestWithRetry({ method: 'get', url, headers });
+        const response = await makeRequestWithRetry({ method: 'head', url, headers: { ...baseHeaders } });
+        if (response.status >= 200 && response.status < 400) {
             return res.json({
                 contentType: response.headers['content-type'],
-                contentLength: response.headers['content-range'] ? response.headers['content-range'].split('/')[1] : null,
+                contentLength: response.headers['content-length'],
                 ok: true
             });
-        } catch (innerError: any) {
-            console.error("Proxy file-head inner error:", innerError?.message);
-            return res.status(400).json({ error: "Could not access URL" });
         }
+    } catch (e: any) {
+        // Fall through to Tier 2
     }
+
+    // Tier 2: Try GET with Range header
+    try {
+        const response = await makeRequestWithRetry({ 
+            method: 'get', 
+            url, 
+            headers: { ...baseHeaders, Range: 'bytes=0-1' } 
+        });
+        if (response.status >= 200 && response.status < 400) {
+            const rangeLength = response.headers['content-range'] ? response.headers['content-range'].split('/')[1] : null;
+            return res.json({
+                contentType: response.headers['content-type'],
+                contentLength: rangeLength || response.headers['content-length'],
+                ok: true
+            });
+        }
+    } catch (e: any) {
+        // Fall through to Tier 3
+    }
+
+    // Tier 3: Try GET with responseType 'stream' and immediately destroy stream after reading headers
+    try {
+        const response = await makeRequestWithRetry({ 
+            method: 'get', 
+            url, 
+            headers: { ...baseHeaders },
+            responseType: 'stream'
+        });
+        
+        const contentType = response.headers['content-type'];
+        const contentLength = response.headers['content-length'];
+        
+        // Immediately destroy response stream to avoid downloading full file body
+        if (response.data && typeof response.data.destroy === 'function') {
+            response.data.destroy();
+        }
+
+        if (response.status >= 200 && response.status < 400) {
+            return res.json({
+                contentType,
+                contentLength,
+                ok: true
+            });
+        }
+    } catch (innerError: any) {
+        console.error("Proxy file-head all tiers failed:", innerError?.message);
+    }
+
+    return res.status(400).json({ error: "Could not access URL" });
 });
 
 // General file get streaming

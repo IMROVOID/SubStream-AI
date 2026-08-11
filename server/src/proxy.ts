@@ -103,6 +103,7 @@ export const createAxiosClient = (proxyUrl: string | null) => {
         try {
             const agent = new HttpsProxyAgent(proxyUrl);
             config.httpsAgent = agent;
+            config.httpAgent = agent;
             config.proxy = false; 
         } catch (e: any) {
             console.warn("[Server] Invalid Proxy URL format. Falling back to direct.", e?.message);

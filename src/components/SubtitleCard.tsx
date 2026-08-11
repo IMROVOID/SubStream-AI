@@ -19,7 +19,7 @@ export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive, 
   const transFontClass = isTranslatedPersian ? 'font-vazirmatn' : (targetFont || 'font-display');
 
   return (
-    <div className={`group relative p-6 transition-all duration-300 border-b border-neutral-900 hover:bg-neutral-900/50 ${isActive ? 'bg-neutral-900' : ''}`}>
+    <div className={`group relative p-6 transition-all duration-300 border-b border-neutral-900/80 hover:bg-neutral-900/40 ${isActive ? 'bg-black/40' : 'bg-transparent'}`}>
       <div className="flex items-start gap-4">
         {/* ID and Time */}
         <div className="w-24 shrink-0 flex flex-col gap-1">
@@ -33,7 +33,7 @@ export const SubtitleCard: React.FC<SubtitleCardProps> = ({ subtitle, isActive, 
         <div className={`w-full ${isSingleColumn ? 'block' : 'grid grid-cols-1 md:grid-cols-2 gap-6'}`}>
           {/* Original */}
           <div className="relative">
-            <p dir={isOriginalPersian ? 'rtl' : 'ltr'} className={`font-medium leading-relaxed ${isSingleColumn ? 'text-white text-lg' : 'text-sm text-neutral-400'} ${origFontClass}`}>
+            <p dir={isOriginalPersian ? 'rtl' : 'ltr'} className={`text-base font-medium leading-relaxed ${isSingleColumn ? 'text-white' : 'text-neutral-500'} ${origFontClass}`}>
               {subtitle.originalText}
             </p>
           </div>

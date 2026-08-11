@@ -14,6 +14,45 @@ interface ImportUrlModalProps {
   googleAccessToken: string | null;
 }
 
+const VideoUrlThumbnail: React.FC<{ videoUrl: string; useProxy: boolean }> = ({ videoUrl, useProxy }) => {
+    const initialSrc = useProxy 
+        ? `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(videoUrl)}#t=0.5`
+        : `${videoUrl}#t=0.5`;
+
+    const [src, setSrc] = useState(initialSrc);
+    const [failed, setFailed] = useState(false);
+
+    const handleError = () => {
+        const proxyFallback = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(videoUrl)}#t=0.5`;
+        if (!useProxy && src !== proxyFallback) {
+            setSrc(proxyFallback);
+        } else {
+            setFailed(true);
+        }
+    };
+
+    if (failed) {
+        return (
+            <div className="w-28 h-20 rounded-xl bg-neutral-900 border border-neutral-800 flex items-center justify-center shrink-0">
+                <Film className="w-8 h-8 text-neutral-500" />
+            </div>
+        );
+    }
+
+    return (
+        <div className="w-28 h-20 rounded-xl overflow-hidden border border-neutral-800 bg-black shrink-0 relative group">
+            <video
+                src={src}
+                className="w-full h-full object-cover"
+                preload="metadata"
+                muted
+                playsInline
+                onError={handleError}
+            />
+        </div>
+    );
+};
+
 export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({ 
     isOpen, 
     onClose, 
@@ -43,6 +82,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
   const [detectedType, setDetectedType] = useState<'VIDEO' | 'SRT' | null>(null);
   const [fileMeta, setFileMeta] = useState<{name: string, size?: string, type: string} | null>(null);
   const [useProxy, setUseProxy] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // YouTube Specific State
   const [ytMeta, setYtMeta] = useState<YouTubeVideoMetadata | null>(null);
@@ -71,6 +111,7 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
           setSearchQuery('');
           setShowSortMenu(false);
           setUseProxy(false);
+          setIsDownloading(false);
       }
   }, [isOpen]);
 
@@ -116,34 +157,53 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
               // Use Backend Proxy
               const proxyUrl = `http://localhost:4000/api/proxy/file-head?url=${encodeURIComponent(targetUrl)}`;
               const response = await fetch(proxyUrl);
+              if (!response.ok) {
+                  const errJson = await response.json().catch(() => ({}));
+                  throw new Error(errJson.error || `Proxy returned ${response.status}`);
+              }
               const data = await response.json();
               if (!data.ok) throw new Error(data.error || "Proxy failed");
-              contentType = data.contentType;
-              contentLength = data.contentLength;
+              contentType = data.contentType || '';
+              contentLength = data.contentLength || null;
           }
 
-          const name = targetUrl.split('/').pop()?.split('?')[0] || 'downloaded_file';
-          const size = contentLength ? `${(parseInt(contentLength) / (1024 * 1024)).toFixed(2)} MB` : 'Unknown Size';
+          const rawName = targetUrl.split('/').pop()?.split('?')[0] || '';
+          const name = rawName.length > 0 ? decodeURIComponent(rawName) : 'downloaded_file';
+          const size = contentLength && !isNaN(parseInt(contentLength)) ? `${(parseInt(contentLength) / (1024 * 1024)).toFixed(2)} MB` : 'Unknown Size';
 
-          if (contentType?.includes('text') || name.endsWith('.srt') || name.endsWith('.vtt')) {
+          const lowerType = (contentType || '').toLowerCase();
+          const lowerName = name.toLowerCase();
+
+          // Reject HTML and JSON explicitly (web pages, error responses)
+          if (lowerType.includes('text/html') || lowerType.includes('application/json') || lowerType.includes('text/xml')) {
+              throw new Error("URL points to a web page or API response, not a direct video or subtitle file.");
+          }
+
+          const isSubtitleExt = lowerName.endsWith('.srt') || lowerName.endsWith('.vtt') || lowerName.endsWith('.ass') || lowerName.endsWith('.sub');
+          const isVideoExt = Boolean(lowerName.match(/\.(mp4|mkv|mov|webm|avi|flv|wmv|m4v|ts)$/i));
+
+          const isSubtitleMime = lowerType.includes('text/plain') || lowerType.includes('text/vtt') || lowerType.includes('subrip') || lowerType.includes('srt') || lowerType.includes('subtitle');
+          const isVideoMime = lowerType.includes('video/') || lowerType.includes('mpegurl') || lowerType.includes('dash+xml');
+
+          if (isSubtitleMime || (isSubtitleExt && (lowerType === '' || lowerType.includes('octet-stream') || lowerType.includes('text/plain')))) {
               setDetectedType('SRT');
-              setFileMeta({ name, size, type: 'Subtitle File' });
+              setFileMeta({ name: name.endsWith('.srt') || name.endsWith('.vtt') ? name : `${name}.srt`, size, type: 'Subtitle File' });
               setStatus('PREVIEW');
-          } else if (contentType?.includes('video') || name.match(/\.(mp4|mkv|mov|webm)$/i)) {
+          } else if (isVideoMime || (isVideoExt && (lowerType === '' || lowerType.includes('octet-stream')))) {
               setDetectedType('VIDEO');
               setFileMeta({ name, size, type: 'Video File' });
               setStatus('PREVIEW');
           } else {
-              throw new Error("Unsupported file type. Please provide a direct link to an SRT or Video file.");
+              throw new Error("Unsupported or unrecognized file type. Please provide a direct link to an SRT or Video file.");
           }
 
       } catch (e: any) {
           if (!tryProxy) {
               // Retry with Proxy automatically on failure (likely CORS)
-              console.log("Direct fetch failed, trying proxy...", e);
+              console.log("Direct fetch failed, trying proxy...", e?.message);
               checkUrl(targetUrl, true);
           } else {
-              setError("Unable to access URL. Please check the link and try again.");
+              setError(e?.message || "Unable to access URL. Please check the link and try again.");
               setStatus('IDLE');
           }
       }
@@ -151,17 +211,21 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
 
   const handleUrlSubmit = async () => {
       setError(null);
+      
+      let cleanUrl = url.trim();
+      if (!cleanUrl) return;
+
       setStatus('LOADING');
 
       if (type === 'YOUTUBE') {
-          const videoId = extractYouTubeId(url);
+          const videoId = extractYouTubeId(cleanUrl);
           if (!videoId) {
               setError("Invalid YouTube URL.");
               setStatus('IDLE');
               return;
           }
           try {
-              const { meta, captions } = await getVideoDetails(url);
+              const { meta, captions } = await getVideoDetails(cleanUrl);
               setYtMeta({ ...meta, availableCaptions: captions });
               setStatus('PREVIEW');
           } catch (e: any) {
@@ -170,7 +234,20 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
           }
       } 
       else if (type === 'URL') {
-          checkUrl(url);
+          if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+              cleanUrl = 'http://' + cleanUrl;
+          }
+          try {
+              const parsed = new URL(cleanUrl);
+              if (!parsed.hostname) throw new Error("Invalid host");
+          } catch {
+              setError("Invalid URL format. Please enter a valid HTTP or HTTPS link.");
+              setStatus('IDLE');
+              return;
+          }
+
+          setUrl(cleanUrl);
+          checkUrl(cleanUrl);
       }
   };
 
@@ -180,20 +257,41 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
           onClose();
       } 
       else if (type === 'URL' && fileMeta) {
+          setIsDownloading(true);
+          setError(null);
           try {
-              let fetchUrl = url;
+              let blob: Blob | null = null;
+              const fileType = fileMeta.type || (detectedType === 'VIDEO' ? 'video/mp4' : 'text/plain');
+
               if (useProxy) {
-                   fetchUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(url)}`;
+                  const proxyUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(url)}`;
+                  const response = await fetch(proxyUrl);
+                  if (!response.ok) throw new Error(`Proxy download failed (Status ${response.status})`);
+                  blob = await response.blob();
+              } else {
+                  try {
+                      const response = await fetch(url);
+                      if (!response.ok) throw new Error(`Status ${response.status}`);
+                      blob = await response.blob();
+                  } catch (directErr) {
+                      console.warn("Direct download failed (CORS/Network), retrying via local proxy...", directErr);
+                      const proxyUrl = `http://localhost:4000/api/proxy/file-get?url=${encodeURIComponent(url)}`;
+                      const response = await fetch(proxyUrl);
+                      if (!response.ok) throw new Error(`Proxy download failed (Status ${response.status})`);
+                      blob = await response.blob();
+                  }
               }
-              
-              const response = await fetch(fetchUrl);
-              if (!response.ok) throw new Error("Download failed.");
-              const blob = await response.blob();
-              const file = new File([blob], fileMeta.name, { type: blob.type });
+
+              if (!blob) throw new Error("Could not retrieve file data.");
+
+              const file = new File([blob], fileMeta.name, { type: blob.type || fileType });
               onImportFile(file);
               onClose();
           } catch (e: any) {
-              setError("Download failed. Please check the URL and try again.");
+              console.error("URL Download Error:", e);
+              setError(e?.message || "Download failed. Please check the URL and try again.");
+          } finally {
+              setIsDownloading(false);
           }
       }
   };
@@ -313,24 +411,39 @@ export const ImportUrlModal: React.FC<ImportUrlModalProps> = ({
                             </div>
                         </div>
                     )}
-
                     {/* PREVIEW STAGE - URL */}
                     {status === 'PREVIEW' && type === 'URL' && fileMeta && (
                         <div className="space-y-6 animate-fade-in">
-                            <div className="p-6 bg-neutral-900/30 border border-neutral-800 rounded-xl flex items-center gap-4">
-                                <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center">
-                                    {detectedType === 'VIDEO' ? <PlayCircle className="w-6 h-6 text-blue-400" /> : <FileText className="w-6 h-6 text-green-400" />}
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-white break-all">{fileMeta.name}</h3>
-                                    <p className="text-sm text-neutral-500">{fileMeta.type} • {fileMeta.size}</p>
-                                    {useProxy && <span className="text-[10px] text-amber-500 border border-amber-900/50 px-1.5 py-0.5 rounded bg-amber-900/20">Proxy Active</span>}
+                            <div className="p-5 bg-neutral-900/30 border border-neutral-800 rounded-xl flex items-center gap-4">
+                                {detectedType === 'VIDEO' ? (
+                                    <VideoUrlThumbnail videoUrl={url} useProxy={useProxy} />
+                                ) : (
+                                    <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center shrink-0">
+                                        <FileText className="w-6 h-6 text-green-400" />
+                                    </div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                    <h3 className="font-bold text-white break-all line-clamp-2">{fileMeta.name}</h3>
+                                    <p className="text-sm text-neutral-500 mt-1">{fileMeta.type} • {fileMeta.size}</p>
+                                    {useProxy && <span className="text-[10px] text-amber-500 border border-amber-900/50 px-1.5 py-0.5 rounded bg-amber-900/20 mt-1.5 inline-block">Proxy Active</span>}
                                 </div>
                             </div>
                             {error && <div className="text-red-400 text-sm">{error}</div>}
                             <div className="flex justify-end gap-3">
-                                <Button variant="outline" onClick={() => setStatus('IDLE')}>Back</Button>
-                                <Button onClick={handleConfirm} icon={<Download className="w-4 h-4"/>}>Download & Process</Button>
+                                <Button 
+                                    variant="outline" 
+                                    onClick={() => setStatus('IDLE')}
+                                    disabled={isDownloading}
+                                >
+                                    Back
+                                </Button>
+                                <Button 
+                                    onClick={handleConfirm} 
+                                    disabled={isDownloading}
+                                    icon={isDownloading ? <Loader2 className="animate-spin w-4 h-4"/> : <Download className="w-4 h-4"/>}
+                                >
+                                    {isDownloading ? 'Downloading & Processing...' : 'Download & Process'}
+                                </Button>
                             </div>
                         </div>
                     )}

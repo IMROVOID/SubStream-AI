@@ -225,6 +225,48 @@ const App = () => {
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [videoThumbnail, setVideoThumbnail] = useState<string | null>(null);
   const [youtubeMeta, setYoutubeMeta] = useState<YouTubeVideoMetadata | null>(null);
+  const [localVideoDimensions, setLocalVideoDimensions] = useState<{ width: number; height: number } | null>(null);
+
+  const getVideoProcessingStatusTitle = (status: VideoProcessingStatus): string => {
+    switch (status) {
+      case VideoProcessingStatus.INITIALIZING_ENGINE:
+        return 'INITIALIZING VIDEO ENGINE';
+      case VideoProcessingStatus.ANALYZING:
+        return 'ANALYZING VIDEO';
+      case VideoProcessingStatus.EXTRACTING_AUDIO:
+        return 'EXTRACTING AUDIO';
+      case VideoProcessingStatus.TRANSCRIBING:
+        return 'TRANSCRIBING AUDIO';
+      case VideoProcessingStatus.EXTRACTING_SUBTITLES:
+        return 'EXTRACTING SUBTITLES';
+      case VideoProcessingStatus.MUXING:
+        return 'PREPARING VIDEO DOWNLOAD';
+      case VideoProcessingStatus.DONE:
+        return 'PROCESSING COMPLETE';
+      case VideoProcessingStatus.UPLOADING_TO_YOUTUBE:
+        return 'UPLOADING TO YOUTUBE';
+      case VideoProcessingStatus.AWAITING_YOUTUBE_CAPTIONS:
+        return 'PROCESSING CAPTIONS';
+      case VideoProcessingStatus.DOWNLOADING_FROM_URL:
+        return 'FETCHING VIDEO FROM URL';
+      case VideoProcessingStatus.FETCHING_YOUTUBE_INFO:
+        return 'FETCHING VIDEO DETAILS';
+      case VideoProcessingStatus.DOWNLOADING_VIDEO:
+        return 'DOWNLOADING VIDEO';
+      default:
+        return status.replace(/_/g, ' ');
+    }
+  };
+
+  const localVideoResolutions = useMemo(() => {
+    const standardHeights = [1080, 720, 480, 360, 240, 144];
+    const origH = localVideoDimensions?.height || 1080;
+    const filtered = standardHeights.filter(h => h <= origH);
+    if (!filtered.includes(origH) && origH >= 144) {
+      filtered.unshift(origH);
+    }
+    return filtered.length > 0 ? filtered : [1080, 720, 480, 360, 240, 144];
+  }, [localVideoDimensions]);
   
   // API Key & Model Config State
   const [userGoogleApiKey, setUserGoogleApiKey] = useState<string>('');
@@ -652,12 +694,17 @@ const App = () => {
     const cleanBase = baseName.replace(/[^a-zA-Z0-9 \-_]/g, '').trim();
     
     const isYouTubeTranscription = fileType === 'youtube';
-    const isAiTranscription = !isYouTubeTranscription && (sourceLang === 'auto' || sourceLang === targetLang);
-
-    const action = isYouTubeTranscription || isAiTranscription ? 'Transcribed' : 'Translated';
-    const langName = isYouTubeTranscription ? (LANGUAGES.find(l => l.code === selectedCaptionId)?.name || 'Unknown') : isAiTranscription ? 'Auto' : (LANGUAGES.find(l => l.name === targetLang)?.name || 'English');
+    const isTranslated = status === TranslationStatus.COMPLETED || isTranslationComplete;
     
-    return `SubStream_${cleanBase}_${action}_${langName}.${extension}`;
+    let langName = targetLang;
+    if (!isTranslated) {
+      langName = isYouTubeTranscription 
+        ? (LANGUAGES.find(l => l.code === selectedCaptionId)?.name || 'Captions')
+        : (sourceLang !== 'auto' ? sourceLang : 'Transcript');
+    }
+
+    const cleanLang = langName.replace(/[^a-zA-Z0-9]/g, '');
+    return extension ? `${cleanBase}_SubStream_${cleanLang}.${extension}` : `${cleanBase}_SubStream_${cleanLang}`;
   };
 
   const resetState = () => {
@@ -852,7 +899,7 @@ const App = () => {
 
   const handleVideoUpload = async (videoFile: File) => {
     try {
-      setVideoProcessingStatus(VideoProcessingStatus.LOADING_FFMPEG);
+      setVideoProcessingStatus(VideoProcessingStatus.INITIALIZING_ENGINE);
       const ffmpeg = await loadFFmpeg((message) => setVideoProcessingMessage(message));
       ffmpegRef.current = ffmpeg;
       ffmpeg.on('progress', ({ progress }) => {
@@ -864,7 +911,16 @@ const App = () => {
       const tracks = await analyzeVideoFile(ffmpeg, videoFile);
       setExtractedTracks(tracks);
       
-      setVideoSrc(URL.createObjectURL(videoFile));
+      const objectUrl = URL.createObjectURL(videoFile);
+      const tempVideo = document.createElement('video');
+      tempVideo.src = objectUrl;
+      tempVideo.onloadedmetadata = () => {
+        if (tempVideo.videoHeight > 0) {
+          setLocalVideoDimensions({ width: tempVideo.videoWidth, height: tempVideo.videoHeight });
+        }
+      };
+
+      setVideoSrc(objectUrl);
       generateVideoThumbnail(videoFile).then(setVideoThumbnail);
 
       setVideoProcessingStatus(VideoProcessingStatus.IDLE);
@@ -987,6 +1043,7 @@ const App = () => {
         setVideoProcessingMessage('Extracting audio from video...');
         const audioBlob = await extractAudio(ffmpegRef.current);
 
+        setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.TRANSCRIBING);
         setVideoProcessingMessage(`Transcribing audio in ${sourceLang === 'auto' ? 'detected language' : sourceLang} with ${activeModelData.name}...`);
         
@@ -1102,27 +1159,32 @@ const App = () => {
         return;
     }
     
-    if (!file || !ffmpegRef.current || status !== TranslationStatus.COMPLETED) return;
+    if (!file || subtitles.length === 0) return;
     try {
         setFfmpegProgress(0);
         setVideoProcessingStatus(VideoProcessingStatus.MUXING);
-        setVideoProcessingMessage('Packaging dual-track video file (Original + Translated)...');
+        setVideoProcessingMessage('Packaging softsub video file...');
         
-        const finalSrt = stringifySRT(subtitles); // Translated Text
-        const originalSrt = stringifySRT(subtitles.map(s => ({...s, text: s.originalText || s.text}))); // Original Text
+        const ffmpeg = ffmpegRef.current || await loadFFmpeg((message) => setVideoProcessingMessage(message));
+        ffmpegRef.current = ffmpeg;
+
+        const finalSrt = stringifySRT(subtitles); // Selected / Translated Text
+        const hasOriginals = subtitles.some(s => !!s.originalText);
+        const originalSrt = hasOriginals ? stringifySRT(subtitles.map(s => ({...s, text: s.originalText || s.text}))) : undefined;
 
         const targetLangData = LANGUAGES.find(l => l.name === targetLang);
         const sourceLangData = LANGUAGES.find(l => l.name === sourceLang);
         
-        const mkvFileName = fileName.replace('.mp4', '.mkv');
+        const mkvFileName = fileName.replace(/\.mp4$/i, '.mkv');
         
         const newVideoBlob = await addSrtToVideo(
-            ffmpegRef.current, 
+            ffmpeg, 
             file, 
             finalSrt, 
             targetLangData?.code || 'eng',
             originalSrt,
-            sourceLangData?.code || 'und'
+            sourceLangData?.code || 'und',
+            resolution
         );
         
         downloadFile(mkvFileName, newVideoBlob);
@@ -1200,6 +1262,8 @@ const App = () => {
       );
   }
 
+  const isDownloadDisabled = subtitles.length === 0 || isTranslationInProgress || downloadProgress !== undefined || (videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE);
+
   if (currentPage === 'DOCS') {
     return <Documentation onBack={() => setCurrentPage('HOME')} />;
   }
@@ -1258,19 +1322,17 @@ const App = () => {
                 </p>
             </section>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-stretch pb-12">
-              <div className="lg:col-span-3">
-                 <div className="lg:sticky lg:top-32 h-full">
-                    <div className="h-full flex flex-row justify-around p-4 rounded-2xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm lg:flex-col lg:p-6 lg:justify-between">
-                        <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
-                        <StepIndicator number={2} title="Configure" isActive={isConfigureStepActive} isCompleted={isTranslationInProgress || isTranslationComplete} />
-                        <StepIndicator number={3} title="Translate" isActive={isTranslationInProgress} isCompleted={isTranslationComplete} />
-                        <StepIndicator number={4} title="Download" isActive={isTranslationComplete} isCompleted={false} />
-                    </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch pb-8">
+              <div className="lg:col-span-3 flex flex-col">
+                 <div className="h-full flex flex-row justify-around p-6 rounded-3xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm lg:flex-col lg:justify-between">
+                     <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
+                     <StepIndicator number={2} title="Configure" isActive={isConfigureStepActive} isCompleted={isTranslationInProgress || isTranslationComplete} />
+                     <StepIndicator number={3} title="Translate" isActive={isTranslationInProgress} isCompleted={isTranslationComplete} />
+                     <StepIndicator number={4} title="Download" isActive={isTranslationComplete} isCompleted={false} />
                  </div>
               </div>
 
-              <div className="lg:col-span-9 space-y-8">
+              <div className="lg:col-span-9 h-full flex flex-col justify-between gap-6">
                 {(fileType === 'video' || fileType === 'youtube') && (
                     <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
                         {fileType === 'youtube' && youtubeMeta ? (
@@ -1377,7 +1439,7 @@ const App = () => {
                      <div className="flex flex-col items-center justify-center text-center min-h-[200px] space-y-4">
                         <Loader2 className="w-12 h-12 text-white animate-spin" />
                         <div>
-                          <h2 className="text-xl font-bold text-white mb-1 uppercase tracking-widest">{videoProcessingStatus.replace(/_/g, ' ')}</h2>
+                          <h2 className="text-xl font-bold text-white mb-1 uppercase tracking-widest">{getVideoProcessingStatusTitle(videoProcessingStatus)}</h2>
                           <p className="text-neutral-400">{videoProcessingMessage}</p>
                         </div>
                         {showProgressBar &&
@@ -1545,23 +1607,29 @@ const App = () => {
               </div>
               <div className="flex items-center relative">
                   {(fileType === 'video' || fileType === 'youtube') ? (
-                      <div className="inline-flex items-center bg-neutral-950 border border-neutral-800 rounded-xl overflow-hidden shadow-sm">
-                        <div className="relative" ref={resolutionMenuRef}>
+                      <div className="inline-flex items-center p-1 bg-neutral-950 border border-neutral-800 rounded-2xl shadow-sm gap-1">
+                        <div 
+                            className="relative" 
+                            ref={resolutionMenuRef}
+                            onMouseEnter={() => !isDownloadDisabled && setShowResolutionMenu(true)}
+                            onMouseLeave={() => setShowResolutionMenu(false)}
+                        >
                           <Button 
                               variant="secondary" 
-                              onClick={() => setShowResolutionMenu(!showResolutionMenu)} 
+                              onClick={() => !isDownloadDisabled && setShowResolutionMenu(!showResolutionMenu)} 
                               progress={downloadProgress}
                               statusText={downloadStatusText}
                               completed={isDownloadComplete}
-                              disabled={downloadProgress !== undefined || isTranslationInProgress}
+                              disabled={isDownloadDisabled}
                               icon={<Film className="w-4 h-4" />}
-                              className="!bg-transparent hover:!bg-neutral-900 !text-neutral-400 hover:!text-white !border-0 !rounded-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center"
+                              className="!bg-transparent hover:!bg-neutral-900/90 !text-neutral-300 hover:!text-white !border-0 rounded-xl focus:outline-none focus:ring-0 active:outline-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center gap-1.5"
                           >
-                              Download Video
+                              <span>Download Video</span>
+                              <ChevronDown className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-200 ${showResolutionMenu ? 'rotate-180' : ''}`} />
                           </Button>
-                          {showResolutionMenu && (
-                              <div className="absolute right-0 top-full mt-2 w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden z-20 animate-fade-in">
-                                  <div>
+                          {showResolutionMenu && !isDownloadDisabled && (
+                              <div className="absolute right-0 top-full pt-1.5 z-30 animate-fade-in">
+                                  <div className="w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden py-1">
                                       {isYouTubeWorkflow && youtubeMeta?.availableResolutions && youtubeMeta.availableResolutions.length > 0 ? (
                                           youtubeMeta.availableResolutions.map((res) => (
                                               <button
@@ -1570,17 +1638,20 @@ const App = () => {
                                                   className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
                                               >
                                                   <span>{res}p</span>
-                                                  <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">MP4</span>
+                                                  <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-400">MP4</span>
                                               </button>
                                           ))
                                       ) : (
-                                          <button
-                                              onClick={() => handleDownloadVideo()}
-                                              className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
-                                          >
-                                              <span>Best Quality</span>
-                                              <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-500">{isYouTubeWorkflow ? 'MP4' : 'MKV'}</span>
-                                          </button>
+                                          localVideoResolutions.map((res) => (
+                                              <button
+                                                  key={res}
+                                                  onClick={() => handleDownloadVideo(res)}
+                                                  className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
+                                              >
+                                                  <span>{localVideoDimensions?.height && res === localVideoDimensions.height ? `${res}p (Original)` : `${res}p`}</span>
+                                                  <span className="text-[10px] bg-neutral-800 px-1.5 py-0.5 rounded text-neutral-400">MKV</span>
+                                              </button>
+                                          ))
                                       )}
                                   </div>
                               </div>
@@ -1589,9 +1660,9 @@ const App = () => {
                         <Button 
                             variant="primary" 
                             onClick={handleDownloadSrt} 
-                            disabled={isTranslationInProgress} 
+                            disabled={isDownloadDisabled} 
                             icon={<Download className="w-4 h-4"/>}
-                            className="!bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white border border-neutral-800 rounded-xl px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center shadow-sm"
+                            className="!bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white !border-0 rounded-xl focus:outline-none focus:ring-0 active:outline-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center shadow-sm"
                         >
                             Download SRT
                         </Button>
@@ -1600,24 +1671,24 @@ const App = () => {
                       <Button 
                           variant="primary" 
                           onClick={handleDownloadSrt} 
-                          disabled={isTranslationInProgress} 
+                          disabled={isDownloadDisabled} 
                           icon={<Download className="w-4 h-4"/>}
-                          className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all"
+                          className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all focus:outline-none focus:ring-0 active:outline-none"
                       >
                           Download SRT
                       </Button>
                   )}
               </div>
             </div>
-            <div className="rounded-3xl border border-neutral-800 bg-black/50 backdrop-blur overflow-hidden min-h-[400px]">
-              <div className={`grid grid-cols-[100px_1fr] border-b border-neutral-800 bg-neutral-900/50 p-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
-                <div className="pl-2">Timestamp</div>
+            <div className="rounded-3xl border border-neutral-800/80 bg-black/70 backdrop-blur overflow-hidden min-h-[400px]">
+              <div className={`grid grid-cols-[112px_1fr] border-b border-neutral-800/80 bg-neutral-950/80 px-6 py-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
+                <div className="w-24">Timestamp</div>
                 <div className={`grid ${isYouTubeWorkflow ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
                    <span>Original ({isYouTubeWorkflow ? LANGUAGES.find(l=>l.code === selectedCaptionId)?.name || 'Selected Language' : sourceLang})</span>
                    {!isYouTubeWorkflow && <span className="text-white">Translated ({targetLang})</span>}
                 </div>
               </div>
-              <div className="max-h-[800px] overflow-y-auto">
+              <div className="max-h-[800px] overflow-y-auto thin-scrollbar">
                 {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} sourceFont={sourceLangFont} targetFont={targetLangFont} /> ))}
               </div>
             </div>
