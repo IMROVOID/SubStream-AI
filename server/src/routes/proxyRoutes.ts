@@ -82,7 +82,7 @@ proxyRouter.get('/file-head', async (req, res) => {
     return res.status(400).json({ error: "Could not access URL" });
 });
 
-// General file get streaming
+// General file get streaming (with HTTP Range Request / Seeking support)
 proxyRouter.get('/file-get', async (req, res) => {
     const url = req.query.url as string;
     const token = req.query.token as string;
@@ -97,6 +97,9 @@ proxyRouter.get('/file-get', async (req, res) => {
     try {
         const headers: Record<string, string> = {};
         if (proxyAuth) headers['Authorization'] = proxyAuth;
+        if (req.headers.range) {
+            headers['Range'] = req.headers.range;
+        }
 
         let response;
         try {
@@ -106,7 +109,8 @@ proxyRouter.get('/file-get', async (req, res) => {
                 method: 'get',
                 url: url,
                 responseType: 'stream',
-                headers: headers
+                headers: headers,
+                validateStatus: (status) => status >= 200 && status < 400
             });
         } catch (err: any) {
             if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
@@ -115,18 +119,25 @@ proxyRouter.get('/file-get', async (req, res) => {
                     method: 'get',
                     url: url,
                     responseType: 'stream',
-                    headers: headers
+                    headers: headers,
+                    validateStatus: (status) => status >= 200 && status < 400
                 });
             } else {
                 throw err;
             }
         }
 
+        res.status(response.status);
+
         const contentType = response.headers['content-type'];
         const contentLength = response.headers['content-length'];
+        const contentRange = response.headers['content-range'];
+        const acceptRanges = response.headers['accept-ranges'] || 'bytes';
 
         if (contentType) res.setHeader('Content-Type', contentType);
         if (contentLength) res.setHeader('Content-Length', contentLength);
+        if (contentRange) res.setHeader('Content-Range', contentRange);
+        if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
 
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 

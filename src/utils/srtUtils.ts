@@ -152,6 +152,16 @@ export const stringifySRT = (subtitles: SubtitleNode[]): string => {
     .join('\n\n');
 };
 
+export const stringifyVTT = (subtitles: SubtitleNode[]): string => {
+  return "WEBVTT\n\n" + subtitles
+    .map((sub) => {
+      const vttStart = sub.startTime.replace(',', '.');
+      const vttEnd = sub.endTime.replace(',', '.');
+      return `${sub.id}\n${vttStart} --> ${vttEnd}\n${sub.text}`;
+    })
+    .join('\n\n');
+};
+
 export const downloadFile = (filename: string, content: string | Blob) => {
   const element = document.createElement('a');
   const file = typeof content === 'string' ? new Blob([content], { type: 'text/plain' }) : content;

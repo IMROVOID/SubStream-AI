@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield, ExternalLink } from 'lucide-react';
+import { Upload, FileText, ArrowRight, Download, RefreshCw, Languages, Zap, AlertCircle, Key, Info, Cpu, CheckCircle2, BookText, Search, XCircle, Loader2, Film, Clapperboard, ChevronDown, Gauge, Youtube, Link as LinkIcon, HardDrive, Instagram, Github, Heart, Sparkles, Shield, ExternalLink, Table, Video } from 'lucide-react';
 import { GoogleOAuthProvider, TokenResponse } from '@react-oauth/google';
 import { LANGUAGES, SubtitleNode, TranslationStatus, AVAILABLE_MODELS, SUPPORTED_VIDEO_FORMATS, ExtractedSubtitleTrack, VideoProcessingStatus, OPENAI_RPM_OPTIONS, ANTHROPIC_RPM_OPTIONS, RPMLimit, YouTubeVideoMetadata, AIModel } from './types';
 import { parseSRT, stringifySRT, downloadFile } from './utils/srtUtils';
@@ -202,6 +202,7 @@ const App = () => {
   const [status, setStatus] = useState<TranslationStatus>(TranslationStatus.IDLE);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<'table' | 'video'>('table');
   
   // Download Progress State
   const [downloadProgress, setDownloadProgress] = useState<number | undefined>(undefined);
@@ -1345,7 +1346,12 @@ const App = () => {
                                 </div>
                             </>
                         ) : videoSrc ? (
-                            <VideoPlayer videoSrc={videoSrc} srtContent={stringifySRT(subtitles)} isYouTube={false} />
+                            <VideoPlayer 
+                              videoSrc={videoSrc} 
+                              srtContent={stringifySRT(subtitles)} 
+                              isYouTube={isYouTubeWorkflow || fileType === 'youtube'} 
+                              availableResolutions={youtubeMeta?.availableResolutions || []} 
+                            />
                         ) : null}
                     </div>
                 )}
@@ -1598,10 +1604,34 @@ const App = () => {
           <section ref={resultsRef} className="mt-24 border-t border-neutral-900 pt-12 animate-slide-up pb-24">
             <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
               <div>
-                <h2 className="text-3xl font-display font-bold text-white mb-2">
-                    {isYouTubeWorkflow ? 'Transcription Preview' : 'Live Preview'}
-                </h2>
-                <p className="text-neutral-500">
+                <div className="flex items-center gap-3 mb-[0.5rem]">
+                  <h2 className="text-3xl font-display font-bold text-white">
+                      Live Preview
+                  </h2>
+
+                  {/* Segmented Control Switch with exact requested styling */}
+                  <div className="relative inline-flex items-center p-1 bg-neutral-950 border border-neutral-800 rounded-xl select-none shadow-sm">
+                    <div 
+                      className="absolute top-1 bottom-1 left-1 w-[3.5rem] bg-neutral-800 rounded-lg transition-transform duration-300 ease-out shadow-sm" 
+                      style={{ transform: `translateX(${previewMode === 'video' ? '100%' : '0%'})` }} 
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setPreviewMode('table')} 
+                      className={`relative z-10 w-[3.5rem] py-[0.2rem] text-[0.7rem] font-semibold text-center transition-colors duration-300 rounded-lg ${previewMode === 'table' ? 'text-white font-bold' : 'text-neutral-400 hover:text-white'}`}
+                    >
+                      Table
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setPreviewMode('video')} 
+                      className={`relative z-10 w-[3.5rem] py-[0.2rem] text-[0.7rem] font-semibold text-center transition-colors duration-300 rounded-lg ${previewMode === 'video' ? 'text-white font-bold' : 'text-neutral-400 hover:text-white'}`}
+                    >
+                      Video
+                    </button>
+                  </div>
+                </div>
+                <p className="text-neutral-500 text-sm">
                     {isYouTubeWorkflow ? 'Review the generated transcription below.' : 'Comparing original vs translated output.'}
                 </p>
               </div>
@@ -1631,7 +1661,9 @@ const App = () => {
                               <div className="absolute right-0 top-full pt-1.5 z-30 animate-fade-in">
                                   <div className="w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden py-1">
                                       {isYouTubeWorkflow && youtubeMeta?.availableResolutions && youtubeMeta.availableResolutions.length > 0 ? (
-                                          youtubeMeta.availableResolutions.map((res) => (
+                                          youtubeMeta.availableResolutions
+                                            .filter((res) => typeof res === 'number' && res >= 144)
+                                            .map((res) => (
                                               <button
                                                   key={res}
                                                   onClick={() => handleDownloadVideo(res)}
@@ -1680,18 +1712,30 @@ const App = () => {
                   )}
               </div>
             </div>
-            <div className="rounded-3xl border border-neutral-800/80 bg-black/70 backdrop-blur overflow-hidden min-h-[400px]">
-              <div className={`grid grid-cols-[112px_1fr] border-b border-neutral-800/80 bg-neutral-950/80 px-6 py-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
-                <div className="w-24">Timestamp</div>
-                <div className={`grid ${isYouTubeWorkflow ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
-                   <span>Original ({isYouTubeWorkflow ? LANGUAGES.find(l=>l.code === selectedCaptionId)?.name || 'Selected Language' : sourceLang})</span>
-                   {!isYouTubeWorkflow && <span className="text-white">Translated ({targetLang})</span>}
+
+            {previewMode === 'table' ? (
+              <div key="table-view" className="rounded-3xl border border-neutral-800/80 bg-black/70 backdrop-blur overflow-hidden min-h-[400px] animate-fade-in">
+                <div className={`grid grid-cols-[112px_1fr] border-b border-neutral-800/80 bg-neutral-950/80 px-6 py-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
+                  <div className="w-24">Timestamp</div>
+                  <div className={`grid ${isYouTubeWorkflow ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
+                     <span>Original ({isYouTubeWorkflow ? LANGUAGES.find(l=>l.code === selectedCaptionId)?.name || 'Selected Language' : sourceLang})</span>
+                     {!isYouTubeWorkflow && <span className="text-white">Translated ({targetLang})</span>}
+                  </div>
+                </div>
+                <div className="max-h-[800px] overflow-y-auto thin-scrollbar">
+                  {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} sourceFont={sourceLangFont} targetFont={targetLangFont} /> ))}
                 </div>
               </div>
-              <div className="max-h-[800px] overflow-y-auto thin-scrollbar">
-                {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} sourceFont={sourceLangFont} targetFont={targetLangFont} /> ))}
+            ) : (
+              <div key="video-view" className="animate-fade-in w-full">
+                <VideoPlayer 
+                  videoSrc={(isYouTubeWorkflow || fileType === 'youtube') ? (youtubeMeta?.videoUrl || youtubeMeta?.id || videoSrc || '') : (videoSrc || '')} 
+                  srtContent={stringifySRT(subtitles)} 
+                  isYouTube={isYouTubeWorkflow || fileType === 'youtube'} 
+                  availableResolutions={youtubeMeta?.availableResolutions || []}
+                />
               </div>
-            </div>
+            )}
             <div className="mt-8 flex justify-center">
                 <Button variant="secondary" onClick={resetState} icon={<RefreshCw className="w-4 h-4" />}>
                     Process Another File

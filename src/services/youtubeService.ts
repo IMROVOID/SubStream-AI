@@ -31,8 +31,8 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
         
         data.meta.videoUrl = data.meta.videoUrl || videoUrl;
         
-        // Include resolutions in the returned object
-        data.meta.availableResolutions = data.resolutions || [];
+        // Include resolutions in the returned object (filter out formats under 144p)
+        data.meta.availableResolutions = (data.resolutions || []).filter((r: any) => typeof r === 'number' && r >= 144);
 
         return { meta: data.meta, captions: mappedCaptions };
 
@@ -287,4 +287,40 @@ export async function pollForCaptionReady(accessToken: string, videoId: string, 
     }
 
     throw new Error('Timed out waiting for YouTube to process the video.');
+}
+
+export interface YouTubeStreamResponse {
+    streamUrl: string;
+    audioUrl?: string;
+}
+
+export async function fetchYouTubeStreamUrl(videoUrl: string, quality?: string): Promise<YouTubeStreamResponse> {
+    try {
+        const qualityParam = quality ? `&quality=${encodeURIComponent(quality)}` : '';
+        let response = await fetch(`${BACKEND_URL}/stream-url?url=${encodeURIComponent(videoUrl)}${qualityParam}`);
+        
+        if (!response.ok) {
+            console.warn(`[YouTube] /stream-url returned ${response.status}. Retrying with /info...`);
+            response = await fetch(`${BACKEND_URL}/info?url=${encodeURIComponent(videoUrl)}`);
+        }
+
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: Failed to resolve stream URL.`);
+        }
+
+        const data = await response.json();
+        const rawStreamUrl = data.streamUrl || (data.meta && data.meta.streamUrl);
+        const rawAudioUrl = data.audioUrl;
+
+        if (rawStreamUrl) {
+            return {
+                streamUrl: `${BACKEND_URL}/proxy/file-get?url=${encodeURIComponent(rawStreamUrl)}`,
+                audioUrl: rawAudioUrl ? `${BACKEND_URL}/proxy/file-get?url=${encodeURIComponent(rawAudioUrl)}` : undefined
+            };
+        }
+        throw new Error("No stream URL returned from server.");
+    } catch (e: any) {
+        console.error("fetchYouTubeStreamUrl error:", e);
+        throw new Error(e.message || "Failed to fetch YouTube video stream URL.");
+    }
 }

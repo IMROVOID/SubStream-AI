@@ -1,6 +1,117 @@
+@import 'video.js/dist/video-js.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Minimal Skin for Video.js */
+.video-js.vjs-minimal-skin {
+  font-family: 'Inter', 'Vazirmatn', system-ui, -apple-system, sans-serif;
+  border-radius: 1rem;
+  overflow: hidden;
+  background-color: #000000;
+  color: #ffffff;
+}
+
+.video-js.vjs-minimal-skin .vjs-control-bar {
+  display: flex;
+  align-items: center;
+  height: 3rem;
+  background: rgba(10, 10, 10, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.875rem;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  width: calc(100% - 1.5rem);
+  padding: 0 0.5rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.video-js.vjs-minimal-skin .vjs-big-play-button {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #ffffff !important;
+  width: 4rem;
+  height: 4rem;
+  line-height: 4rem;
+  border-radius: 50% !important;
+  margin-top: -2rem !important;
+  margin-left: -2rem !important;
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.video-js.vjs-minimal-skin:hover .vjs-big-play-button {
+  background-color: rgba(255, 255, 255, 0.25) !important;
+  transform: scale(1.08);
+}
+
+.video-js.vjs-minimal-skin .vjs-progress-control {
+  align-items: center;
+}
+
+.video-js.vjs-minimal-skin .vjs-progress-holder {
+  height: 4px;
+  border-radius: 2px;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.video-js.vjs-minimal-skin .vjs-play-progress {
+  background-color: #ffffff;
+  border-radius: 2px;
+}
+
+.video-js.vjs-minimal-skin .vjs-play-progress:before {
+  font-size: 0.8em;
+  color: #ffffff;
+  top: -0.2em;
+}
+
+.video-js.vjs-minimal-skin .vjs-load-progress {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+.video-js.vjs-minimal-skin .vjs-time-control {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #a3a3a3;
+  line-height: 3rem;
+  padding: 0 0.375rem;
+}
+
+.video-js.vjs-minimal-skin .vjs-current-time,
+.video-js.vjs-minimal-skin .vjs-duration,
+.video-js.vjs-minimal-skin .vjs-time-divider {
+  display: block;
+}
+
+/* Subtitle Cues Overlay (SoftSub) */
+.video-js.vjs-minimal-skin .vjs-text-track-display {
+  pointer-events: none;
+}
+
+.video-js.vjs-minimal-skin .vjs-text-track-cue {
+  background-color: transparent !important;
+}
+
+.video-js.vjs-minimal-skin .vjs-text-track-cue > div {
+  background-color: rgba(0, 0, 0, 0.8) !important;
+  color: #ffffff !important;
+  font-family: 'Inter', 'Vazirmatn', system-ui, -apple-system, sans-serif !important;
+  font-size: 1.125rem !important;
+  line-height: 1.5 !important;
+  padding: 0.35rem 0.85rem !important;
+  border-radius: 0.5rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(4px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  display: inline-block !important;
+}
 
 /* Define the Local Font with Unicode Range for Persian/Arabic Script */
 @font-face {
