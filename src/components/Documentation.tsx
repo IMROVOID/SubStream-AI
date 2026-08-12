@@ -465,8 +465,9 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
           <div className="lg:col-span-9 bg-transparent lg:bg-neutral-900/30 border-0 lg:border border-neutral-800 rounded-none lg:rounded-3xl overflow-hidden backdrop-blur-none lg:backdrop-blur-sm relative flex flex-col">
             <ScrollFadeContainer 
               className="w-full h-full p-0 sm:p-2 lg:p-12 lg:overflow-y-auto custom-scrollbar"
-              topFadeClassName="from-black lg:from-[#121212] to-transparent"
-              bottomFadeClassName="from-black lg:from-[#121212] to-transparent"
+              topFadeClassName="from-black lg:from-[#121212] via-black/40 lg:via-[#121212]/40 to-transparent"
+              bottomFadeClassName="from-black lg:from-[#121212] via-black/40 lg:via-[#121212]/40 to-transparent"
+              roundedCorner="rounded-none lg:rounded-3xl"
             >
               <div key={selectedDocId} className="max-w-3xl mx-auto pb-4 md:pb-6 animate-fade-in">
                 <div className="flex items-center gap-3 mb-6">

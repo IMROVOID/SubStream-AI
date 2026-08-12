@@ -78,8 +78,9 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
         {/* Scrollable Content with Top & Bottom Dark Fade Effect */}
         <ScrollFadeContainer 
           className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1"
-          topFadeClassName="from-[#121212] to-transparent"
-          bottomFadeClassName="from-[#121212] to-transparent"
+          topFadeClassName="from-[#121212] via-[#121212]/40 to-transparent"
+          bottomFadeClassName="from-[#121212] via-[#121212]/40 to-transparent"
+          roundedCorner="rounded-none sm:rounded-b-3xl"
         >
           {children}
         </ScrollFadeContainer>

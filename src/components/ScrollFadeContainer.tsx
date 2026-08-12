@@ -7,6 +7,7 @@ interface ScrollFadeContainerProps {
   topFadeClassName?: string;
   bottomFadeClassName?: string;
   fadeHeight?: string;
+  roundedCorner?: string;
 }
 
 export const ScrollFadeContainer: React.FC<ScrollFadeContainerProps> = ({
@@ -16,6 +17,7 @@ export const ScrollFadeContainer: React.FC<ScrollFadeContainerProps> = ({
   topFadeClassName = 'from-[var(--overlay-bg,#121212)] via-[var(--overlay-bg,#121212)]/40 to-transparent',
   bottomFadeClassName = 'from-[var(--overlay-bg,#121212)] via-[var(--overlay-bg,#121212)]/40 to-transparent',
   fadeHeight = 'h-8',
+  roundedCorner = 'rounded-2xl',
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [showTopFade, setShowTopFade] = useState(false);
@@ -43,10 +45,10 @@ export const ScrollFadeContainer: React.FC<ScrollFadeContainerProps> = ({
   }, [checkScroll]);
 
   return (
-    <div className={`relative overflow-hidden flex flex-col min-h-0 min-w-0 w-full h-full ${containerClassName}`}>
+    <div className={`relative overflow-hidden flex flex-col min-h-0 min-w-0 w-full h-full ${roundedCorner} ${containerClassName}`}>
       {/* Top Dark Fade */}
       <div 
-        className={`aria-hidden pointer-events-none absolute top-0 left-0 right-0 ${fadeHeight} bg-gradient-to-b ${topFadeClassName} z-20 rounded-t-[inherit] rounded-b-2xl transition-opacity duration-300 ${
+        className={`aria-hidden pointer-events-none absolute top-0 left-0 right-0 ${fadeHeight} bg-gradient-to-b ${topFadeClassName} z-20 ${roundedCorner} rounded-b-2xl transition-opacity duration-300 ${
           showTopFade ? 'opacity-100' : 'opacity-0'
         }`}
       />
@@ -55,14 +57,14 @@ export const ScrollFadeContainer: React.FC<ScrollFadeContainerProps> = ({
       <div 
         ref={containerRef} 
         onScroll={checkScroll} 
-        className={className}
+        className={`${className} ${roundedCorner}`}
       >
         {children}
       </div>
 
       {/* Bottom Dark Fade */}
       <div 
-        className={`aria-hidden pointer-events-none absolute bottom-0 left-0 right-0 ${fadeHeight} bg-gradient-to-t ${bottomFadeClassName} z-20 rounded-b-[inherit] rounded-t-2xl transition-opacity duration-300 ${
+        className={`aria-hidden pointer-events-none absolute bottom-0 left-0 right-0 ${fadeHeight} bg-gradient-to-t ${bottomFadeClassName} z-20 ${roundedCorner} rounded-t-2xl transition-opacity duration-300 ${
           showBottomFade ? 'opacity-100' : 'opacity-0'
         }`}
       />

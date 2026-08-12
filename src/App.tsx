@@ -1873,8 +1873,9 @@ const App = () => {
               
               <ScrollFadeContainer 
                 className="space-y-4 pr-2 overflow-y-auto max-h-[380px] md:max-h-[430px] flex-1 custom-scrollbar"
-                topFadeClassName="from-[#121212] to-transparent"
-                bottomFadeClassName="from-[#121212] to-transparent"
+                topFadeClassName="from-[#121212] via-[#121212]/40 to-transparent"
+                bottomFadeClassName="from-[#121212] via-[#121212]/40 to-transparent"
+                roundedCorner="rounded-xl"
               >
                 
                 {youtubeModel.length > 0 && (
