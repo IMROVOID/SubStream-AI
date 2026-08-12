@@ -5,8 +5,7 @@ import ffmpegPath from 'ffmpeg-static';
 import { TEMP_DIR } from '../config';
 import { ensureBinary } from '../binaryManager';
 import { executeYtDlpWithRetry } from '../ytDlpRunner';
-import { translateSrtContent, fetchDirectSubtitleTrack, fetchYouTubeTimedText } from '../subtitleHelper';
-import { directAxiosClient } from '../proxy';
+import { translateSrtContent, fetchDirectSubtitleTrack } from '../subtitleHelper';
 import { CaptionTrack, DecodedCaptionToken } from '../types';
 import { metadataCache, captionCache, extractVideoId } from '../cacheManager';
 
@@ -46,7 +45,8 @@ mediaRouter.get('/info', async (req, res) => {
             Object.keys(tracksObj).forEach(lang => {
                 const formats = tracksObj[lang];
                 const name = (formats[0] && formats[0].name) || lang;
-                const directUrl = formats[0] && formats[0].url ? formats[0].url : undefined;
+                const vttFormat = Array.isArray(formats) ? (formats.find((f: any) => f.ext === 'vtt' || f.ext === 'srv3') || formats[0]) : undefined;
+                const directUrl = vttFormat && vttFormat.url ? vttFormat.url : undefined;
                 const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
                 
                 if (!seenKeys.has(uniqueKey)) {
@@ -122,7 +122,6 @@ mediaRouter.get('/info', async (req, res) => {
             resolutions: sortedResolutions
         };
 
-        // ponytail: Save metadata in LRU cache to eliminate 80%+ of yt-dlp calls
         metadataCache.set(videoId, { responseData, info });
 
         return res.json(responseData);
@@ -142,7 +141,6 @@ mediaRouter.get('/stream-url', async (req, res) => {
     const videoId = extractVideoId(url);
     const cachedData = metadataCache.get(videoId);
 
-    // ponytail: Attempt fast resolution directly from cached formats without launching yt-dlp.exe
     if (cachedData && cachedData.info && Array.isArray(cachedData.info.formats)) {
         const formats = cachedData.info.formats;
         let targetHeight = (quality && quality !== 'Auto') ? parseInt(quality.replace(/\D/g, ''), 10) : 1080;
@@ -201,7 +199,7 @@ mediaRouter.get('/stream-url', async (req, res) => {
     }
 });
 
-// Endpoint: Download subtitle track (with direct HTTP fetch & fallback translation)
+// Endpoint: Download subtitle track using yt-dlp native extraction & fallback translation
 mediaRouter.get('/caption', async (req, res) => {
     const rawToken = (req.query.token || req.query.trackId) as string;
     const url = req.query.url as string;
@@ -240,7 +238,7 @@ mediaRouter.get('/caption', async (req, res) => {
         return res.send(cachedCaption);
     }
 
-    // 1. Attempt direct HTTP download if direct track URL was saved in token
+    // 1. Direct HTTP fetch if direct signed track URL is present in token
     if (directUrl) {
         try {
             console.log(`[Caption] Attempting direct HTTP subtitle download for '${lang}'...`);
@@ -250,106 +248,54 @@ mediaRouter.get('/caption', async (req, res) => {
                 return res.send(content);
             }
         } catch (directErr: any) {
-            console.warn(`[Caption] Direct HTTP subtitle fetch failed (${directErr?.message}). Trying timedtext API...`);
+            console.warn(`[Caption] Direct HTTP subtitle fetch failed (${directErr?.message}). Proceeding with yt-dlp...`);
         }
     }
 
-    // 2. ponytail: Direct YouTube TimedText API fetch to bypass spawning yt-dlp.exe completely
-    try {
-        console.log(`[Caption] Fetching YouTube TimedText API directly for '${videoId}' (lang: ${lang})...`);
-        let content = await fetchYouTubeTimedText(videoId, lang, isAuto);
-
-        if (!content && lang !== 'en') {
-            console.log(`[Caption] Track for '${lang}' not found directly. Fetching 'en' track and translating to '${lang}'...`);
-            let enContent = await fetchYouTubeTimedText(videoId, 'en', true);
-            if (!enContent) enContent = await fetchYouTubeTimedText(videoId, 'en', false);
-
-            if (enContent) {
-                content = await translateSrtContent(enContent, lang);
-            }
-        }
-
-        if (content && content.length > 10) {
-            console.log(`[Caption] Successfully fetched subtitle track via HTTP TimedText API for '${lang}'.`);
-            captionCache.set(captionKey, content);
-            return res.send(content);
-        }
-    } catch (ttErr: any) {
-        console.warn(`[Caption] TimedText API fetch failed (${ttErr?.message}). Falling back to yt-dlp...`);
-    }
-
-    // 3. Fall back to yt-dlp only if direct HTTP and TimedText API both fail
+    // 2. yt-dlp extraction: Always fetch native 'en' track via yt-dlp (which never gets rate limited)
     await ensureBinary();
 
     const tempId = `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
 
     try {
-        let subLangParam = lang;
-        if (lang !== 'en') {
-            subLangParam = `${lang},en`;
-        }
-
+        console.log(`[Caption] Fetching subtitle track via yt-dlp for video '${videoId}' (target lang: ${lang})...`);
         const args = [
             url,
             '--skip-download',
             '--convert-subs', 'srt',
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath as string,
+            '--write-auto-sub',
+            '--sub-lang', 'en'
         ];
 
-        if (isAuto) args.push('--write-auto-sub', '--sub-lang', subLangParam);
-        else args.push('--write-sub', '--sub-lang', subLangParam);
-
-        try {
-            await executeYtDlpWithRetry(args);
-        } catch (ytErr: any) {
-            if (lang !== 'en') {
-                console.warn(`[Caption] Direct subtitle fetch for '${lang}' failed (${ytErr?.message}). Retrying with native track 'en'...`);
-                const fallbackArgs = [
-                    url,
-                    '--skip-download',
-                    '--convert-subs', 'srt',
-                    '--output', outputTemplate,
-                    '--ffmpeg-location', ffmpegPath as string,
-                    '--write-auto-sub', '--sub-lang', 'en'
-                ];
-                await executeYtDlpWithRetry(fallbackArgs);
-            } else {
-                throw ytErr;
-            }
-        }
+        await executeYtDlpWithRetry(args);
 
         const files = fs.readdirSync(TEMP_DIR);
-        let generatedFile = files.find(f => f.startsWith(tempId) && (f.includes(`.${lang}.`) || f.endsWith(`.${lang}`)) && (f.endsWith('.srt') || f.endsWith('.vtt')));
-        let isFallback = false;
+        const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
 
         if (!generatedFile) {
-            generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
-            if (generatedFile && lang !== 'en' && !generatedFile.includes(`.${lang}.`)) {
-                isFallback = true;
-            }
-        }
-
-        if (!generatedFile) {
-            throw new Error(`Subtitle file not generated.`);
+            throw new Error(`Subtitle file not generated by yt-dlp.`);
         }
 
         const filePath = path.join(TEMP_DIR, generatedFile);
         let content = fs.readFileSync(filePath, 'utf-8');
 
-        if (isFallback && lang !== 'en') {
-            console.log(`[Caption] Translating fallback subtitle track to '${lang}'...`);
-            try {
-                content = await translateSrtContent(content, lang);
-            } catch (transErr: any) {
-                console.warn(`[Caption] Auto-translation failed (${transErr?.message}), returning original track.`);
-            }
-        }
-
+        // Clean temp files
         files.filter(f => f.startsWith(tempId)).forEach(f => {
             try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch (e) {}
         });
+
+        // 3. If target language is non-English ('fa'), translate the clean native SRT content to target language
+        if (lang !== 'en') {
+            console.log(`[Caption] Translating native subtitle track to '${lang}'...`);
+            try {
+                content = await translateSrtContent(content, lang);
+            } catch (transErr: any) {
+                console.warn(`[Caption] Translation failed (${transErr?.message}), returning native track.`);
+            }
+        }
 
         captionCache.set(captionKey, content);
         return res.send(content);
