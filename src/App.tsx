@@ -17,6 +17,7 @@ import { TrackSelector } from './components/TrackSelector';
 import { YouTubeAuth } from './components/YouTubeAuth';
 import { ImportUrlModal } from './components/ImportUrlModal';
 import { CloudImportModal } from './components/CloudImportModal';
+import { ScrollFadeContainer } from './components/ScrollFadeContainer';
 import { getAuthItem, setAuthItem, removeAuthItem } from './utils/cookieUtils';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 
@@ -1839,8 +1840,8 @@ const App = () => {
       {/* ... Modals ... */}
       <Modal isOpen={activeModal === 'CONFIG'} onClose={() => setActiveModal('NONE')} title="AI Configuration">
         {/* ... (Existing modal content remains unchanged) ... */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-10">
-           <div className="flex flex-col gap-4">
+        <div className="flex flex-col md:grid md:grid-cols-2 gap-x-8 gap-y-6 md:gap-y-10">
+           <div className="order-2 md:order-1 md:col-start-1 md:row-span-2 flex flex-col gap-4 bg-neutral-900/60 border border-neutral-800/80 md:bg-transparent md:border-0 rounded-2xl md:rounded-none p-4 md:p-0">
               <label className="block text-sm font-bold text-white flex items-center gap-2"><Cpu className="w-4 h-4" /> Select AI Model</label>
               
               {/* Dynamic Model Sync Status Banner */}
@@ -1869,7 +1870,12 @@ const App = () => {
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-neutral-500 pointer-events-none" />
                 <input type="text" placeholder="Search models..." value={modelSearchQuery} onChange={(e) => setModelSearchQuery(e.target.value)} className="w-full bg-black/50 border border-neutral-700 rounded-xl py-2 pl-10 pr-4 text-white focus:border-white focus:outline-none transition-colors" />
               </div>
-              <div className="space-y-4 pr-2 overflow-y-auto max-h-[380px] md:max-h-[430px] flex-1 custom-scrollbar">
+              
+              <ScrollFadeContainer 
+                className="space-y-4 pr-2 overflow-y-auto max-h-[380px] md:max-h-[430px] flex-1 custom-scrollbar"
+                topFadeClassName="from-[#121212] to-transparent"
+                bottomFadeClassName="from-[#121212] to-transparent"
+              >
                 
                 {youtubeModel.length > 0 && (
                   <div>
@@ -2026,10 +2032,10 @@ const App = () => {
                     </div>
                   </div>
                 )}
-              </div>
+              </ScrollFadeContainer>
            </div>
            
-           <div className="space-y-6 flex flex-col h-full justify-between">
+           <div className="order-1 md:order-2 md:col-start-2 md:row-start-1 space-y-6 flex flex-col">
               <div className="space-y-6 flex-grow">
                   <div className="space-y-2">
                      <div className="flex items-center justify-between">
@@ -2217,22 +2223,22 @@ const App = () => {
                   })()}
 
               </div>
-              
-              <div className="flex items-center justify-between w-full pt-4 mt-6 border-t border-neutral-800">
-                <YouTubeAuth 
-                    onLoginSuccess={handleGoogleLoginSuccess} 
-                    onLogout={handleGoogleLogout} 
-                    userInfo={googleUser} 
-                />
-                <Button 
-                    onClick={saveSettings} 
-                    variant="secondary"
-                    className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all flex items-center justify-center"
-                    disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating' || anthropicApiKeyStatus === 'invalid' || anthropicApiKeyStatus === 'validating'}
-                >
-                    Save Settings
-                </Button>
-              </div>
+           </div>
+           
+           <div className="order-3 md:col-start-2 md:row-start-2 flex items-center justify-between w-full pt-4 mt-2 md:mt-0 border-t border-neutral-800">
+             <YouTubeAuth 
+                 onLoginSuccess={handleGoogleLoginSuccess} 
+                 onLogout={handleGoogleLogout} 
+                 userInfo={googleUser} 
+             />
+             <Button 
+                 onClick={saveSettings} 
+                 variant="secondary"
+                 className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all flex items-center justify-center"
+                 disabled={googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating' || anthropicApiKeyStatus === 'invalid' || anthropicApiKeyStatus === 'validating'}
+             >
+                 Save Settings
+             </Button>
            </div>
         </div>
       </Modal>

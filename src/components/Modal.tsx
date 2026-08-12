@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
+import { ScrollFadeContainer } from './ScrollFadeContainer';
 
 interface ModalProps {
   isOpen: boolean;
@@ -74,10 +75,14 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
           </button>
         </div>
 
-        {/* Scrollable Content */}
-        <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar">
+        {/* Scrollable Content with Top & Bottom Dark Fade Effect */}
+        <ScrollFadeContainer 
+          className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1"
+          topFadeClassName="from-[#121212] to-transparent"
+          bottomFadeClassName="from-[#121212] to-transparent"
+        >
           {children}
-        </div>
+        </ScrollFadeContainer>
       </div>
     </div>
   );
