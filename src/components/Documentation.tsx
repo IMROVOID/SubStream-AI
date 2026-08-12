@@ -376,9 +376,9 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
          <div className="absolute top-0 right-0 w-[60%] h-[60%] bg-neutral-900/20 blur-[150px] rounded-full mix-blend-screen" />
       </div>
 
-      <div className="relative z-10 max-w-7xl mx-auto w-full px-6 py-8 md:py-12 flex flex-col h-screen">
+      <div className="relative z-10 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-12 flex flex-col min-h-screen lg:h-screen">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8 shrink-0">
+        <div className="flex items-center justify-between mb-6 md:mb-8 shrink-0">
           <div className="flex items-center gap-4">
             <button 
               onClick={onBack}
@@ -390,7 +390,7 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
           </div>
           
           <div className="relative w-full max-w-md hidden md:block">
-            <Search className="absolute left-4 top-3.5 w-5 h-5 text-neutral-500" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500 pointer-events-none" />
             <input 
               type="text" 
               placeholder="Search guides..." 
@@ -402,20 +402,20 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
         </div>
 
         {/* Content Layout */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 overflow-hidden min-h-0">
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:overflow-hidden lg:min-h-0">
           
-          {/* Sidebar - Tree View Style */}
-          <div className="lg:col-span-3 overflow-y-auto pr-2 custom-scrollbar pb-10">
+          {/* Sidebar - Navigation Tree Box */}
+          <div className="lg:col-span-3 bg-neutral-900/30 border border-neutral-800/80 lg:bg-transparent lg:border-0 rounded-2xl lg:rounded-none p-4 sm:p-5 lg:p-0 max-h-[260px] overflow-y-auto lg:max-h-none lg:pr-2 custom-scrollbar lg:pb-10">
             
             {/* Mobile Search */}
-            <div className="relative w-full md:hidden mb-6 sticky top-0 bg-black z-10 py-2">
-              <Search className="absolute left-4 top-5 w-5 h-5 text-neutral-500" />
+            <div className="relative w-full md:hidden mb-4">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500 pointer-events-none" />
               <input 
                 type="text" 
                 placeholder="Search..." 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-neutral-900/50 border border-neutral-800 rounded-xl py-3 pl-12 pr-4 text-white outline-none"
+                className="w-full bg-black/60 border border-neutral-800 rounded-xl py-3 pl-12 pr-4 text-white outline-none"
               />
             </div>
 
@@ -461,28 +461,25 @@ export const Documentation: React.FC<DocumentationProps> = ({ onBack }) => {
           </div>
 
           {/* Main Reading Area */}
-          <div className="lg:col-span-9 bg-neutral-900/30 border border-neutral-800 rounded-3xl p-8 md:p-12 overflow-y-auto custom-scrollbar backdrop-blur-sm relative">
-            <div className="max-w-3xl mx-auto pb-20">
-              <div className="flex items-center gap-3 mb-6">
-                 <div className="flex items-center gap-2 text-xs font-mono text-neutral-400 uppercase tracking-wider">
-                    <span>{activeDoc.category}</span>
-                    <span className="text-neutral-600">/</span>
-                    <span className="text-white">{activeDoc.title}</span>
-                 </div>
-              </div>
-              
-              <h1 className="text-4xl md:text-5xl font-display font-bold text-white mb-8 tracking-tight">{activeDoc.title}</h1>
-              
-              <div className="prose prose-invert prose-lg prose-neutral max-w-none text-neutral-300">
-                {activeDoc.content}
-              </div>
+          <div className="lg:col-span-9 bg-transparent lg:bg-neutral-900/30 border-0 lg:border border-neutral-800 rounded-none lg:rounded-3xl overflow-hidden backdrop-blur-none lg:backdrop-blur-sm relative flex flex-col">
+            <div className="w-full h-full p-0 sm:p-2 lg:p-12 lg:overflow-y-auto custom-scrollbar">
+              <div key={selectedDocId} className="max-w-3xl mx-auto pb-4 md:pb-6 animate-fade-in">
+                <div className="flex items-center gap-3 mb-6">
+                   <div className="flex items-center gap-2 text-xs font-mono text-neutral-400 uppercase tracking-wider">
+                      <span>{activeDoc.category}</span>
+                      <span className="text-neutral-600">/</span>
+                      <span className="text-white">{activeDoc.title}</span>
+                   </div>
+                </div>
+                
+                <h1 className="text-4xl md:text-5xl font-display font-bold text-white mb-8 tracking-tight">{activeDoc.title}</h1>
+                
+                <div className="prose prose-invert prose-lg prose-neutral max-w-none text-neutral-300">
+                  {activeDoc.content}
+                </div>
 
-              <div className="mt-16 pt-8 border-t border-neutral-800 flex items-center justify-between text-sm text-neutral-500">
-                <span>Last updated: November 2025</span>
-                <div className="flex gap-4">
-                   <button className="flex items-center gap-2 hover:text-white transition-colors">
-                      <FileText className="w-4 h-4" /> Suggest Edit
-                   </button>
+                <div className="mt-16 pt-8 border-t border-neutral-800 flex items-center justify-between text-sm text-neutral-500">
+                  <span>Last updated: November 2025</span>
                 </div>
               </div>
             </div>

@@ -1292,11 +1292,15 @@ const App = () => {
   const isDownloadDisabled = subtitles.length === 0 || isTranslationInProgress || downloadProgress !== undefined || (videoProcessingStatus !== VideoProcessingStatus.IDLE && videoProcessingStatus !== VideoProcessingStatus.DONE);
 
   if (currentPage === 'DOCS') {
-    return <Documentation onBack={() => setCurrentPage('HOME')} />;
+    return (
+      <div key="docs-page" className="animate-fade-in min-h-screen bg-black">
+        <Documentation onBack={() => setCurrentPage('HOME')} />
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black flex flex-col scroll-smooth snap-y snap-proximity">
+    <div key="home-page" className="animate-fade-in min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black flex flex-col scroll-smooth snap-y snap-proximity">
       
       <div className="fixed inset-0 pointer-events-none z-0">
          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-neutral-900/30 blur-[120px] rounded-full mix-blend-screen" />
@@ -1317,7 +1321,7 @@ const App = () => {
       <nav className="relative z-20 border-b border-neutral-900 bg-black/80 backdrop-blur-xl sticky top-0 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2 cursor-pointer shrink-0" onClick={() => window.location.reload()}>
-            <div className="w-8 h-8 bg-white text-black flex items-center justify-center font-bold text-xl rounded-lg font-display">S</div>
+            <div className="w-8 h-8 bg-white text-black hidden sm:flex items-center justify-center font-bold text-xl rounded-lg font-display">S</div>
             <span className="font-display font-bold text-lg tracking-tight">SubStream <span className="text-neutral-600 font-sans font-normal text-sm ml-2">AI</span></span>
           </div>
           <div className="flex items-center gap-2 md:gap-6 text-sm font-medium text-neutral-400">
@@ -1336,10 +1340,10 @@ const App = () => {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-5xl mx-auto px-6 w-full flex-grow flex flex-col">
-        <div className="flex-grow flex flex-col justify-start pt-16 md:pt-30">
-            <section className="mb-14 text-center">
-                <h1 className="text-4xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
+      <main className="relative z-10 max-w-5xl mx-auto px-3 sm:px-4 md:px-6 w-full flex-grow flex flex-col">
+        <div className="flex-grow flex flex-col justify-start pt-8 md:pt-30">
+            <section className="mb-8 md:mb-14 text-center">
+                <h1 className="text-[2.65rem] leading-[1.05] sm:text-5xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
                     Bridge the Language<br/>
                     <span className="text-transparent bg-clip-text bg-gradient-to-r from-neutral-400 to-neutral-700">Gap Instantly.</span>
                 </h1>
@@ -1350,7 +1354,7 @@ const App = () => {
             </section>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch pb-8">
-              <div className="lg:col-span-3 flex flex-col">
+              <div className="order-2 lg:order-1 lg:col-span-3 flex flex-col">
                  <div className="h-full flex flex-row justify-around p-6 rounded-3xl border border-neutral-900 bg-neutral-950/50 backdrop-blur-sm lg:flex-col lg:justify-between">
                      <StepIndicator number={1} title="Upload" isActive={status === TranslationStatus.IDLE && !file} isCompleted={!!file} />
                      <StepIndicator number={2} title="Configure" isActive={isConfigureStepActive} isCompleted={isTranslationInProgress || isTranslationComplete} />
@@ -1359,7 +1363,7 @@ const App = () => {
                  </div>
               </div>
 
-              <div className="lg:col-span-9 h-full flex flex-col justify-between gap-6">
+              <div className="order-1 lg:order-2 lg:col-span-9 h-full flex flex-col justify-between gap-6">
                 {(fileType === 'video' || fileType === 'youtube') && (
                     ((fileType as string) === 'youtube' && youtubeMeta) ? (
                         <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
@@ -1497,7 +1501,7 @@ const App = () => {
                      <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between gap-6">
                             <div className="flex items-center gap-4 flex-1 min-w-0">
-                               <div className="w-24 aspect-video rounded-xl bg-neutral-800 text-black flex items-center justify-center overflow-hidden shrink-0 border border-neutral-700">
+                               <div className="hidden sm:flex w-24 aspect-video rounded-xl bg-neutral-800 text-black items-center justify-center overflow-hidden shrink-0 border border-neutral-700">
                                 {fileType === 'srt' ? (
                                     <FileText className="w-6 h-6 text-white" />
                                 ) : fileType === 'youtube' && youtubeMeta ? (
@@ -1625,7 +1629,11 @@ const App = () => {
         </div>
 
         {subtitles.length > 0 && (
-          <section ref={resultsRef} className={`h-[calc(100vh-5rem)] min-h-[calc(100vh-5rem)] max-h-[calc(100vh-5rem)] border-t border-neutral-900 px-4 md:px-8 flex flex-col justify-between scroll-mt-20 snap-start snap-always animate-slide-up overflow-hidden box-border transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${previewMode === 'video' ? 'pt-12 pb-14 md:pt-16 md:pb-20' : 'pt-7 pb-8 md:pt-9 md:pb-11'}`}>
+          <section ref={resultsRef} className={`border-t border-neutral-900 px-3 md:px-8 flex flex-col justify-between scroll-mt-20 snap-start snap-always animate-slide-up overflow-hidden box-border transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${
+            previewMode === 'video' 
+              ? 'h-[65vh] min-h-[65vh] max-h-[65vh] md:h-[calc(100vh-5rem)] md:min-h-[calc(100vh-5rem)] md:max-h-[calc(100vh-5rem)] pt-4 pb-6 md:pt-16 md:pb-20' 
+              : 'h-[100vh] min-h-[100vh] max-h-[100vh] md:h-[calc(100vh-5rem)] md:min-h-[calc(100vh-5rem)] md:max-h-[calc(100vh-5rem)] pt-7 pb-8 md:pt-9 md:pb-11'
+          }`}>
             <div className={`flex items-center justify-between flex-wrap gap-2 shrink-0 transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${previewMode === 'video' ? 'mb-1' : 'mb-4'}`}>
               <div>
                 <div className="flex items-center gap-3 mb-[0.5rem]">
@@ -1636,22 +1644,24 @@ const App = () => {
                   {/* Segmented Control Switch with exact requested styling */}
                   <div className="relative inline-flex items-center p-1 bg-neutral-950 border border-neutral-800 rounded-xl select-none shadow-sm">
                     <div 
-                      className="absolute top-1 bottom-1 left-1 w-[3.5rem] bg-neutral-800 rounded-lg transition-transform duration-300 ease-out shadow-sm" 
+                      className="absolute top-1 bottom-1 left-1 w-[2rem] sm:w-[3.5rem] bg-neutral-800 rounded-lg transition-transform duration-300 ease-out shadow-sm" 
                       style={{ transform: `translateX(${previewMode === 'video' ? '100%' : '0%'})` }} 
                     />
                     <button 
                       type="button"
                       onClick={() => setPreviewMode('table')} 
-                      className={`relative z-10 w-[3.5rem] py-[0.2rem] text-[0.7rem] font-semibold text-center transition-colors duration-300 rounded-lg ${previewMode === 'table' ? 'text-white font-bold' : 'text-neutral-400 hover:text-white'}`}
+                      className={`relative z-10 w-[2rem] sm:w-[3.5rem] py-[0.35rem] sm:py-[0.2rem] text-[0.7rem] font-semibold flex items-center justify-center transition-colors duration-300 rounded-lg ${previewMode === 'table' ? 'text-white font-bold' : 'text-neutral-400 hover:text-white'}`}
                     >
-                      Table
+                      <Table className="w-3.5 h-3.5 sm:hidden" />
+                      <span className="hidden sm:inline">Table</span>
                     </button>
                     <button 
                       type="button"
                       onClick={() => setPreviewMode('video')} 
-                      className={`relative z-10 w-[3.5rem] py-[0.2rem] text-[0.7rem] font-semibold text-center transition-colors duration-300 rounded-lg ${previewMode === 'video' ? 'text-white font-bold' : 'text-neutral-400 hover:text-white'}`}
+                      className={`relative z-10 w-[2rem] sm:w-[3.5rem] py-[0.35rem] sm:py-[0.2rem] text-[0.7rem] font-semibold flex items-center justify-center transition-colors duration-300 rounded-lg ${previewMode === 'video' ? 'text-white font-bold' : 'text-neutral-400 hover:text-white'}`}
                     >
-                      Video
+                      <Video className="w-3.5 h-3.5 sm:hidden" />
+                      <span className="hidden sm:inline">Video</span>
                     </button>
                   </div>
                 </div>
@@ -1659,38 +1669,51 @@ const App = () => {
                     {isYouTubeWorkflow ? 'Review the generated transcription below.' : 'Comparing original vs translated output.'}
                 </p>
               </div>
-              <div className="flex items-center relative">
+              <div className="flex items-center relative w-full sm:w-auto mt-2 sm:mt-0">
                   {(fileType === 'video' || fileType === 'youtube') ? (
-                      <div className="inline-flex items-center p-1 bg-neutral-950 border border-neutral-800 rounded-2xl shadow-sm gap-1">
+                      <div className="inline-flex items-center p-1 bg-neutral-950 border border-neutral-800 rounded-2xl shadow-sm gap-1 w-full sm:w-auto">
                         <div 
-                            className="relative" 
+                            className="relative flex-1 sm:flex-initial" 
                             ref={resolutionMenuRef}
-                            onMouseEnter={() => !isDownloadDisabled && setShowResolutionMenu(true)}
-                            onMouseLeave={() => setShowResolutionMenu(false)}
+                            onMouseEnter={() => {
+                              if (window.matchMedia('(hover: hover)').matches && !isDownloadDisabled) {
+                                setShowResolutionMenu(true);
+                              }
+                            }}
+                            onMouseLeave={() => {
+                              if (window.matchMedia('(hover: hover)').matches) {
+                                setShowResolutionMenu(false);
+                              }
+                            }}
                         >
                           <Button 
                               variant="secondary" 
-                              onClick={() => !isDownloadDisabled && setShowResolutionMenu(!showResolutionMenu)} 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!isDownloadDisabled) {
+                                  setShowResolutionMenu(prev => !prev);
+                                }
+                              }} 
                               progress={downloadProgress}
                               statusText={downloadStatusText}
                               completed={isDownloadComplete}
                               disabled={isDownloadDisabled}
                               icon={<Film className="w-4 h-4" />}
-                              className="!bg-transparent hover:!bg-neutral-900/90 !text-neutral-300 hover:!text-white !border-0 rounded-xl focus:outline-none focus:ring-0 active:outline-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center gap-1.5"
+                              className="w-full !bg-transparent hover:!bg-neutral-900/90 !text-neutral-300 hover:!text-white !border-0 rounded-xl focus:outline-none focus:ring-0 active:outline-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center gap-1.5"
                           >
                               <span>Download Video</span>
                               <ChevronDown className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-200 ${showResolutionMenu ? 'rotate-180' : ''}`} />
                           </Button>
                           {showResolutionMenu && !isDownloadDisabled && (
-                              <div className="absolute right-0 top-full pt-1.5 z-30 animate-fade-in">
-                                  <div className="w-48 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden py-1">
+                              <div className="absolute right-0 top-full pt-1.5 z-30 animate-fade-in w-full sm:w-48">
+                                  <div className="w-full bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl overflow-hidden py-1">
                                       {isYouTubeWorkflow && youtubeMeta?.availableResolutions && youtubeMeta.availableResolutions.length > 0 ? (
                                           youtubeMeta.availableResolutions
                                             .filter((res) => typeof res === 'number' && res >= 144)
                                             .map((res) => (
                                               <button
                                                   key={res}
-                                                  onClick={() => handleDownloadVideo(res)}
+                                                  onClick={() => { setShowResolutionMenu(false); handleDownloadVideo(res); }}
                                                   className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
                                               >
                                                   <span>{res}p</span>
@@ -1701,7 +1724,7 @@ const App = () => {
                                           localVideoResolutions.map((res) => (
                                               <button
                                                   key={res}
-                                                  onClick={() => handleDownloadVideo(res)}
+                                                  onClick={() => { setShowResolutionMenu(false); handleDownloadVideo(res); }}
                                                   className="w-full px-4 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center justify-between transition-colors"
                                               >
                                                   <span>{localVideoDimensions?.height && res === localVideoDimensions.height ? `${res}p (Original)` : `${res}p`}</span>
@@ -1718,7 +1741,7 @@ const App = () => {
                             onClick={handleDownloadSrt} 
                             disabled={isDownloadDisabled} 
                             icon={<Download className="w-4 h-4"/>}
-                            className="!bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white !border-0 rounded-xl focus:outline-none focus:ring-0 active:outline-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center shadow-sm"
+                            className="flex-1 sm:flex-initial w-full !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 hover:!text-white !border-0 rounded-xl focus:outline-none focus:ring-0 active:outline-none px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold transition-all flex items-center justify-center shadow-sm"
                         >
                             Download SRT
                         </Button>
@@ -1729,7 +1752,7 @@ const App = () => {
                           onClick={handleDownloadSrt} 
                           disabled={isDownloadDisabled} 
                           icon={<Download className="w-4 h-4"/>}
-                          className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all focus:outline-none focus:ring-0 active:outline-none"
+                          className="w-full sm:w-auto px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold !bg-neutral-800 hover:!bg-neutral-700 !text-neutral-200 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all focus:outline-none focus:ring-0 active:outline-none"
                       >
                           Download SRT
                       </Button>
@@ -1788,27 +1811,27 @@ const App = () => {
       </main>
 
       <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col gap-8">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
+        <div className="max-w-7xl mx-auto px-6 py-4 md:py-8 flex flex-col gap-3 md:gap-4">
+            <div className="flex items-center justify-between gap-4 w-full">
                 <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-neutral-800 text-white flex items-center justify-center font-bold text-sm rounded font-display">S</div>
+                    <div className="w-6 h-6 bg-neutral-800 text-white hidden sm:flex items-center justify-center font-bold text-sm rounded font-display">S</div>
                     <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
                 </div>
-                <div className="text-xs text-neutral-600">
-                    &copy; {new Date().getFullYear()} SubStream AI. Open Source.
-                </div>
-                <div className="flex items-center gap-6 text-sm text-neutral-500">
+                <div className="flex items-center gap-3.5 md:gap-6 text-xs md:text-sm text-neutral-500">
                     <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
                     <button onClick={() => setActiveModal('PRIVACY')} className="hover:text-white transition-colors">Privacy</button>
-                    <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors"><Github className="w-5 h-5" /></a>
+                    <a href="https://github.com/imrovoid/SubStream-AI" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors" aria-label="GitHub"><Github className="w-4 h-4 md:w-5 md:h-5" /></a>
                 </div>
             </div>
-            <div className="flex flex-col md:flex-row items-center justify-center gap-4 text-xs text-neutral-500 w-full">
+            <div className="flex items-center justify-center gap-2.5 md:gap-4 text-xs text-neutral-500 w-full">
                 <span>Developed by <a href="https://rovoid.netlify.app" target="_blank" rel="noopener noreferrer" className="text-neutral-300 hover:text-white transition-colors font-medium">ROVOID</a></span>
-                <span className="hidden md:block w-1 h-1 rounded-full bg-neutral-800"></span>
-                <button className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
+                <span className="w-1 h-1 rounded-full bg-neutral-800"></span>
+                <button className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-900/50 border border-neutral-800 text-xs hover:border-neutral-600 hover:bg-neutral-800 transition-all group">
                     <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
                 </button>
+            </div>
+            <div className="text-center text-[11px] md:text-xs text-neutral-600">
+                &copy; {new Date().getFullYear()} SubStream AI. Open Source.
             </div>
         </div>
       </footer>
