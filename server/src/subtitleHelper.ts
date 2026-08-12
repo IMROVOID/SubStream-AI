@@ -30,47 +30,61 @@ export function vttToSrt(vttContent: string): string {
     return srtResult.join('\n');
 }
 
-// ponytail: Direct HTTP fetch for subtitle track URL via proxied makeRequestWithRetry to bypass spawning yt-dlp.exe
-export const fetchDirectSubtitleTrack = async (url: string): Promise<string> => {
-    let targetUrl = url;
-    if (targetUrl.includes('youtube.com/api/timedtext') && !targetUrl.includes('fmt=')) {
-        targetUrl += '&fmt=vtt';
+// ponytail: Convert YouTube native JSON3 subtitle structure to clean SRT format
+export function json3ToSrt(jsonStrOrObj: any): string {
+    let data: any;
+    try {
+        data = typeof jsonStrOrObj === 'string' ? JSON.parse(jsonStrOrObj) : jsonStrOrObj;
+    } catch (e) {
+        return '';
     }
+
+    if (!data || !data.events || !Array.isArray(data.events)) return '';
+    let srt = '';
+    let count = 1;
+
+    for (const ev of data.events) {
+        if (!ev.segs || !Array.isArray(ev.segs) || ev.segs.length === 0) continue;
+        const text = ev.segs.map((s: any) => s.utf8 || '').join('').replace(/\n/g, ' ').trim();
+        if (!text) continue;
+
+        const startMs = ev.tStartMs || 0;
+        const durationMs = ev.dDurationMs || 0;
+        const endMs = startMs + durationMs;
+
+        const formatMs = (ms: number) => {
+            const h = String(Math.floor(ms / 3600000)).padStart(2, '0');
+            const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
+            const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
+            const msec = String(ms % 1000).padStart(3, '0');
+            return `${h}:${m}:${s},${msec}`;
+        };
+
+        srt += `${count++}\n${formatMs(startMs)} --> ${formatMs(endMs)}\n${text}\n\n`;
+    }
+    return srt;
+}
+
+// ponytail: Direct HTTP fetch for YouTube signed subtitle track (supporting WebVTT & JSON3 formats)
+export const fetchDirectSubtitleTrack = async (url: string): Promise<string> => {
     const response = await makeRequestWithRetry({
-        url: targetUrl,
+        url: url,
         method: 'GET',
         responseType: 'text',
         timeout: 15000
     });
     const rawData = response.data;
-    if (typeof rawData === 'string' && (rawData.includes('WEBVTT') || rawData.includes('-->'))) {
-        return rawData.includes('WEBVTT') ? vttToSrt(rawData) : rawData;
+    if (typeof rawData === 'string') {
+        if (rawData.includes('WEBVTT') || rawData.includes('-->')) {
+            return rawData.includes('WEBVTT') ? vttToSrt(rawData) : rawData;
+        }
+        if (rawData.trim().startsWith('{') && rawData.includes('"events"')) {
+            return json3ToSrt(rawData);
+        }
+    } else if (typeof rawData === 'object') {
+        return json3ToSrt(rawData);
     }
     return String(rawData);
-};
-
-// ponytail: Fetch subtitle directly from YouTube timedtext HTTP API to eliminate 100% of yt-dlp subtitle calls
-export const fetchYouTubeTimedText = async (videoId: string, lang: string, isAuto = false): Promise<string | null> => {
-    const candidates = [
-        `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${encodeURIComponent(lang)}&fmt=vtt`,
-        `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${encodeURIComponent(lang)}&kind=asr&fmt=vtt`,
-        `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=en&tlang=${encodeURIComponent(lang)}&fmt=vtt`,
-        `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=en&kind=asr&tlang=${encodeURIComponent(lang)}&fmt=vtt`
-    ];
-
-    if (lang === 'en') {
-        candidates.unshift(`https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=en&kind=asr&fmt=vtt`);
-    }
-
-    for (const url of candidates) {
-        try {
-            const content = await fetchDirectSubtitleTrack(url);
-            if (content && content.length > 20 && content.includes('-->')) {
-                return content;
-            }
-        } catch (e) {}
-    }
-    return null;
 };
 
 export const translateSrtChunk = async (text: string, targetLang: string): Promise<string> => {

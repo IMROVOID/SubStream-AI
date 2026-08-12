@@ -153,28 +153,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return selectedQuality;
   }, [selectedQuality, qualityOptions]);
 
-  // Visual resolution downscaling wrapper style for local / direct video playback
+  // ponytail: Ensure video wrapper stays 100% width/height without transform scaling to eliminate side borders
   const renderScaleWrapperStyle = useMemo(() => {
-    if (isYouTube || selectedQuality === 'Auto' || !nativeResolution || nativeResolution <= 0) {
-      return { width: '100%', height: '100%' };
-    }
     const selectedResNum = parseInt(selectedQuality.replace(/\D/g, ''), 10);
-    if (isNaN(selectedResNum) || selectedResNum >= nativeResolution) {
-      return { width: '100%', height: '100%' };
-    }
-    const scale = Math.max(0.1, Math.min(1, selectedResNum / nativeResolution));
-    if (scale >= 0.99) {
-      return { width: '100%', height: '100%' };
-    }
-    const invScale = 1 / scale;
     return {
-      width: `${scale * 100}%`,
-      height: `${scale * 100}%`,
-      transform: `scale(${invScale})`,
-      transformOrigin: 'center center',
-      imageRendering: selectedResNum <= 360 ? 'pixelated' : 'auto',
+      width: '100%',
+      height: '100%',
+      imageRendering: selectedResNum && selectedResNum <= 360 ? 'pixelated' : 'auto',
     } as React.CSSProperties;
-  }, [isYouTube, selectedQuality, nativeResolution]);
+  }, [selectedQuality]);
   
   // Subtitle Customization State
   const [subtitleSize, setSubtitleSize] = useState<'small' | 'medium' | 'large' | 'xlarge'>('medium');
@@ -248,6 +235,39 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [videoSrc, isYouTube, selectedQuality, availableResolutions]);
 
+  // ponytail: Continuous Audio/Video Lock-Step Sync Controller to prevent drift and network buffering desync
+  useEffect(() => {
+    if (!resolvedAudioSrc || !videoRef.current || !audioRef.current) return;
+
+    const syncAudioWithVideo = () => {
+      const v = videoRef.current;
+      const a = audioRef.current;
+      if (!v || !a) return;
+
+      // Sync playback state
+      if (v.paused && !a.paused) {
+        a.pause();
+      } else if (!v.paused && a.paused && !isBuffering && !isResolving) {
+        a.currentTime = v.currentTime;
+        a.play().catch(() => {});
+      }
+
+      // Sync playback rate
+      if (a.playbackRate !== v.playbackRate) {
+        a.playbackRate = v.playbackRate;
+      }
+
+      // Drift correction
+      const drift = Math.abs(v.currentTime - a.currentTime);
+      if (drift > 0.15 && !isSeeking) {
+        a.currentTime = v.currentTime;
+      }
+    };
+
+    const interval = setInterval(syncAudioWithVideo, 200);
+    return () => clearInterval(interval);
+  }, [resolvedAudioSrc, isBuffering, isResolving, isSeeking]);
+
   // Handle User Activity for Controls Autohide
   const handleMouseMove = () => {
     setShowControls(true);
@@ -262,14 +282,40 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const togglePlay = () => {
     if (!videoRef.current) return;
-    if (isPlaying) {
+
+    if (isPlaying || !videoRef.current.paused) {
       videoRef.current.pause();
-      if (audioRef.current) audioRef.current.pause();
+      if (audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+      }
+      setIsPlaying(false);
     } else {
-      videoRef.current.play().then(() => {
-        setIsPlaying(true);
-        if (audioRef.current) audioRef.current.play().catch(() => {});
-      }).catch(() => {});
+      const v = videoRef.current;
+      const a = audioRef.current;
+
+      setIsBuffering(false);
+
+      const promises: Promise<void>[] = [];
+      if (v) {
+        promises.push(v.play());
+      }
+      if (a) {
+        a.currentTime = v.currentTime;
+        promises.push(a.play());
+      }
+
+      Promise.all(promises)
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch((err) => {
+          console.warn("Playback error:", err);
+          if (v && !v.paused) {
+            setIsPlaying(true);
+          } else {
+            setIsPlaying(false);
+          }
+        });
     }
   };
 
@@ -438,17 +484,37 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Main Video Element - Kept mounted in DOM at all times */}
-      <div className="w-full h-full flex items-center justify-center overflow-hidden bg-black relative">
-        <div className="w-full h-full flex items-center justify-center transition-all duration-300 pointer-events-auto" style={renderScaleWrapperStyle}>
+      <div 
+        className="w-full h-full flex items-center justify-center overflow-hidden bg-black relative cursor-pointer"
+        onClick={togglePlay}
+      >
+        <div className="w-full h-full flex items-center justify-center pointer-events-auto" style={renderScaleWrapperStyle}>
           <video
             ref={videoRef}
             src={resolvedSrc || undefined}
-            className="w-full h-full object-contain cursor-pointer"
-            onClick={togglePlay}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onWaiting={() => setIsBuffering(true)}
-            onPlaying={() => setIsBuffering(false)}
+            className="w-full h-full object-cover cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlay();
+            }}
+            onPlay={() => {
+              setIsPlaying(true);
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+            }}
+            onWaiting={() => {
+              setIsBuffering(true);
+            }}
+            onPlaying={() => {
+              setIsBuffering(false);
+              setIsPlaying(true);
+            }}
+            onSeeked={() => {
+              if (audioRef.current && videoRef.current) {
+                audioRef.current.currentTime = videoRef.current.currentTime;
+              }
+            }}
             onCanPlay={() => setIsBuffering(false)}
             onTimeUpdate={() => {
               if (!isSeeking && videoRef.current) {
@@ -478,6 +544,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           ref={audioRef}
           src={resolvedAudioSrc}
           muted={isCurrentlyMuted}
+          onWaiting={() => {
+            if (videoRef.current && !videoRef.current.paused) {
+              videoRef.current.pause();
+            }
+          }}
+          onPlaying={() => {
+            if (videoRef.current && videoRef.current.paused && isPlaying) {
+              videoRef.current.play().catch(() => {});
+            }
+          }}
           onLoadedMetadata={() => {
             if (audioRef.current && audioRef.current.duration && !isNaN(audioRef.current.duration)) {
               setDuration(prev => prev > 0 ? prev : audioRef.current!.duration);

@@ -180,24 +180,27 @@ export const getActiveProxyConfig = async (): Promise<string | null> => {
     return cachedProxyUrl;
 };
 
-// Retry Helper for Axios with Proxy Fallback
-export const makeRequestWithRetry = async (config: AxiosRequestConfig, retries = 3): Promise<AxiosResponse<any>> => {
+// Retry Helper for Axios with Automatic Proxy Rotation on Errors & Rate-Limits
+export const makeRequestWithRetry = async (config: AxiosRequestConfig, retries = 5): Promise<AxiosResponse<any>> => {
     const currentProxyUrl = await getActiveProxyConfig();
     const client = createAxiosClient(currentProxyUrl);
     try {
         return await client(config);
     } catch (error: any) {
+        const status = error?.response?.status;
         const isProxyError = error.code === 'ECONNREFUSED' || 
                              error.code === 'ENOTFOUND' || 
                              (error.message && (error.message.includes('ECONNREFUSED') || error.message.includes('Unable to connect to proxy')));
 
-        if (isProxyError && currentProxyUrl) {
-            console.warn(`[Proxy] Proxy request failed (${error.message || error.code}). Rotating proxy...`);
+        // ponytail: Automatically rotate proxy if proxy connection drops OR if target returns rate limit (429/403)
+        const isProxyBlocked = isProxyError || status === 429 || status === 403;
+
+        if (isProxyBlocked && retries > 0 && currentProxyUrl) {
+            console.warn(`[Proxy] Request on '${currentProxyUrl}' failed (${status ? `HTTP ${status}` : error.message || error.code}). Rotating proxy...`);
             const nextProxy = await rotateProxy();
-            if (nextProxy) {
-                return makeRequestWithRetry(config, retries);
+            if (nextProxy && nextProxy !== currentProxyUrl) {
+                return makeRequestWithRetry(config, retries - 1);
             }
-            return await directAxiosClient(config);
         }
 
         const isNetworkError = !error.response && (
@@ -210,7 +213,7 @@ export const makeRequestWithRetry = async (config: AxiosRequestConfig, retries =
         
         if (isNetworkError && retries > 0) {
             console.log(`[Proxy] Network error (${error.message || error.code}). Retrying... (${retries} left)`);
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 1000));
             return makeRequestWithRetry(config, retries - 1);
         }
         throw error;

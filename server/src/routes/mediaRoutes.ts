@@ -5,7 +5,7 @@ import ffmpegPath from 'ffmpeg-static';
 import { TEMP_DIR } from '../config';
 import { ensureBinary } from '../binaryManager';
 import { executeYtDlpWithRetry } from '../ytDlpRunner';
-import { translateSrtContent, fetchDirectSubtitleTrack } from '../subtitleHelper';
+import { fetchDirectSubtitleTrack } from '../subtitleHelper';
 import { CaptionTrack, DecodedCaptionToken } from '../types';
 import { metadataCache, captionCache, extractVideoId } from '../cacheManager';
 
@@ -45,8 +45,12 @@ mediaRouter.get('/info', async (req, res) => {
             Object.keys(tracksObj).forEach(lang => {
                 const formats = tracksObj[lang];
                 const name = (formats[0] && formats[0].name) || lang;
-                const vttFormat = Array.isArray(formats) ? (formats.find((f: any) => f.ext === 'vtt' || f.ext === 'srv3') || formats[0]) : undefined;
-                const directUrl = vttFormat && vttFormat.url ? vttFormat.url : undefined;
+                
+                // ponytail: Prioritize vtt or json3 format from YouTube's signed formats list
+                const preferredFormat = Array.isArray(formats) 
+                    ? (formats.find((f: any) => f.ext === 'vtt' || f.ext === 'json3' || f.ext === 'srv3') || formats[0]) 
+                    : undefined;
+                const directUrl = preferredFormat && preferredFormat.url ? preferredFormat.url : undefined;
                 const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
                 
                 if (!seenKeys.has(uniqueKey)) {
@@ -199,7 +203,7 @@ mediaRouter.get('/stream-url', async (req, res) => {
     }
 });
 
-// Endpoint: Download subtitle track using yt-dlp native extraction & fallback translation
+// Endpoint: Download native YouTube subtitle track directly without AI translation
 mediaRouter.get('/caption', async (req, res) => {
     const rawToken = (req.query.token || req.query.trackId) as string;
     const url = req.query.url as string;
@@ -238,10 +242,28 @@ mediaRouter.get('/caption', async (req, res) => {
         return res.send(cachedCaption);
     }
 
-    // 1. Direct HTTP fetch if direct signed track URL is present in token
+    // ponytail: If directUrl is missing from token, extract signed track URL from metadataCache
+    if (!directUrl) {
+        const cachedData = metadataCache.get(videoId);
+        if (cachedData && cachedData.info) {
+            const tracksObj = isAuto ? cachedData.info.automatic_captions : cachedData.info.subtitles;
+            if (tracksObj && tracksObj[lang]) {
+                const formats = tracksObj[lang];
+                const preferredFormat = Array.isArray(formats) 
+                    ? (formats.find((f: any) => f.ext === 'vtt' || f.ext === 'json3' || f.ext === 'srv3') || formats[0]) 
+                    : undefined;
+                if (preferredFormat && preferredFormat.url) {
+                    directUrl = preferredFormat.url;
+                    console.log(`[Caption] Recovered signed direct track URL from metadataCache for '${lang}'.`);
+                }
+            }
+        }
+    }
+
+    // 1. Direct HTTP fetch if direct signed YouTube track URL is present in token or metadataCache
     if (directUrl) {
         try {
-            console.log(`[Caption] Attempting direct HTTP subtitle download for '${lang}'...`);
+            console.log(`[Caption] Fetching YouTube direct native subtitle track for '${lang}'...`);
             let content = await fetchDirectSubtitleTrack(directUrl);
             if (content && content.length > 10) {
                 captionCache.set(captionKey, content);
@@ -252,23 +274,24 @@ mediaRouter.get('/caption', async (req, res) => {
         }
     }
 
-    // 2. yt-dlp extraction: Always fetch native 'en' track via yt-dlp (which never gets rate limited)
+    // 2. yt-dlp native extraction: Fetch native YouTube subtitle track directly for requested language
     await ensureBinary();
 
     const tempId = `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const outputTemplate = path.join(TEMP_DIR, `${tempId}.%(ext)s`);
 
     try {
-        console.log(`[Caption] Fetching subtitle track via yt-dlp for video '${videoId}' (target lang: ${lang})...`);
+        console.log(`[Caption] Fetching YouTube native subtitle track via yt-dlp for video '${videoId}' (lang: ${lang})...`);
         const args = [
             url,
             '--skip-download',
             '--convert-subs', 'srt',
             '--output', outputTemplate,
             '--ffmpeg-location', ffmpegPath as string,
-            '--write-auto-sub',
-            '--sub-lang', 'en'
         ];
+
+        if (isAuto) args.push('--write-auto-sub', '--sub-lang', lang);
+        else args.push('--write-sub', '--sub-lang', lang);
 
         await executeYtDlpWithRetry(args);
 
@@ -276,26 +299,16 @@ mediaRouter.get('/caption', async (req, res) => {
         const generatedFile = files.find(f => f.startsWith(tempId) && (f.endsWith('.srt') || f.endsWith('.vtt')));
 
         if (!generatedFile) {
-            throw new Error(`Subtitle file not generated by yt-dlp.`);
+            throw new Error(`Subtitle file for '${lang}' not generated by yt-dlp.`);
         }
 
         const filePath = path.join(TEMP_DIR, generatedFile);
-        let content = fs.readFileSync(filePath, 'utf-8');
+        const content = fs.readFileSync(filePath, 'utf-8');
 
         // Clean temp files
         files.filter(f => f.startsWith(tempId)).forEach(f => {
             try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch (e) {}
         });
-
-        // 3. If target language is non-English ('fa'), translate the clean native SRT content to target language
-        if (lang !== 'en') {
-            console.log(`[Caption] Translating native subtitle track to '${lang}'...`);
-            try {
-                content = await translateSrtContent(content, lang);
-            } catch (transErr: any) {
-                console.warn(`[Caption] Translation failed (${transErr?.message}), returning native track.`);
-            }
-        }
 
         captionCache.set(captionKey, content);
         return res.send(content);

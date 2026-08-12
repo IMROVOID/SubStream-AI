@@ -1354,25 +1354,23 @@ const App = () => {
 
               <div className="lg:col-span-9 h-full flex flex-col justify-between gap-6">
                 {(fileType === 'video' || fileType === 'youtube') && (
-                    <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
-                        {fileType === 'youtube' && youtubeMeta ? (
-                            <>
-                                <img src={youtubeMeta.thumbnailUrl} alt={youtubeMeta.title} className="w-full h-full object-cover" />
-                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                                    <div className="px-4 py-2 bg-black/70 rounded-xl backdrop-blur border border-white/10 text-sm text-white font-medium flex items-center gap-2">
-                                        <Youtube className="w-4 h-4 text-red-500" /> YouTube Import
-                                    </div>
+                    videoSrc ? (
+                        <VideoPlayer 
+                          videoSrc={videoSrc} 
+                          srtContent={stringifySRT(subtitles)} 
+                          isYouTube={isYouTubeWorkflow || (fileType as string) === 'youtube'} 
+                          availableResolutions={(isYouTubeWorkflow || (fileType as string) === 'youtube') ? (youtubeMeta?.availableResolutions || []) : localAvailableResolutions} 
+                        />
+                    ) : fileType === 'youtube' && youtubeMeta ? (
+                        <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
+                            <img src={youtubeMeta.thumbnailUrl} alt={youtubeMeta.title} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <div className="px-4 py-2 bg-black/70 rounded-xl backdrop-blur border border-white/10 text-sm text-white font-medium flex items-center gap-2">
+                                    <Youtube className="w-4 h-4 text-red-500" /> YouTube Import
                                 </div>
-                            </>
-                        ) : videoSrc ? (
-                            <VideoPlayer 
-                              videoSrc={videoSrc} 
-                              srtContent={stringifySRT(subtitles)} 
-                              isYouTube={isYouTubeWorkflow || (fileType as string) === 'youtube'} 
-                              availableResolutions={(isYouTubeWorkflow || (fileType as string) === 'youtube') ? (youtubeMeta?.availableResolutions || []) : localAvailableResolutions} 
-                            />
-                        ) : null}
-                    </div>
+                            </div>
+                        </div>
+                    ) : null
                 )}
 
                 <div className={`group relative rounded-3xl p-6 transition-all duration-300 overflow-hidden ${

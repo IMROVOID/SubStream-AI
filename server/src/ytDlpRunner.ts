@@ -2,12 +2,15 @@ import fs from 'fs';
 import path from 'path';
 import { ytDlpWrap } from './binaryManager';
 import { getActiveProxyConfig, rotateProxy, getProxyPool, setWorkingProxy } from './proxy';
+import { cookieManager } from './cookieManager';
 
+// ponytail: Cobalt-inspired client priority (ios produces unencrypted HLS manifests and clean captions)
 export const ALL_CLIENTS = [
+    'ios',
     'android_vr',
     'android',
-    'ios',
-    'mweb'
+    'mweb',
+    'web_embedded'
 ];
 
 interface ClientHealth {
@@ -25,8 +28,14 @@ const getClientKey = (proxyUrl: string | null, client: string): string => {
     return `${proxyUrl || 'direct'}_${client}`;
 };
 
-// ponytail: Detect cookies.txt file or browser cookies configuration to bypass YouTube Botguard check
+// ponytail: Use cookieManager to get dynamic cookie files or fallback to env/local cookies
 const getCookieFlags = (): string[] => {
+    const managedCookie = cookieManager.getRandomCookieFile();
+    if (managedCookie) {
+        console.log(`[YT-DLP] Using cookie file from cookieManager: ${managedCookie}`);
+        return ['--cookies', managedCookie];
+    }
+    
     const envCookiePath = process.env.YOUTUBE_COOKIES_FILE || process.env.COOKIES_FILE;
     if (envCookiePath && fs.existsSync(envCookiePath)) {
         console.log(`[YT-DLP] Using YouTube cookies file: ${envCookiePath}`);

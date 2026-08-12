@@ -5,7 +5,7 @@
   "type": "module",
   "homepage": "https://imrovoid.github.io/SubStream-AI/",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "server": "npm --prefix server start",
     "build": "vite build",
     "preview": "vite preview",
