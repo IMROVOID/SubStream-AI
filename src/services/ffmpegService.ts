@@ -45,7 +45,12 @@ export async function loadFFmpeg(onProgress: (message: string) => void): Promise
     return ffmpeg;
 }
 
-export async function analyzeVideoFile(ffmpeg: FFmpeg, file: File): Promise<ExtractedSubtitleTrack[]> {
+export interface VideoAnalysisResult {
+    tracks: ExtractedSubtitleTrack[];
+    dimensions?: { width: number; height: number };
+}
+
+export async function analyzeVideoFile(ffmpeg: FFmpeg, file: File): Promise<VideoAnalysisResult> {
     console.log("analyzeVideoFile: Starting analysis...");
     await ffmpeg.writeFile('input.video', await fetchFile(file));
     console.log("analyzeVideoFile: Video file written to FFmpeg memory.");
@@ -71,11 +76,23 @@ export async function analyzeVideoFile(ffmpeg: FFmpeg, file: File): Promise<Extr
         throw new Error("Could not analyze video file. FFmpeg returned no data.");
     }
     
-    console.log("analyzeVideoFile: Parsing FFmpeg output for subtitle tracks.");
+    console.log("analyzeVideoFile: Parsing FFmpeg output for subtitle tracks & video resolution.");
     const subtitleTracks: ExtractedSubtitleTrack[] = [];
+    let dimensions: { width: number; height: number } | undefined;
     const lines = output.split('\n');
     
     lines.forEach(line => {
+        if (line.includes('Video:')) {
+            const dimMatch = line.match(/,\s*(\d{3,5})x(\d{3,5})/);
+            if (dimMatch) {
+                const w = parseInt(dimMatch[1], 10);
+                const h = parseInt(dimMatch[2], 10);
+                if (w > 0 && h > 0) {
+                    dimensions = { width: w, height: h };
+                }
+            }
+        }
+
         if (line.trim().startsWith('Stream #') && line.includes('Subtitle:')) {
             const match = line.match(/Stream #\d+:(\d+)(\((\w+)\))?: Subtitle: .*?(?:\(default\))?/);
             const titleMatch = line.match(/title\s+:\s+(.*)/);
@@ -89,8 +106,8 @@ export async function analyzeVideoFile(ffmpeg: FFmpeg, file: File): Promise<Extr
         }
     });
 
-    console.log(`analyzeVideoFile: Found ${subtitleTracks.length} subtitle tracks.`);
-    return subtitleTracks;
+    console.log(`analyzeVideoFile: Found ${subtitleTracks.length} subtitle tracks and dimensions:`, dimensions);
+    return { tracks: subtitleTracks, dimensions };
 }
 
 export async function extractSrt(ffmpeg: FFmpeg, trackIndex: number): Promise<string> {

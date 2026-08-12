@@ -229,13 +229,15 @@ const App = () => {
   const [localVideoDimensions, setLocalVideoDimensions] = useState<{ width: number; height: number } | null>(null);
 
   const localAvailableResolutions = useMemo(() => {
-    if (!localVideoDimensions) return [];
-    const minDim = (localVideoDimensions.width > 0 && localVideoDimensions.height > 0)
-      ? Math.min(localVideoDimensions.width, localVideoDimensions.height)
-      : (localVideoDimensions.height || localVideoDimensions.width);
-    if (minDim <= 0) return [];
+    const origH = localVideoDimensions?.height || 1080;
+    const maxRes = Math.max(origH, 1080);
     const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
-    return standardTiers.filter(r => r <= minDim);
+    const filtered = standardTiers.filter(r => r <= maxRes);
+    if (origH > 0 && !filtered.includes(origH) && origH >= 144) {
+      filtered.unshift(origH);
+      filtered.sort((a, b) => b - a);
+    }
+    return filtered;
   }, [localVideoDimensions]);
 
   const getVideoProcessingStatusTitle = (status: VideoProcessingStatus): string => {
@@ -272,9 +274,11 @@ const App = () => {
   const localVideoResolutions = useMemo(() => {
     const standardHeights = [1080, 720, 480, 360, 240, 144];
     const origH = localVideoDimensions?.height || 1080;
-    const filtered = standardHeights.filter(h => h <= origH);
-    if (!filtered.includes(origH) && origH >= 144) {
+    const maxRes = Math.max(origH, 1080);
+    const filtered = standardHeights.filter(h => h <= maxRes);
+    if (origH > 0 && !filtered.includes(origH) && origH >= 144) {
       filtered.unshift(origH);
+      filtered.sort((a, b) => b - a);
     }
     return filtered.length > 0 ? filtered : [1080, 720, 480, 360, 240, 144];
   }, [localVideoDimensions]);
@@ -928,8 +932,11 @@ const App = () => {
       
       setVideoProcessingStatus(VideoProcessingStatus.ANALYZING);
       setVideoProcessingMessage('Analyzing video for subtitle tracks...');
-      const tracks = await analyzeVideoFile(ffmpeg, videoFile);
-      setExtractedTracks(tracks);
+      const analysis = await analyzeVideoFile(ffmpeg, videoFile);
+      setExtractedTracks(analysis.tracks);
+      if (analysis.dimensions && analysis.dimensions.height > 0) {
+        setLocalVideoDimensions(analysis.dimensions);
+      }
       
       const objectUrl = URL.createObjectURL(videoFile);
       const tempVideo = document.createElement('video');
@@ -1354,14 +1361,7 @@ const App = () => {
 
               <div className="lg:col-span-9 h-full flex flex-col justify-between gap-6">
                 {(fileType === 'video' || fileType === 'youtube') && (
-                    videoSrc ? (
-                        <VideoPlayer 
-                          videoSrc={videoSrc} 
-                          srtContent={stringifySRT(subtitles)} 
-                          isYouTube={isYouTubeWorkflow || (fileType as string) === 'youtube'} 
-                          availableResolutions={(isYouTubeWorkflow || (fileType as string) === 'youtube') ? (youtubeMeta?.availableResolutions || []) : localAvailableResolutions} 
-                        />
-                    ) : fileType === 'youtube' && youtubeMeta ? (
+                    ((fileType as string) === 'youtube' && youtubeMeta) ? (
                         <div className="w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group">
                             <img src={youtubeMeta.thumbnailUrl} alt={youtubeMeta.title} className="w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
@@ -1370,6 +1370,13 @@ const App = () => {
                                 </div>
                             </div>
                         </div>
+                    ) : videoSrc ? (
+                        <VideoPlayer 
+                          videoSrc={videoSrc} 
+                          srtContent="" 
+                          isYouTube={false} 
+                          availableResolutions={localAvailableResolutions} 
+                        />
                     ) : null
                 )}
 

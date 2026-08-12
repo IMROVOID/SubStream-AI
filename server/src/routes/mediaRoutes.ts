@@ -71,34 +71,58 @@ mediaRouter.get('/info', async (req, res) => {
         processTracks(info.subtitles, false);
         processTracks(info.automatic_captions, true);
 
+        // Extract format height helper
+        const extractHeightFromFormat = (f: any): number => {
+            if (!f) return 0;
+            if (typeof f.height === 'number' && f.height > 0) return f.height;
+            if (typeof f.height === 'string') {
+                const parsed = parseInt(f.height, 10);
+                if (!isNaN(parsed) && parsed > 0) return parsed;
+            }
+            const note = String(f.format_note || '');
+            const noteMatch = note.match(/(\d{3,4})p?/i);
+            if (noteMatch) {
+                const parsed = parseInt(noteMatch[1], 10);
+                if (!isNaN(parsed) && parsed >= 144) return parsed;
+            }
+            const resStr = String(f.resolution || f.format || '');
+            const resMatch = resStr.match(/\d+x(\d{3,4})/i);
+            if (resMatch) {
+                const parsed = parseInt(resMatch[1], 10);
+                if (!isNaN(parsed) && parsed >= 144) return parsed;
+            }
+            return 0;
+        };
+
         // Extract formats (resolutions) - filter out storyboard sprite image formats
         const resolutions = new Set<number>();
         if (info.formats && Array.isArray(info.formats)) {
             info.formats.forEach((f: any) => {
-                const h = typeof f.height === 'number' ? f.height : 0;
-                const w = typeof f.width === 'number' ? f.width : 0;
+                const h = extractHeightFromFormat(f);
+                const w = typeof f.width === 'number' ? f.width : (typeof f.width === 'string' ? parseInt(f.width, 10) || 0 : 0);
                 const isVideoFormat = f.vcodec && f.vcodec !== 'none';
                 const isNotStoryboard = f.ext !== 'mhtml' && 
                     (!f.format_id || !String(f.format_id).startsWith('sb')) && 
                     !String(f.format_note || '').toLowerCase().includes('storyboard');
                 
-                const effectiveRes = (h > 0 && w > 0) ? Math.min(h, w) : (h || w);
+                const effectiveRes = (h > 0 && w > 0) ? Math.min(h, w) : h;
                 if (effectiveRes >= 144 && isVideoFormat && isNotStoryboard) {
                     resolutions.add(effectiveRes);
                 }
             });
         }
-        const mainH = typeof info.height === 'number' ? info.height : 0;
+        const mainH = extractHeightFromFormat(info);
         const mainW = typeof info.width === 'number' ? info.width : 0;
-        const mainRes = (mainH > 0 && mainW > 0) ? Math.min(mainH, mainW) : (mainH || mainW);
+        const mainRes = (mainH > 0 && mainW > 0) ? Math.min(mainH, mainW) : mainH;
 
         if (mainRes >= 144) {
             resolutions.add(mainRes);
         }
 
         const maxDetectedRes = resolutions.size > 0 ? Math.max(...Array.from(resolutions)) : (mainRes || 1080);
+        const maxTier = Math.max(maxDetectedRes, 1080);
         const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
-        standardTiers.filter(r => r <= maxDetectedRes).forEach(r => resolutions.add(r));
+        standardTiers.filter(r => r <= maxTier).forEach(r => resolutions.add(r));
 
         const sortedResolutions = Array.from(resolutions).sort((a, b) => b - a);
 
@@ -150,19 +174,29 @@ mediaRouter.get('/stream-url', async (req, res) => {
         let targetHeight = (quality && quality !== 'Auto') ? parseInt(quality.replace(/\D/g, ''), 10) : 1080;
         if (isNaN(targetHeight)) targetHeight = 1080;
 
+        const getH = (f: any) => {
+            if (typeof f.height === 'number' && f.height > 0) return f.height;
+            const noteMatch = String(f.format_note || '').match(/(\d{3,4})p?/i);
+            if (noteMatch) return parseInt(noteMatch[1], 10);
+            const resMatch = String(f.resolution || f.format || '').match(/\d+x(\d{3,4})/i);
+            if (resMatch) return parseInt(resMatch[1], 10);
+            return 0;
+        };
+
         const bestVideo = formats
-            .filter((f: any) => f.url && f.vcodec && f.vcodec !== 'none' && (f.height || 0) <= targetHeight)
-            .sort((a: any, b: any) => (b.height || 0) - (a.height || 0))[0];
+            .filter((f: any) => f.url && f.vcodec && f.vcodec !== 'none' && (getH(f) || 1080) <= targetHeight)
+            .sort((a: any, b: any) => (getH(b) || 0) - (getH(a) || 0))[0];
 
         const bestAudio = formats
             .filter((f: any) => f.url && f.acodec && f.acodec !== 'none' && (f.vcodec === 'none' || !f.vcodec))
             .sort((a: any, b: any) => (b.tbr || 0) - (a.tbr || 0))[0];
 
         if (bestVideo && bestVideo.url) {
-            console.log(`[Stream-Url] Resolved stream URL from metadataCache for '${videoId}' (quality: ${quality || 'Auto'}).`);
+            const hasAudioTrack = bestVideo.acodec && bestVideo.acodec !== 'none';
+            console.log(`[Stream-Url] Resolved stream URL from metadataCache for '${videoId}' (quality: ${quality || 'Auto'}, hasAudioTrack: ${hasAudioTrack}).`);
             return res.json({
                 streamUrl: bestVideo.url,
-                audioUrl: bestAudio?.url || null
+                audioUrl: hasAudioTrack ? null : (bestAudio?.url || null)
             });
         }
     }

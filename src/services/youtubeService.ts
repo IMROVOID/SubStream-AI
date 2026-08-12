@@ -313,10 +313,16 @@ export async function fetchYouTubeStreamUrl(videoUrl: string, quality?: string):
         const rawAudioUrl = data.audioUrl;
 
         if (rawStreamUrl) {
-            const isDirectUrl = rawStreamUrl.startsWith('http://') || rawStreamUrl.startsWith('https://');
+            const proxiedStreamUrl = rawStreamUrl.startsWith('http') 
+                ? `${BACKEND_URL}/proxy/file-get?url=${encodeURIComponent(rawStreamUrl)}` 
+                : rawStreamUrl;
+            const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith('http') 
+                ? `${BACKEND_URL}/proxy/file-get?url=${encodeURIComponent(rawAudioUrl)}` 
+                : rawAudioUrl;
+
             return {
-                streamUrl: isDirectUrl ? rawStreamUrl : `${BACKEND_URL}/proxy/file-get?url=${encodeURIComponent(rawStreamUrl)}`,
-                audioUrl: rawAudioUrl ? (rawAudioUrl.startsWith('http') ? rawAudioUrl : `${BACKEND_URL}/proxy/file-get?url=${encodeURIComponent(rawAudioUrl)}`) : undefined
+                streamUrl: proxiedStreamUrl,
+                audioUrl: proxiedAudioUrl || undefined
             };
         }
         throw new Error("No stream URL returned from server.");

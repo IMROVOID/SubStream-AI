@@ -134,7 +134,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return ['Auto', '1080p', '720p', '480p', '360p', '240p', '144p'];
     }
 
-    const maxRes = Math.max(...Array.from(resSet));
+    const maxRes = Math.max(...Array.from(resSet), 1080);
     standardTiers.filter(r => r <= maxRes).forEach(r => resSet.add(r));
 
     const sorted = Array.from(resSet).sort((a, b) => b - a);
@@ -283,38 +283,28 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const togglePlay = () => {
     if (!videoRef.current) return;
 
-    if (isPlaying || !videoRef.current.paused) {
-      videoRef.current.pause();
-      if (audioRef.current && !audioRef.current.paused) {
-        audioRef.current.pause();
+    const v = videoRef.current;
+    const a = audioRef.current;
+
+    if (!v.paused) {
+      v.pause();
+      if (a && !a.paused) {
+        a.pause();
       }
       setIsPlaying(false);
     } else {
-      const v = videoRef.current;
-      const a = audioRef.current;
-
       setIsBuffering(false);
-
-      const promises: Promise<void>[] = [];
-      if (v) {
-        promises.push(v.play());
-      }
-      if (a) {
-        a.currentTime = v.currentTime;
-        promises.push(a.play());
-      }
-
-      Promise.all(promises)
+      v.play()
         .then(() => {
           setIsPlaying(true);
+          if (a && resolvedAudioSrc) {
+            a.currentTime = v.currentTime;
+            a.play().catch(() => {});
+          }
         })
         .catch((err) => {
           console.warn("Playback error:", err);
-          if (v && !v.paused) {
-            setIsPlaying(true);
-          } else {
-            setIsPlaying(false);
-          }
+          setIsPlaying(!v.paused);
         });
     }
   };
@@ -544,16 +534,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           ref={audioRef}
           src={resolvedAudioSrc}
           muted={isCurrentlyMuted}
-          onWaiting={() => {
-            if (videoRef.current && !videoRef.current.paused) {
-              videoRef.current.pause();
-            }
-          }}
-          onPlaying={() => {
-            if (videoRef.current && videoRef.current.paused && isPlaying) {
-              videoRef.current.play().catch(() => {});
-            }
-          }}
           onLoadedMetadata={() => {
             if (audioRef.current && audioRef.current.duration && !isNaN(audioRef.current.duration)) {
               setDuration(prev => prev > 0 ? prev : audioRef.current!.duration);
