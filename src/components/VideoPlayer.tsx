@@ -108,9 +108,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
-  const [nativeHeight, setNativeHeight] = useState<number | null>(null);
+  const [nativeResolution, setNativeResolution] = useState<number | null>(null);
 
-  // Dynamic Quality options list based on source video resolutions or detected video height
+  // Dynamic Quality options list based on source video resolutions or detected video height/width
   const qualityOptions = useMemo(() => {
     const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
     const resSet = new Set<number>();
@@ -121,24 +121,55 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       });
     }
 
-    if (nativeHeight && nativeHeight > 0) {
-      resSet.add(nativeHeight);
+    if (nativeResolution && nativeResolution > 0) {
+      resSet.add(nativeResolution);
     }
 
-    const maxRes = Math.max(...Array.from(resSet), 1080);
+    if (resSet.size === 0) {
+      return ['Auto', '1080p', '720p', '480p', '360p', '240p', '144p'];
+    }
+
+    const maxRes = Math.max(...Array.from(resSet));
     standardTiers.filter(r => r <= maxRes).forEach(r => resSet.add(r));
 
     const sorted = Array.from(resSet).sort((a, b) => b - a);
     return ['Auto', ...sorted.map(r => `${r}p`)];
-  }, [availableResolutions, nativeHeight]);
+  }, [availableResolutions, nativeResolution]);
 
   const activeQualityText = useMemo(() => {
     if (selectedQuality === 'Auto') {
-      const topRes = qualityOptions.find(q => q !== 'Auto');
-      return topRes ? `Auto (${topRes})` : 'Auto (1080p)';
+      const numOptions = qualityOptions
+        .filter(q => q !== 'Auto')
+        .map(q => parseInt(q.replace(/\D/g, ''), 10))
+        .filter(n => !isNaN(n));
+      const autoTarget = numOptions.length > 0 ? Math.min(Math.max(...numOptions), 1080) : 1080;
+      return `Auto (${autoTarget}p)`;
     }
     return selectedQuality;
   }, [selectedQuality, qualityOptions]);
+
+  // Visual resolution downscaling wrapper style for local / direct video playback
+  const renderScaleWrapperStyle = useMemo(() => {
+    if (isYouTube || selectedQuality === 'Auto' || !nativeResolution || nativeResolution <= 0) {
+      return { width: '100%', height: '100%' };
+    }
+    const selectedResNum = parseInt(selectedQuality.replace(/\D/g, ''), 10);
+    if (isNaN(selectedResNum) || selectedResNum >= nativeResolution) {
+      return { width: '100%', height: '100%' };
+    }
+    const scale = Math.max(0.1, Math.min(1, selectedResNum / nativeResolution));
+    if (scale >= 0.99) {
+      return { width: '100%', height: '100%' };
+    }
+    const invScale = 1 / scale;
+    return {
+      width: `${scale * 100}%`,
+      height: `${scale * 100}%`,
+      transform: `scale(${invScale})`,
+      transformOrigin: 'center center',
+      imageRendering: selectedResNum <= 360 ? 'pixelated' : 'auto',
+    } as React.CSSProperties;
+  }, [isYouTube, selectedQuality, nativeResolution]);
   
   // Subtitle Customization State
   const [subtitleSize, setSubtitleSize] = useState<'small' | 'medium' | 'large' | 'xlarge'>('medium');
@@ -182,7 +213,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const savedTime = videoRef.current ? videoRef.current.currentTime : 0;
 
-    fetchYouTubeStreamUrl(videoSrc, selectedQuality)
+    const numOptions = (availableResolutions || [])
+      .filter(r => typeof r === 'number' && r > 0);
+    const maxRes = numOptions.length > 0 ? Math.max(...numOptions) : 1080;
+    const autoTarget = Math.min(maxRes, 1080);
+    const qualityParam = selectedQuality === 'Auto' ? `${autoTarget}p` : selectedQuality;
+
+    fetchYouTubeStreamUrl(videoSrc, qualityParam)
       .then((res) => {
         if (isMounted) {
           setResolvedSrc(res.streamUrl);
@@ -206,7 +243,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [videoSrc, isYouTube, selectedQuality]);
+  }, [videoSrc, isYouTube, selectedQuality, availableResolutions]);
 
   // Handle User Activity for Controls Autohide
   const handleMouseMove = () => {
@@ -346,27 +383,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {!isResolving && !resolveError && resolvedSrc && (
         <>
           {/* Main Video Element */}
-          <video
-            ref={videoRef}
-            src={resolvedSrc}
-            className="w-full h-full object-contain cursor-pointer"
-            onClick={togglePlay}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onTimeUpdate={() => {
-              if (!isSeeking && videoRef.current) {
-                setCurrentTime(videoRef.current.currentTime);
-              }
-            }}
-            onLoadedMetadata={() => {
-              if (videoRef.current) {
-                setDuration(videoRef.current.duration);
-                if (videoRef.current.videoHeight) {
-                  setNativeHeight(videoRef.current.videoHeight);
-                }
-              }
-            }}
-          />
+          <div className="w-full h-full flex items-center justify-center overflow-hidden bg-black relative">
+            <div className="w-full h-full flex items-center justify-center transition-all duration-300 pointer-events-auto" style={renderScaleWrapperStyle}>
+              <video
+                ref={videoRef}
+                src={resolvedSrc}
+                className="w-full h-full object-contain cursor-pointer"
+                onClick={togglePlay}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onTimeUpdate={() => {
+                  if (!isSeeking && videoRef.current) {
+                    setCurrentTime(videoRef.current.currentTime);
+                  }
+                }}
+                onLoadedMetadata={() => {
+                  if (videoRef.current) {
+                    if (videoRef.current.duration && !isNaN(videoRef.current.duration)) {
+                      setDuration(videoRef.current.duration);
+                    }
+                    const h = videoRef.current.videoHeight;
+                    const w = videoRef.current.videoWidth;
+                    if (h > 0 || w > 0) {
+                      const res = (h > 0 && w > 0) ? Math.min(h, w) : (h || w);
+                      setNativeResolution(res);
+                    }
+                  }
+                }}
+                onError={(e) => {
+                  console.warn("Video element playback error:", e);
+                  if (isYouTube) {
+                    fetchYouTubeStreamUrl(videoSrc, '1080p')
+                      .then(res => {
+                        setResolvedSrc(res.streamUrl);
+                        if (res.audioUrl) setResolvedAudioSrc(res.audioUrl);
+                      })
+                      .catch(() => {});
+                  }
+                }}
+              />
+            </div>
+          </div>
 
           {/* Synced Audio Track (For High Resolution Separate Audio/Video Streams) */}
           {resolvedAudioSrc && (
@@ -374,6 +431,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               ref={audioRef}
               src={resolvedAudioSrc}
               muted={isCurrentlyMuted}
+              onLoadedMetadata={() => {
+                if (audioRef.current && audioRef.current.duration && !isNaN(audioRef.current.duration)) {
+                  setDuration(prev => prev > 0 ? prev : audioRef.current!.duration);
+                }
+              }}
             />
           )}
 

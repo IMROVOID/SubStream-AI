@@ -64,21 +64,30 @@ mediaRouter.get('/info', async (req, res) => {
         if (info.formats && Array.isArray(info.formats)) {
             info.formats.forEach((f: any) => {
                 const h = typeof f.height === 'number' ? f.height : 0;
+                const w = typeof f.width === 'number' ? f.width : 0;
                 const isVideoFormat = f.vcodec && f.vcodec !== 'none';
                 const isNotStoryboard = f.ext !== 'mhtml' && 
                     (!f.format_id || !String(f.format_id).startsWith('sb')) && 
                     !String(f.format_note || '').toLowerCase().includes('storyboard');
                 
-                if (h >= 144 && isVideoFormat && isNotStoryboard) {
-                    resolutions.add(h);
+                const effectiveRes = (h > 0 && w > 0) ? Math.min(h, w) : (h || w);
+                if (effectiveRes >= 144 && isVideoFormat && isNotStoryboard) {
+                    resolutions.add(effectiveRes);
                 }
             });
         }
-        if (info.height && typeof info.height === 'number' && info.height >= 144) {
-            resolutions.add(info.height);
-            const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
-            standardTiers.filter(r => r <= info.height).forEach(r => resolutions.add(r));
+        const mainH = typeof info.height === 'number' ? info.height : 0;
+        const mainW = typeof info.width === 'number' ? info.width : 0;
+        const mainRes = (mainH > 0 && mainW > 0) ? Math.min(mainH, mainW) : (mainH || mainW);
+
+        if (mainRes >= 144) {
+            resolutions.add(mainRes);
         }
+
+        const maxDetectedRes = resolutions.size > 0 ? Math.max(...Array.from(resolutions)) : (mainRes || 1080);
+        const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
+        standardTiers.filter(r => r <= maxDetectedRes).forEach(r => resolutions.add(r));
+
         const sortedResolutions = Array.from(resolutions).sort((a, b) => b - a);
 
         const thumbnail = info.thumbnail || (info.thumbnails && info.thumbnails.length ? info.thumbnails[info.thumbnails.length - 1].url : '');
@@ -122,11 +131,11 @@ mediaRouter.get('/stream-url', async (req, res) => {
     try {
         const targetUrl = url.startsWith('http') ? url : `https://www.youtube.com/watch?v=${url}`;
         
-        let formatArg = 'bestvideo[height=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
+        let formatArg = 'bestvideo[height<=1080]+bestaudio/bestvideo[width<=1080]+bestaudio/best[height<=1080]/best[width<=1080]/best';
         if (quality && quality !== 'Auto') {
             const h = quality.replace(/\D/g, '');
             if (h) {
-                formatArg = `bestvideo[height=${h}]+bestaudio/best[height=${h}]/bestvideo[height<=${h}]+bestaudio/best[height<=${h}]/best`;
+                formatArg = `bestvideo[height=${h}]+bestaudio/bestvideo[width=${h}]+bestaudio/bestvideo[height<=${h}]+bestaudio/bestvideo[width<=${h}]+bestaudio/best[height<=${h}]/best[width<=${h}]/best`;
             }
         }
 

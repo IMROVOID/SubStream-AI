@@ -95,7 +95,9 @@ proxyRouter.get('/file-get', async (req, res) => {
     }
 
     try {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = {
+            'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        };
         if (proxyAuth) headers['Authorization'] = proxyAuth;
         if (req.headers.range) {
             headers['Range'] = req.headers.range;

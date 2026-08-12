@@ -228,6 +228,16 @@ const App = () => {
   const [youtubeMeta, setYoutubeMeta] = useState<YouTubeVideoMetadata | null>(null);
   const [localVideoDimensions, setLocalVideoDimensions] = useState<{ width: number; height: number } | null>(null);
 
+  const localAvailableResolutions = useMemo(() => {
+    if (!localVideoDimensions) return [];
+    const minDim = (localVideoDimensions.width > 0 && localVideoDimensions.height > 0)
+      ? Math.min(localVideoDimensions.width, localVideoDimensions.height)
+      : (localVideoDimensions.height || localVideoDimensions.width);
+    if (minDim <= 0) return [];
+    const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
+    return standardTiers.filter(r => r <= minDim);
+  }, [localVideoDimensions]);
+
   const getVideoProcessingStatusTitle = (status: VideoProcessingStatus): string => {
     switch (status) {
       case VideoProcessingStatus.INITIALIZING_ENGINE:
@@ -344,6 +354,15 @@ const App = () => {
   const debounceAnthropicKeyTimer = useRef<NodeJS.Timeout | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (subtitles.length > 0 && (status === TranslationStatus.COMPLETED || videoProcessingStatus === VideoProcessingStatus.DONE)) {
+      const timer = setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [subtitles.length, status, videoProcessingStatus]);
 
   useEffect(() => {
     const handleDragEnter = (e: DragEvent) => {
@@ -1270,7 +1289,7 @@ const App = () => {
   }
 
   return (
-    <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black flex flex-col">
+    <div className="min-h-screen bg-black text-neutral-200 font-sans selection:bg-white selection:text-black flex flex-col scroll-smooth snap-y snap-proximity">
       
       <div className="fixed inset-0 pointer-events-none z-0">
          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-neutral-900/30 blur-[120px] rounded-full mix-blend-screen" />
@@ -1349,8 +1368,8 @@ const App = () => {
                             <VideoPlayer 
                               videoSrc={videoSrc} 
                               srtContent={stringifySRT(subtitles)} 
-                              isYouTube={isYouTubeWorkflow || fileType === 'youtube'} 
-                              availableResolutions={youtubeMeta?.availableResolutions || []} 
+                              isYouTube={isYouTubeWorkflow || (fileType as string) === 'youtube'} 
+                              availableResolutions={(isYouTubeWorkflow || (fileType as string) === 'youtube') ? (youtubeMeta?.availableResolutions || []) : localAvailableResolutions} 
                             />
                         ) : null}
                     </div>
@@ -1601,8 +1620,8 @@ const App = () => {
         </div>
 
         {subtitles.length > 0 && (
-          <section ref={resultsRef} className="mt-24 border-t border-neutral-900 pt-12 animate-slide-up pb-24">
-            <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
+          <section ref={resultsRef} className={`h-[calc(100vh-5rem)] min-h-[calc(100vh-5rem)] max-h-[calc(100vh-5rem)] border-t border-neutral-900 px-4 md:px-8 flex flex-col justify-between scroll-mt-20 snap-start snap-always animate-slide-up overflow-hidden box-border transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${previewMode === 'video' ? 'pt-12 pb-14 md:pt-16 md:pb-20' : 'pt-7 pb-8 md:pt-9 md:pb-11'}`}>
+            <div className={`flex items-center justify-between flex-wrap gap-2 shrink-0 transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${previewMode === 'video' ? 'mb-1' : 'mb-4'}`}>
               <div>
                 <div className="flex items-center gap-3 mb-[0.5rem]">
                   <h2 className="text-3xl font-display font-bold text-white">
@@ -1713,30 +1732,48 @@ const App = () => {
               </div>
             </div>
 
-            {previewMode === 'table' ? (
-              <div key="table-view" className="rounded-3xl border border-neutral-800/80 bg-black/70 backdrop-blur overflow-hidden min-h-[400px] animate-fade-in">
-                <div className={`grid grid-cols-[112px_1fr] border-b border-neutral-800/80 bg-neutral-950/80 px-6 py-4 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10`}>
+            <div className={`flex-1 min-h-0 w-full flex flex-col overflow-hidden relative transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${previewMode === 'video' ? 'my-0' : 'my-2.5'}`}>
+              {/* Table View */}
+              <div 
+                key="table-view" 
+                className={`absolute inset-0 flex flex-col rounded-3xl border border-neutral-800/80 bg-black/70 backdrop-blur overflow-hidden transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${
+                  previewMode === 'table' 
+                    ? 'opacity-100 scale-100 pointer-events-auto z-10' 
+                    : 'opacity-0 scale-[0.98] pointer-events-none z-0'
+                }`}
+              >
+                <div className={`grid grid-cols-[112px_1fr] border-b border-neutral-800/80 bg-neutral-950/80 px-6 py-3.5 text-xs font-bold text-neutral-500 uppercase tracking-wider sticky top-0 z-10 shrink-0`}>
                   <div className="w-24">Timestamp</div>
                   <div className={`grid ${isYouTubeWorkflow ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'} gap-6`}>
                      <span>Original ({isYouTubeWorkflow ? LANGUAGES.find(l=>l.code === selectedCaptionId)?.name || 'Selected Language' : sourceLang})</span>
                      {!isYouTubeWorkflow && <span className="text-white">Translated ({targetLang})</span>}
                   </div>
                 </div>
-                <div className="max-h-[800px] overflow-y-auto thin-scrollbar">
+                <div className="flex-1 min-h-0 overflow-y-auto thin-scrollbar">
                   {subtitles.map((sub) => ( <SubtitleCard key={sub.id} subtitle={sub} isActive={sub.text !== sub.originalText} isSingleColumn={isYouTubeWorkflow} sourceFont={sourceLangFont} targetFont={targetLangFont} /> ))}
                 </div>
               </div>
-            ) : (
-              <div key="video-view" className="animate-fade-in w-full">
+
+              {/* Video View */}
+              <div 
+                key="video-view" 
+                className={`absolute inset-0 flex items-center justify-center overflow-hidden transition-all duration-500 cubic-bezier(0.16, 1, 0.3, 1) ${
+                  previewMode === 'video' 
+                    ? 'opacity-100 scale-100 pointer-events-auto z-10' 
+                    : 'opacity-0 scale-[0.98] pointer-events-none z-0'
+                }`}
+              >
                 <VideoPlayer 
-                  videoSrc={(isYouTubeWorkflow || fileType === 'youtube') ? (youtubeMeta?.videoUrl || youtubeMeta?.id || videoSrc || '') : (videoSrc || '')} 
+                  videoSrc={(isYouTubeWorkflow || (fileType as string) === 'youtube') ? (youtubeMeta?.videoUrl || youtubeMeta?.id || videoSrc || '') : (videoSrc || '')} 
                   srtContent={stringifySRT(subtitles)} 
-                  isYouTube={isYouTubeWorkflow || fileType === 'youtube'} 
-                  availableResolutions={youtubeMeta?.availableResolutions || []}
+                  isYouTube={isYouTubeWorkflow || (fileType as string) === 'youtube'} 
+                  availableResolutions={(isYouTubeWorkflow || (fileType as string) === 'youtube') ? (youtubeMeta?.availableResolutions || []) : localAvailableResolutions}
+                  className="max-h-full aspect-video"
                 />
               </div>
-            )}
-            <div className="mt-8 flex justify-center">
+            </div>
+
+            <div className="shrink-0 flex justify-center pt-2 pb-1">
                 <Button variant="secondary" onClick={resetState} icon={<RefreshCw className="w-4 h-4" />}>
                     Process Another File
                 </Button>
