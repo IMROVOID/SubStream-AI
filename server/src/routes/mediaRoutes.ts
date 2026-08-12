@@ -5,9 +5,10 @@ import ffmpegPath from 'ffmpeg-static';
 import { TEMP_DIR } from '../config';
 import { ensureBinary } from '../binaryManager';
 import { executeYtDlpWithRetry } from '../ytDlpRunner';
-import { translateSrtContent } from '../subtitleHelper';
+import { translateSrtContent, fetchDirectSubtitleTrack, fetchYouTubeTimedText } from '../subtitleHelper';
 import { directAxiosClient } from '../proxy';
 import { CaptionTrack, DecodedCaptionToken } from '../types';
+import { metadataCache, captionCache, extractVideoId } from '../cacheManager';
 
 export const mediaRouter = Router();
 
@@ -16,7 +17,13 @@ mediaRouter.get('/info', async (req, res) => {
     const url = req.query.url as string;
     if (!url) return res.status(400).json({ error: 'URL required' });
 
-    // Wait for binary to be ready before executing
+    const videoId = extractVideoId(url);
+    const cachedData = metadataCache.get(videoId);
+    if (cachedData && cachedData.responseData) {
+        console.log(`[Info] Serving metadata for video '${videoId}' from metadataCache.`);
+        return res.json(cachedData.responseData);
+    }
+
     await ensureBinary();
 
     try {
@@ -39,11 +46,12 @@ mediaRouter.get('/info', async (req, res) => {
             Object.keys(tracksObj).forEach(lang => {
                 const formats = tracksObj[lang];
                 const name = (formats[0] && formats[0].name) || lang;
+                const directUrl = formats[0] && formats[0].url ? formats[0].url : undefined;
                 const uniqueKey = `${lang}-${isAuto ? 'auto' : 'manual'}`;
                 
                 if (!seenKeys.has(uniqueKey)) {
                     seenKeys.add(uniqueKey);
-                    const trackConfig: DecodedCaptionToken = { lang: lang, isAuto: isAuto };
+                    const trackConfig: DecodedCaptionToken = { lang: lang, isAuto: isAuto, directUrl: directUrl };
                     const token = Buffer.from(JSON.stringify(trackConfig)).toString('base64');
 
                     captions.push({
@@ -59,7 +67,7 @@ mediaRouter.get('/info', async (req, res) => {
         processTracks(info.subtitles, false);
         processTracks(info.automatic_captions, true);
 
-        // Extract formats (resolutions) - filter out storyboard sprite image formats (sb0, sb1, etc.)
+        // Extract formats (resolutions) - filter out storyboard sprite image formats
         const resolutions = new Set<number>();
         if (info.formats && Array.isArray(info.formats)) {
             info.formats.forEach((f: any) => {
@@ -98,9 +106,9 @@ mediaRouter.get('/info', async (req, res) => {
 
         const directStreamUrl = info.url || (info.formats && info.formats.slice().reverse().find((f: any) => f.url && f.vcodec !== 'none')?.url) || '';
 
-        return res.json({
+        const responseData = {
             meta: {
-                id: info.id,
+                id: info.id || videoId,
                 title: info.title,
                 description: info.description,
                 thumbnailUrl: thumbnail,
@@ -112,7 +120,12 @@ mediaRouter.get('/info', async (req, res) => {
             streamUrl: directStreamUrl,
             captions: captions,
             resolutions: sortedResolutions
-        });
+        };
+
+        // ponytail: Save metadata in LRU cache to eliminate 80%+ of yt-dlp calls
+        metadataCache.set(videoId, { responseData, info });
+
+        return res.json(responseData);
 
     } catch (error: any) {
         console.error("yt-dlp info error:", error?.message);
@@ -125,6 +138,32 @@ mediaRouter.get('/stream-url', async (req, res) => {
     const url = req.query.url as string;
     const quality = req.query.quality as string;
     if (!url) return res.status(400).json({ error: 'URL required' });
+
+    const videoId = extractVideoId(url);
+    const cachedData = metadataCache.get(videoId);
+
+    // ponytail: Attempt fast resolution directly from cached formats without launching yt-dlp.exe
+    if (cachedData && cachedData.info && Array.isArray(cachedData.info.formats)) {
+        const formats = cachedData.info.formats;
+        let targetHeight = (quality && quality !== 'Auto') ? parseInt(quality.replace(/\D/g, ''), 10) : 1080;
+        if (isNaN(targetHeight)) targetHeight = 1080;
+
+        const bestVideo = formats
+            .filter((f: any) => f.url && f.vcodec && f.vcodec !== 'none' && (f.height || 0) <= targetHeight)
+            .sort((a: any, b: any) => (b.height || 0) - (a.height || 0))[0];
+
+        const bestAudio = formats
+            .filter((f: any) => f.url && f.acodec && f.acodec !== 'none' && (f.vcodec === 'none' || !f.vcodec))
+            .sort((a: any, b: any) => (b.tbr || 0) - (a.tbr || 0))[0];
+
+        if (bestVideo && bestVideo.url) {
+            console.log(`[Stream-Url] Resolved stream URL from metadataCache for '${videoId}' (quality: ${quality || 'Auto'}).`);
+            return res.json({
+                streamUrl: bestVideo.url,
+                audioUrl: bestAudio?.url || null
+            });
+        }
+    }
 
     await ensureBinary();
 
@@ -162,17 +201,19 @@ mediaRouter.get('/stream-url', async (req, res) => {
     }
 });
 
-// Endpoint: Download subtitle track (with fallback translation if needed)
+// Endpoint: Download subtitle track (with direct HTTP fetch & fallback translation)
 mediaRouter.get('/caption', async (req, res) => {
     const rawToken = (req.query.token || req.query.trackId) as string;
     const url = req.query.url as string;
 
     if (!url || !rawToken) return res.status(400).send("Missing required parameters");
 
+    const videoId = extractVideoId(url);
+
     if (rawToken.startsWith('http')) {
         try {
-            const response = await directAxiosClient.get(rawToken, { responseType: 'text' });
-            return res.send(response.data);
+            const content = await fetchDirectSubtitleTrack(rawToken);
+            return res.send(content);
         } catch (e) {
             return res.status(500).send("Failed to download legacy caption URL.");
         }
@@ -180,16 +221,64 @@ mediaRouter.get('/caption', async (req, res) => {
 
     let isAuto = false;
     let lang = '';
+    let directUrl: string | undefined;
 
     try {
         const jsonStr = Buffer.from(rawToken, 'base64').toString('utf-8');
         const decoded: DecodedCaptionToken = JSON.parse(jsonStr);
         isAuto = decoded.isAuto;
         lang = decoded.lang;
+        directUrl = decoded.directUrl;
     } catch (e) {
         return res.status(400).send("Invalid Caption Token");
     }
 
+    const captionKey = `${videoId}_${lang}_${isAuto ? 'auto' : 'manual'}`;
+    const cachedCaption = captionCache.get(captionKey);
+    if (cachedCaption) {
+        console.log(`[Caption] Serving subtitle for '${captionKey}' from captionCache.`);
+        return res.send(cachedCaption);
+    }
+
+    // 1. Attempt direct HTTP download if direct track URL was saved in token
+    if (directUrl) {
+        try {
+            console.log(`[Caption] Attempting direct HTTP subtitle download for '${lang}'...`);
+            let content = await fetchDirectSubtitleTrack(directUrl);
+            if (content && content.length > 10) {
+                captionCache.set(captionKey, content);
+                return res.send(content);
+            }
+        } catch (directErr: any) {
+            console.warn(`[Caption] Direct HTTP subtitle fetch failed (${directErr?.message}). Trying timedtext API...`);
+        }
+    }
+
+    // 2. ponytail: Direct YouTube TimedText API fetch to bypass spawning yt-dlp.exe completely
+    try {
+        console.log(`[Caption] Fetching YouTube TimedText API directly for '${videoId}' (lang: ${lang})...`);
+        let content = await fetchYouTubeTimedText(videoId, lang, isAuto);
+
+        if (!content && lang !== 'en') {
+            console.log(`[Caption] Track for '${lang}' not found directly. Fetching 'en' track and translating to '${lang}'...`);
+            let enContent = await fetchYouTubeTimedText(videoId, 'en', true);
+            if (!enContent) enContent = await fetchYouTubeTimedText(videoId, 'en', false);
+
+            if (enContent) {
+                content = await translateSrtContent(enContent, lang);
+            }
+        }
+
+        if (content && content.length > 10) {
+            console.log(`[Caption] Successfully fetched subtitle track via HTTP TimedText API for '${lang}'.`);
+            captionCache.set(captionKey, content);
+            return res.send(content);
+        }
+    } catch (ttErr: any) {
+        console.warn(`[Caption] TimedText API fetch failed (${ttErr?.message}). Falling back to yt-dlp...`);
+    }
+
+    // 3. Fall back to yt-dlp only if direct HTTP and TimedText API both fail
     await ensureBinary();
 
     const tempId = `sub_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -262,6 +351,7 @@ mediaRouter.get('/caption', async (req, res) => {
             try { fs.unlinkSync(path.join(TEMP_DIR, f)); } catch (e) {}
         });
 
+        captionCache.set(captionKey, content);
         return res.send(content);
 
     } catch (error: any) {

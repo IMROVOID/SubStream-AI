@@ -2,6 +2,7 @@ import net from 'net';
 import { execSync } from 'child_process';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { getVerifiedProxies } from './proxyFetcher';
 
 export const checkPortOpen = (host: string, port: number, timeout = 300): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -47,33 +48,81 @@ export const getWindowsRegistryProxy = (): string | null => {
     return null;
 };
 
-export const getSystemProxy = async (): Promise<string | null> => {
-    // 1. Check Environment Variables first
+// ponytail: Detect local/system proxy (e.g. 127.0.0.1:12334 or env proxy)
+export const detectLocalSystemProxy = async (): Promise<string | null> => {
     const envProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
     if (envProxy) return envProxy;
 
-    // 2. Check Windows System Registry proxy configuration
     const regProxy = getWindowsRegistryProxy();
     if (regProxy) {
         try {
             const parsed = new URL(regProxy);
             const port = parseInt(parsed.port || '80', 10);
             const host = parsed.hostname || '127.0.0.1';
-            if (await checkPortOpen(host, port)) {
-                return regProxy;
-            }
+            if (await checkPortOpen(host, port, 300)) return regProxy;
         } catch (e) {}
     }
 
-    // 3. Scan common local proxy ports
     const commonPorts = [12334, 10809, 7890, 7897, 10808, 1080, 8080];
     for (const port of commonPorts) {
-        if (await checkPortOpen('127.0.0.1', port)) {
+        if (await checkPortOpen('127.0.0.1', port, 300)) {
             return `http://127.0.0.1:${port}`;
         }
     }
-
     return null;
+};
+
+let proxyPoolIndex = 0;
+let activeStickyProxy: string | null = null;
+
+export const setWorkingProxy = (proxyUrl: string | null) => {
+    if (proxyUrl !== activeStickyProxy) {
+        activeStickyProxy = proxyUrl;
+        cachedProxyUrl = proxyUrl;
+        lastProxyCheckTime = Date.now();
+        console.log(`[Server] Sticky working proxy updated: ${activeStickyProxy}`);
+    }
+};
+
+export const getProxyPool = async (): Promise<string[]> => {
+    const local = await detectLocalSystemProxy();
+    const rawPool = process.env.PROXY_POOL;
+    let envPool: string[] = [];
+    if (rawPool) {
+        envPool = rawPool.split(',').map(p => p.trim()).filter(Boolean);
+    }
+    const autoProxies = getVerifiedProxies();
+
+    const pool = [];
+    if (local) pool.push(local);
+    pool.push(...envPool);
+    pool.push(...autoProxies);
+
+    return Array.from(new Set(pool));
+};
+
+export const rotateProxy = async (): Promise<string | null> => {
+    const pool = await getProxyPool();
+    if (pool.length === 0) return null;
+    
+    proxyPoolIndex = (proxyPoolIndex + 1) % pool.length;
+    const nextProxy = pool[proxyPoolIndex];
+    activeStickyProxy = nextProxy;
+    cachedProxyUrl = nextProxy;
+    lastProxyCheckTime = Date.now();
+    console.log(`[Server] Rotated to Next Proxy in Pool (${proxyPoolIndex + 1}/${pool.length}): ${nextProxy}`);
+    return nextProxy;
+};
+
+export const getSystemProxy = async (): Promise<string | null> => {
+    const pool = await getProxyPool();
+    if (pool.length === 0) return null;
+    
+    if (activeStickyProxy && pool.includes(activeStickyProxy)) {
+        return activeStickyProxy;
+    }
+    
+    return pool[proxyPoolIndex % pool.length];
 };
 
 export const directAxiosClient = axios.create({
@@ -89,10 +138,9 @@ export const directAxiosClient = axios.create({
 
 export const createAxiosClient = (proxyUrl: string | null) => {
     const config: AxiosRequestConfig = {
-        timeout: 60000, // Default 60s timeout
+        timeout: 60000,
         headers: { 
             'Cache-Control': 'no-cache',
-            // Spoof User-Agent to look like a browser (helps with Google API checks)
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
         },
         maxBodyLength: Infinity, 
@@ -144,12 +192,12 @@ export const makeRequestWithRetry = async (config: AxiosRequestConfig, retries =
                              (error.message && (error.message.includes('ECONNREFUSED') || error.message.includes('Unable to connect to proxy')));
 
         if (isProxyError && currentProxyUrl) {
-            console.warn(`[Proxy] Proxy request failed (${error.message || error.code}). Retrying with direct connection...`);
-            try {
-                return await directAxiosClient(config);
-            } catch (directErr) {
-                throw directErr;
+            console.warn(`[Proxy] Proxy request failed (${error.message || error.code}). Rotating proxy...`);
+            const nextProxy = await rotateProxy();
+            if (nextProxy) {
+                return makeRequestWithRetry(config, retries);
             }
+            return await directAxiosClient(config);
         }
 
         const isNetworkError = !error.response && (

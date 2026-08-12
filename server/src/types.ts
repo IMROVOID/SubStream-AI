@@ -24,4 +24,5 @@ export interface VideoInfoResponse {
 export interface DecodedCaptionToken {
   isAuto: boolean;
   lang: string;
+  directUrl?: string;
 }
