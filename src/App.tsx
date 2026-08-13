@@ -1322,7 +1322,6 @@ const App = () => {
       <nav className="relative z-20 border-b border-neutral-900 bg-black/80 backdrop-blur-xl sticky top-0 transition-all">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2 cursor-pointer shrink-0" onClick={() => window.location.reload()}>
-            <div className="w-8 h-8 bg-white text-black hidden sm:flex items-center justify-center font-bold text-xl rounded-lg font-display">S</div>
             <span className="font-display font-bold text-lg tracking-tight">SubStream <span className="text-neutral-600 font-sans font-normal text-sm ml-2">AI</span></span>
           </div>
           <div className="flex items-center gap-2 md:gap-6 text-sm font-medium text-neutral-400">
@@ -1812,11 +1811,11 @@ const App = () => {
       </main>
 
       <footer className="relative z-10 border-t border-neutral-900 bg-black/80 backdrop-blur-xl mt-auto">
-        <div className="max-w-7xl mx-auto px-6 py-4 md:py-8 flex flex-col gap-3 md:gap-4">
+        <div className="max-w-7xl mx-auto px-6 py-4 md:py-6 flex flex-col gap-3 md:gap-4">
             <div className="flex items-center justify-between gap-4 w-full">
-                <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-neutral-800 text-white hidden sm:flex items-center justify-center font-bold text-sm rounded font-display">S</div>
-                    <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
+                <span className="font-display font-bold tracking-tight text-neutral-400">SubStream AI</span>
+                <div className="hidden md:block text-xs text-neutral-600 text-center">
+                    &copy; {new Date().getFullYear()} SubStream AI. Open Source.
                 </div>
                 <div className="flex items-center gap-3.5 md:gap-6 text-xs md:text-sm text-neutral-500">
                     <button onClick={() => setActiveModal('TOS')} className="hover:text-white transition-colors">Terms</button>
@@ -1831,7 +1830,7 @@ const App = () => {
                     <Heart className="w-3 h-3 text-pink-500 group-hover:scale-110 transition-transform" /> Support Me
                 </button>
             </div>
-            <div className="text-center text-[11px] md:text-xs text-neutral-600">
+            <div className="md:hidden text-center text-[11px] text-neutral-600">
                 &copy; {new Date().getFullYear()} SubStream AI. Open Source.
             </div>
         </div>
