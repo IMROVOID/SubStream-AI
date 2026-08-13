@@ -1341,7 +1341,7 @@ const App = () => {
       </nav>
 
       <main className="relative z-10 max-w-5xl mx-auto px-3 sm:px-4 md:px-6 w-full flex-grow flex flex-col">
-        <div className="flex-grow flex flex-col justify-start pt-8 md:pt-30">
+        <div className="flex-grow flex flex-col justify-start pt-8 md:pt-16">
             <section className="mb-8 md:mb-14 text-center">
                 <h1 className="text-[2.65rem] leading-[1.05] sm:text-5xl md:text-6xl font-display font-bold tracking-tighter text-white mb-6 animate-slide-up">
                     Bridge the Language<br/>
