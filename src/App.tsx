@@ -40,10 +40,20 @@ export function App() {
       const accessToken = params.get('access_token');
 
       if (accessToken) {
+        if (window.opener) {
+          try {
+            window.opener.postMessage({ type: 'YOUTUBE_AUTH_SUCCESS', token: accessToken }, window.location.origin);
+          } catch (e) {
+            console.error(e);
+          }
+        }
         const channel = new BroadcastChannel('substream_auth_channel');
         channel.postMessage({ token: accessToken });
         channel.close();
-        window.close();
+        setTimeout(() => {
+          window.close();
+          window.open('', '_self')?.close();
+        }, 500);
       }
     }
 
@@ -55,7 +65,7 @@ export function App() {
       if (accessToken) {
         if (window.opener) {
           try {
-            window.opener.postMessage({ type: 'DRIVE_AUTH_SUCCESS', token: accessToken }, '*');
+            window.opener.postMessage({ type: 'DRIVE_AUTH_SUCCESS', token: accessToken }, window.location.origin);
           } catch (e) {
             console.error(e);
           }
@@ -66,7 +76,7 @@ export function App() {
         setTimeout(() => {
           window.close();
           window.open('', '_self')?.close();
-        }, 1000);
+        }, 500);
       }
     }
   }, [isYouTubeAuthCallback, isDriveAuthCallback]);
@@ -207,6 +217,7 @@ export function App() {
         openGroups={appSettings.openGroups}
         toggleGroup={appSettings.toggleGroup}
         googleUser={appSettings.googleUser}
+        googleAccessToken={appSettings.googleAccessToken}
         onGoogleLoginSuccess={appSettings.handleGoogleLoginSuccess}
         onGoogleLogout={appSettings.handleGoogleLogout}
         userGoogleApiKey={appSettings.userGoogleApiKey}

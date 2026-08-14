@@ -10,6 +10,7 @@ import {
 } from '../services/aiService';
 import { syncModels, getCachedModels, getSyncInfo } from '../services/modelSyncService';
 import { resolveAvailableModel, isModelValidForCurrentAuth, TokenResponse } from '../utils/appHelpers';
+import { requestGoogleAccessToken, revokeGoogleAccessToken, YOUTUBE_SCOPE } from '../utils/googleAuthHelper';
 
 interface UseAppSettingsProps {
   showToast: (title: string, message?: string, type?: 'info' | 'success' | 'error') => void;
@@ -107,17 +108,24 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
     if (!tokenResponse || !tokenResponse.access_token) return;
     
     const accessToken = tokenResponse.access_token;
+    if (googleAccessToken === accessToken && googleUser) return;
+
     setGoogleAccessToken(accessToken);
-    setAuthItem('substream_google_token', accessToken);
-    setAuthItem('substream_google_token_timestamp', Date.now().toString());
+    setAuthItem('substream_google_token', accessToken, 1);
+    setAuthItem('substream_google_token_timestamp', Date.now().toString(), 30);
+    setAuthItem('substream_google_session', 'active', 30);
     
     fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
-    .then(res => res.json())
+    .then(async res => {
+      if (!res.ok) throw new Error(`User info request failed with status ${res.status}`);
+      return res.json();
+    })
     .then(data => {
+      if (!data || !data.name) throw new Error("Invalid user profile received");
       setGoogleUser(data);
-      setAuthItem('substream_google_user', JSON.stringify(data));
+      setAuthItem('substream_google_user', JSON.stringify(data), 30);
       showToast(`Welcome, ${data.name}!`); 
     })
     .catch(error => {
@@ -127,11 +135,15 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
   };
 
   const handleGoogleLogout = () => {
+    if (googleAccessToken) {
+      revokeGoogleAccessToken(googleAccessToken);
+    }
     setGoogleUser(null);
     setGoogleAccessToken(null);
     removeAuthItem('substream_google_token');
     removeAuthItem('substream_google_user');
     removeAuthItem('substream_google_token_timestamp');
+    removeAuthItem('substream_google_session');
     showToast("Signed Out", "Google session cleared.", "info");
   };
 
@@ -263,22 +275,38 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
     const savedUser = getAuthItem('substream_google_user');
     const savedToken = getAuthItem('substream_google_token');
     const savedTimestamp = getAuthItem('substream_google_token_timestamp');
+    const hasGoogleSession = getAuthItem('substream_google_session') || (savedUser && savedTimestamp);
     
     let isValidAuth = false;
 
-    if (savedUser && savedToken && savedTimestamp) {
+    if (savedUser && hasGoogleSession && savedTimestamp) {
       const tokenAge = Date.now() - parseInt(savedTimestamp, 10);
       if (tokenAge < 30 * 24 * 60 * 60 * 1000) {
         try {
-          setGoogleUser(JSON.parse(savedUser));
-          setGoogleAccessToken(savedToken);
+          const parsedUser = JSON.parse(savedUser);
+          setGoogleUser(parsedUser);
           isValidAuth = true;
+
+          if (savedToken && tokenAge < 50 * 60 * 1000) {
+            setGoogleAccessToken(savedToken);
+          } else {
+            // Silently refresh expired access token in the background
+            requestGoogleAccessToken({ scope: YOUTUBE_SCOPE, prompt: '' })
+              .then(freshToken => {
+                setGoogleAccessToken(freshToken);
+                setAuthItem('substream_google_token', freshToken, 1);
+                setAuthItem('substream_google_token_timestamp', Date.now().toString(), 30);
+                setAuthItem('substream_google_session', 'active', 30);
+              })
+              .catch(() => {
+                // Keep the saved user in UI even if offline; avoid premature logout
+              });
+          }
         } catch (e) {
           console.error("Failed to parse saved user", e);
           handleGoogleLogout();
         }
       } else {
-        console.warn("Google Token Expired. Clearing session.");
         handleGoogleLogout(); 
       }
     }

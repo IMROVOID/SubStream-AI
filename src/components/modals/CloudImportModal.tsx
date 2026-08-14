@@ -3,8 +3,9 @@ import { HardDrive, Search, ArrowLeft, Folder, FileVideo, FileText, ChevronRight
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { DriveFile } from '../../types';
-import { listDriveFiles, downloadDriveFile } from '../../services/googleDriveService';
+import { listDriveFiles, downloadDriveFile, refreshGoogleDriveAccessToken } from '../../services/googleDriveService';
 import { getAuthItem, setAuthItem, removeAuthItem } from '../../utils/cookieUtils';
+import { requestGoogleAccessToken, revokeGoogleAccessToken, GOOGLE_DRIVE_SCOPE } from '../../utils/googleAuthHelper';
 
 interface CloudImportModalProps {
   isOpen: boolean;
@@ -48,15 +49,15 @@ const DropboxIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-// --- Recursive Folder Tree Item ---
 const FolderTreeItem: React.FC<{
     folder: { id: string, name: string };
     activeFolderId: string;
     level: number;
     onSelect: (id: string, name: string) => void;
     accessToken: string;
+    onTokenRefreshed?: (token: string) => void;
     defaultExpanded?: boolean;
-}> = ({ folder, activeFolderId, level, onSelect, accessToken, defaultExpanded = false }) => {
+}> = ({ folder, activeFolderId, level, onSelect, accessToken, onTokenRefreshed, defaultExpanded = false }) => {
     
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
     const [subFolders, setSubFolders] = useState<{id: string, name: string}[]>([]);
@@ -73,7 +74,7 @@ const FolderTreeItem: React.FC<{
         
         if (!loaded) {
             try {
-                const files = await listDriveFiles(accessToken, folder.id);
+                const files = await listDriveFiles(accessToken, folder.id, '', onTokenRefreshed);
                 const foldersOnly = files
                     .filter(f => f.mimeType === 'application/vnd.google-apps.folder')
                     .map(f => ({ id: f.id, name: f.name }));
@@ -121,6 +122,7 @@ const FolderTreeItem: React.FC<{
                             level={level + 1} 
                             onSelect={onSelect}
                             accessToken={accessToken}
+                            onTokenRefreshed={onTokenRefreshed}
                         />
                     ))}
                     
@@ -293,22 +295,44 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
       });
   }, [files, sortBy, sortDir]);
 
-  // --- INITIAL LOAD: CHECK STORAGE ---
+  // --- INITIAL LOAD: CHECK 30-DAY STORAGE ---
   useEffect(() => {
       const storedToken = getAuthItem('substream_drive_token');
       const storedExpiry = getAuthItem('substream_drive_token_timestamp');
+      const hasSession = getAuthItem('substream_drive_session') || (storedToken && storedExpiry);
 
-      if (storedToken && storedExpiry) {
+      if (hasSession && storedExpiry) {
           const now = Date.now();
           const age = now - parseInt(storedExpiry, 10);
           
-          // Google OAuth access tokens expire after 1 hour (3600s). Check 50 minutes max age.
-          if (age < 50 * 60 * 1000) {
-              setAccessToken(storedToken);
-              setStep('EXPLORER');
+          // Check if within 30 days
+          if (age < 30 * 24 * 60 * 60 * 1000) {
+              // If access token is still fresh (< 50 minutes), load immediately
+              if (storedToken && age < 50 * 60 * 1000) {
+                  setAccessToken(storedToken);
+                  setStep('EXPLORER');
+                  setProvider('GDRIVE');
+              } else {
+                  // Silently refresh expired access token in the background
+                  setIsLoading(true);
+                  refreshGoogleDriveAccessToken()
+                      .then(freshToken => {
+                          setAccessToken(freshToken);
+                          setStep('EXPLORER');
+                          setProvider('GDRIVE');
+                      })
+                      .catch(() => {
+                          // Silent refresh failed (e.g. user logged out of Google)
+                          setStep('AUTH_GDRIVE');
+                      })
+                      .finally(() => {
+                          setIsLoading(false);
+                      });
+              }
           } else {
               removeAuthItem('substream_drive_token');
               removeAuthItem('substream_drive_token_timestamp');
+              removeAuthItem('substream_drive_session');
               removeAuthItem('substream_drive_user');
               setAccessToken(null);
               setStep('AUTH_GDRIVE');
@@ -325,9 +349,10 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
       }
   }, [accessToken]);
 
-  // --- AUTH LISTENER ---
+  // --- AUTH LISTENER (Legacy Broadcast Channel fallback) ---
   useEffect(() => {
     const handleAuthMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
         if (event.data?.type === 'DRIVE_AUTH_SUCCESS' && event.data.token) {
             handleLoginSuccess(event.data.token);
         }
@@ -349,15 +374,19 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
 
   const handleLoginSuccess = (token: string) => {
       setAccessToken(token);
-      setAuthItem('substream_drive_token', token);
-      setAuthItem('substream_drive_token_timestamp', Date.now().toString());
+      setAuthItem('substream_drive_token', token, 1);
+      setAuthItem('substream_drive_token_timestamp', Date.now().toString(), 30);
+      setAuthItem('substream_drive_session', 'active', 30);
       
       setStep('EXPLORER');
       setProvider('GDRIVE'); 
       fetchDriveProfile(token);
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
+      if (accessToken) {
+          revokeGoogleAccessToken(accessToken);
+      }
       setAccessToken(null);
       setStep('PROVIDERS');
       setProvider(null);
@@ -365,7 +394,8 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
       setError(null);
       removeAuthItem('substream_drive_token');
       removeAuthItem('substream_drive_token_timestamp');
-      if (userProfileBlob) URL.revokeObjectURL(userProfileBlob);
+      removeAuthItem('substream_drive_session');
+      removeAuthItem('substream_drive_user');
       setUserProfileBlob(null);
       setUserInfo(null);
   };
@@ -387,7 +417,9 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
         setError(null);
         setFiles([]); // Clear old files immediately on refetch
         
-        listDriveFiles(accessToken, currentFolderId, debouncedSearchQuery)
+        listDriveFiles(accessToken, currentFolderId, debouncedSearchQuery, (newToken) => {
+            if (!isCancelled) setAccessToken(newToken);
+        })
             .then(data => {
                 if (!isCancelled) {
                     setFiles(data);
@@ -434,6 +466,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
         if (!res.ok) return;
         const data = await res.json();
         setUserInfo(data);
+        setAuthItem('substream_drive_user', JSON.stringify(data), 30);
 
         if (data.picture) {
             setUserProfileBlob(data.picture);
@@ -442,18 +475,21 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
       } catch {}
   };
 
-  const handleDriveLogin = () => {
-      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-      const redirectUri = (window.location.origin + window.location.pathname).replace(/\/$/, '') || window.location.origin;
-      const scope = 'https://www.googleapis.com/auth/drive.readonly profile email';
-      
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}&state=drive_auth&prompt=consent`;
-      
-      const width = 500, height = 600;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      window.open(authUrl, 'Google Drive Auth', `width=${width},height=${height},top=${top},left=${left}`);
+  const handleDriveLogin = async () => {
+      try {
+          setIsLoading(true);
+          setError(null);
+          const token = await requestGoogleAccessToken({
+              scope: GOOGLE_DRIVE_SCOPE,
+              prompt: 'consent'
+          });
+          handleLoginSuccess(token);
+      } catch (err: any) {
+          console.error("Google Drive Login Error:", err);
+          setError(err?.message || "Failed to authenticate with Google Drive.");
+      } finally {
+          setIsLoading(false);
+      }
   };
 
   const handleFolderSelect = (id: string, name: string) => {
@@ -503,7 +539,9 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
       setImportProgress(10); 
 
       try {
-          const file = await downloadDriveFile(accessToken, selectedFile.id, selectedFile.name);
+          const file = await downloadDriveFile(accessToken, selectedFile.id, selectedFile.name, (newToken) => {
+              setAccessToken(newToken);
+          });
           setImportProgress(100);
           setTimeout(() => {
               onImportFile(file);
@@ -731,6 +769,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({
                                         level={0} 
                                         onSelect={handleFolderSelect} 
                                         accessToken={accessToken}
+                                        onTokenRefreshed={(tok) => setAccessToken(tok)}
                                         defaultExpanded={true} 
                                     />
                                 </div>

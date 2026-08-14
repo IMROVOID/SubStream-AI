@@ -1,54 +1,43 @@
 import React, { useState } from 'react';
-import { googleLogout } from '@react-oauth/google';
-import { LogOut, Youtube } from 'lucide-react';
+import { LogOut, Youtube, Loader2 } from 'lucide-react';
 import { Button } from './Button';
+import { requestGoogleAccessToken, revokeGoogleAccessToken, YOUTUBE_SCOPE } from '../../utils/googleAuthHelper';
 
 interface YouTubeAuthProps {
   onLoginSuccess: (tokenResponse: any) => void;
   onLogout: () => void;
-  userInfo: { name: string; email: string; picture: string } | null;
+  userInfo: { name: string; email?: string; picture: string } | null;
+  activeToken?: string | null;
 }
 
-export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogout, userInfo }) => {
+export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogout, userInfo, activeToken }) => {
   const [imageError, setImageError] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = () => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const redirectUri = (window.location.origin + window.location.pathname).replace(/\/$/, '') || window.location.origin;
-    
-    // Add specific state to identify this request later
-    const state = 'youtube_auth';
-    
-    const scope = [
-      'https://www.googleapis.com/auth/youtube.upload',
-      'https://www.googleapis.com/auth/youtube.force-ssl', // Required for downloading captions
-      'profile',
-      'email'
-    ].join(' ');
+  const [authError, setAuthError] = useState<string | null>(null);
 
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: 'token',
-      scope: scope,
-      include_granted_scopes: 'true',
-      state: state,
-      prompt: 'consent' // Forces the user to re-accept scopes, ensuring force-ssl is granted
-    });
+  const handleLogin = async () => {
+    try {
+      setIsLoading(true);
+      setAuthError(null);
+      const token = await requestGoogleAccessToken({
+        scope: YOUTUBE_SCOPE,
+        prompt: 'consent'
+      });
+      onLoginSuccess({ access_token: token });
+    } catch (err: any) {
+      console.error("YouTube Auth Error:", err);
+      setAuthError(err?.message || "Authentication failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-    
-    // Calculate center position for the popup
-    const width = 500;
-    const height = 600;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-
-    window.open(
-      authUrl, 
-      'Google Auth', 
-      `width=${width},height=${height},top=${top},left=${left}`
-    );
+  const handleDisconnect = async () => {
+    if (activeToken) {
+      revokeGoogleAccessToken(activeToken);
+    }
+    onLogout();
   };
 
   if (userInfo) {
@@ -79,7 +68,7 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
         </div>
         <div className="h-4 w-px bg-neutral-800 mx-1"></div>
         <button 
-            onClick={() => { googleLogout(); onLogout(); }} 
+            onClick={handleDisconnect} 
             className="p-1.5 rounded-lg hover:bg-red-900/30 text-neutral-500 hover:text-red-400 transition-colors"
             title="Disconnect Channel"
         >
@@ -90,14 +79,22 @@ export const YouTubeAuth: React.FC<YouTubeAuthProps> = ({ onLoginSuccess, onLogo
   }
 
   return (
-    <Button 
-        onClick={handleLogin} 
-        type="button" 
-        variant="secondary"
-        className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all flex items-center gap-2"
-        icon={<Youtube className="w-[20px] h-[20px] text-red-500 shrink-0" />}
-    >
-      Authenticate YouTube
-    </Button>
+    <div className="flex flex-col items-start gap-1">
+      <Button 
+          onClick={handleLogin} 
+          type="button" 
+          variant="secondary"
+          disabled={isLoading}
+          className="px-[1.2rem] py-[0.8rem] text-[0.8rem] font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 hover:border-neutral-600 rounded-xl transition-all flex items-center gap-2"
+          icon={isLoading ? <Loader2 className="w-[20px] h-[20px] text-red-500 animate-spin shrink-0" /> : <Youtube className="w-[20px] h-[20px] text-red-500 shrink-0" />}
+      >
+        {isLoading ? "Authenticating..." : "Authenticate YouTube"}
+      </Button>
+      {authError && (
+        <span className="text-[11px] text-red-400 max-w-[220px] truncate" title={authError}>
+          {authError}
+        </span>
+      )}
+    </div>
   );
 };
