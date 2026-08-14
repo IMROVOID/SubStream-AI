@@ -114,32 +114,140 @@ export const fixTimestampIssues = (segments: { start: string; end: string; text:
   return splitSegments;
 };
 
+const BACKEND_GOOGLE_PROXY = 'http://localhost:4000/api/proxy/ai/google/v1beta';
+
 export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => {
-  if (!apiKey || !apiKey.startsWith('AIzaSy')) return false;
+  const trimmed = apiKey?.trim();
+  if (!trimmed || !trimmed.startsWith('AIzaSy') || trimmed.length < 30) return false;
 
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
-  const ai = new GoogleGenAI({ apiKey });
+  const modelsToTry = [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-1.5-pro'
+  ];
 
-  for (const model of modelsToTry) {
-    try {
-      await enforceRateLimit(); 
-      await ai.models.countTokens({ model, contents: [{ role: "user", parts: [{ text: "test" }] }] });
-      return true;
-    } catch (error: any) {
-      const isNotFoundError = error?.status === 'NOT_FOUND' || (error?.message && error.message.includes('NOT_FOUND'));
-      if (isNotFoundError) {
-        console.warn(`Validation with model "${model}" failed (Not Found). Trying next model...`);
-      } else {
-        console.error("Google API Key validation failed with a critical error:", error);
-        return false;
+  await enforceRateLimit();
+
+  // 1. Try direct SDK countTokens
+  try {
+    const ai = new GoogleGenAI({ apiKey: trimmed });
+    for (const model of modelsToTry) {
+      try {
+        await ai.models.countTokens({ model, contents: [{ role: "user", parts: [{ text: "test" }] }] });
+        return true;
+      } catch (modelErr: any) {
+        const status = modelErr?.status || modelErr?.response?.status;
+        const msg = modelErr?.message || '';
+        const isAuthError = status === 400 || status === 401 || status === 403 ||
+          msg.includes('API_KEY_INVALID') || msg.includes('API key not valid') ||
+          msg.includes('PERMISSION_DENIED') || msg.includes('UNAUTHENTICATED');
+        if (isAuthError) {
+          return false;
+        }
+        const isNotFound = status === 404 || status === 'NOT_FOUND' || msg.includes('NOT_FOUND') || msg.includes('not found');
+        if (isNotFound) {
+          continue;
+        }
+        // If network/SSL error, rethrow to try proxy
+        throw modelErr;
       }
     }
+  } catch (directErr: any) {
+    const status = directErr?.status || directErr?.response?.status;
+    const msg = directErr?.message || '';
+    const isAuthError = status === 400 || status === 401 || status === 403 ||
+      msg.includes('API_KEY_INVALID') || msg.includes('API key not valid') ||
+      msg.includes('PERMISSION_DENIED') || msg.includes('UNAUTHENTICATED');
+    if (isAuthError) {
+      return false;
+    }
   }
-  return false;
+
+  // 2. Try backend proxy if direct browser request failed (e.g. SSL/Network intercept)
+  try {
+    for (const model of modelsToTry) {
+      const proxyRes = await fetch(`${BACKEND_GOOGLE_PROXY}/models/${model}:countTokens?key=${encodeURIComponent(trimmed)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "test" }] }] })
+      });
+
+      if (proxyRes.ok) return true;
+      if (proxyRes.status === 400 || proxyRes.status === 401 || proxyRes.status === 403) {
+        const errJson = await proxyRes.json().catch(() => ({}));
+        const errMsg = JSON.stringify(errJson);
+        if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('UNAUTHENTICATED')) {
+          return false;
+        }
+      }
+      if (proxyRes.status === 404) {
+        continue;
+      }
+    }
+  } catch (proxyErr) {
+    console.warn("[Google] Validation failed on both direct and backend proxy:", proxyErr);
+  }
+
+  // 3. Fallback to format check if offline/unreachable
+  return /^AIzaSy[A-Za-z0-9_-]{30,}$/.test(trimmed);
 };
 
+async function executeGoogleGenerateContent(
+  apiKey: string,
+  modelId: string,
+  contents: any[],
+  generationConfig?: GenerationConfig
+): Promise<string> {
+  await enforceRateLimit();
+
+  // Try direct SDK first
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const apiCall = ai.models.generateContent({
+      model: modelId,
+      contents,
+      config: generationConfig
+    });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Request timed out. The model may be busy or the file is too large.")), 180000)
+    );
+
+    const result = await Promise.race([apiCall, timeoutPromise]) as any;
+    if (result?.text) return result.text;
+  } catch (directErr: any) {
+    const isNetworkError = !directErr?.status || directErr?.status === 502 || directErr?.status === 504 ||
+      (directErr?.message && (directErr.message.includes('fetch') || directErr.message.includes('network') || directErr.message.includes('Failed to fetch') || directErr.message.includes('certificate')));
+
+    if (isNetworkError) {
+      console.warn("[Google Service] Direct request failed with network error, retrying via backend AI proxy...");
+      const proxyRes = await fetch(`${BACKEND_GOOGLE_PROXY}/models/${modelId}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          generationConfig
+        })
+      });
+
+      if (!proxyRes.ok) {
+        const errJson = await proxyRes.json().catch(() => ({}));
+        throw new Error(errJson?.error?.message || `Google API error (via proxy): ${proxyRes.statusText}`);
+      }
+
+      const data = await proxyRes.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    }
+    throw directErr;
+  }
+  throw new Error("No response generated from Google AI.");
+}
+
 export async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, apiKey: string, modelId: string): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey });
   const audioBuffer = await audioBlob.arrayBuffer();
   const base64Audio = arrayBufferToBase64(audioBuffer);
   
@@ -165,21 +273,12 @@ export async function transcribeWithGoogle(audioBlob: Blob, sourceLang: string, 
     maxOutputTokens: 8192 
   };
 
-  await enforceRateLimit();
-  
-  const apiCall = ai.models.generateContent({ 
-    model: modelId, 
-    contents: [{ role: "user", parts: [{ text: prompt }, ...audioParts] }],
-    config: generationConfig
-  });
-
-  const timeoutPromise = new Promise((_, reject) => 
-    setTimeout(() => reject(new Error("Request timed out. The model may be busy or the file is too large.")), 180000)
+  const responseText = await executeGoogleGenerateContent(
+    apiKey,
+    modelId,
+    [{ role: "user", parts: [{ text: prompt }, ...audioParts] }],
+    generationConfig
   );
-
-  const result = await Promise.race([apiCall, timeoutPromise]) as any;
-  const responseText = result.text;
-  if (!responseText) throw new Error("No transcription generated.");
   
   try {
     const safeJsonStr = cleanAndRepairJSON(responseText);
@@ -209,15 +308,17 @@ export const getTranslationPrompt = (sourceLang: string, targetLang: string, con
 };
 
 export async function translateWithGoogle(subtitles: SubtitleNode[], sourceLang: string, targetLang: string, apiKey: string, modelId: string): Promise<{ id: number; text: string }[]> {
-  const ai = new GoogleGenAI({ apiKey });
   const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
   const systemInstruction = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
   const generationConfig: GenerationConfig = { responseMimeType: 'application/json' };
 
-  await enforceRateLimit(); 
-  const result = await ai.models.generateContent({ model: modelId, contents: [{ role: "user", parts: [{ text: systemInstruction }] }], config: generationConfig });
-  const responseText = result.text;
-  if (!responseText) throw new Error("Received empty response from Google AI.");
+  const responseText = await executeGoogleGenerateContent(
+    apiKey,
+    modelId,
+    [{ role: "user", parts: [{ text: systemInstruction }] }],
+    generationConfig
+  );
+
   const parsed = JSON.parse(responseText);
   if (!Array.isArray(parsed)) throw new Error("Invalid JSON format from Google AI.");
   return parsed;

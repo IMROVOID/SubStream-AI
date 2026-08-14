@@ -91,20 +91,43 @@ export function sortModelsNewestFirst(models: AIModel[]): AIModel[] {
   });
 }
 
-export async function fetchFromOpenRouter(): Promise<AIModel[]> {
-  const response = await fetch('https://openrouter.ai/api/v1/models', {
-    method: 'GET',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/json'
-    }
-  });
+const BACKEND_OPENROUTER_PROXY = 'http://localhost:4000/api/proxy/ai/openrouter/api/v1/models';
 
-  if (!response.ok) {
-    throw new Error(`OpenRouter returned status ${response.status}`);
+export async function fetchFromOpenRouter(): Promise<AIModel[]> {
+  let json: any;
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter returned status ${response.status}`);
+    }
+    json = await response.json();
+  } catch (directErr: any) {
+    console.warn('[OpenRouter] Direct fetch failed (e.g. SSL/Network intercept), trying backend AI proxy...', directErr?.message);
+    try {
+      const proxyRes = await fetch(BACKEND_OPENROUTER_PROXY, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      if (!proxyRes.ok) {
+        throw new Error(`Backend OpenRouter proxy returned status ${proxyRes.status}`);
+      }
+      json = await proxyRes.json();
+    } catch (proxyErr: any) {
+      console.warn('[OpenRouter] Backend proxy also failed:', proxyErr?.message);
+      throw directErr;
+    }
   }
 
-  const json = await response.json();
   if (!json || !Array.isArray(json.data)) {
     throw new Error('Invalid OpenRouter API response format');
   }

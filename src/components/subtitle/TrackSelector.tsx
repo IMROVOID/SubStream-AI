@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Bot, FileText, Youtube, Sparkles, Languages, ArrowRight } from 'lucide-react';
 import { ExtractedSubtitleTrack, AIModel, LANGUAGES } from '../../types';
+import { ComboBox } from '../common/ComboBox';
 
 interface TrackSelectorProps {
   tracks: ExtractedSubtitleTrack[];
@@ -28,6 +29,16 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({
   
   const isYouTubeModel = activeModel?.provider === 'youtube';
 
+  const sourceOptions = useMemo(() => [
+    { value: 'auto', label: '✨ Auto Detect' },
+    ...LANGUAGES.map(l => ({ value: l.name, label: l.name }))
+  ], []);
+
+  const targetOptions = useMemo(() => [
+    { value: 'none', label: '-- None (Transcription Only) --' },
+    ...LANGUAGES.map(l => ({ value: l.name, label: l.name }))
+  ], []);
+
   return (
     <div className="animate-fade-in space-y-6 max-w-2xl mx-auto">
       <div className="text-center space-y-2">
@@ -45,16 +56,11 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({
                 <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider flex items-center gap-2">
                     <Languages className="w-3 h-3" /> Audio Language
                 </label>
-                <div className="relative">
-                    <select 
-                        className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors"
-                        value={sourceLang} 
-                        onChange={(e) => setSourceLang(e.target.value)}
-                    >
-                        <option value="auto">✨ Auto Detect</option>
-                        {LANGUAGES.map(l => <option key={`src-${l.code}`} value={l.name}>{l.name}</option>)}
-                    </select>
-                </div>
+                <ComboBox
+                  options={sourceOptions}
+                  value={sourceLang}
+                  onChange={setSourceLang}
+                />
             </div>
 
             {/* Target Language */}
@@ -62,16 +68,11 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({
                 <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider flex items-center gap-2">
                     <ArrowRight className="w-3 h-3" /> Translate To
                 </label>
-                <div className="relative">
-                    <select 
-                        className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors"
-                        value={targetLang} 
-                        onChange={(e) => setTargetLang(e.target.value)}
-                    >
-                        <option value="none">-- None (Transcription Only) --</option>
-                        {LANGUAGES.map(l => <option key={`tgt-${l.code}`} value={l.name}>{l.name}</option>)}
-                    </select>
-                </div>
+                <ComboBox
+                  options={targetOptions}
+                  value={targetLang}
+                  onChange={setTargetLang}
+                />
             </div>
          </div>
 

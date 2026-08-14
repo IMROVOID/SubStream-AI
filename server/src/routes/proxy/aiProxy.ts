@@ -99,3 +99,116 @@ aiProxyRouter.all('/anthropic/*', async (req: Request, res: Response) => {
     res.status(status).json(data);
   }
 });
+
+// Generic forwarder for Google Generative AI
+aiProxyRouter.all('/google/*', async (req: Request, res: Response) => {
+  const rawPath = req.originalUrl.split('?')[0];
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/google/, '');
+  const targetUrl = `https://generativelanguage.googleapis.com${subPath}`;
+
+  const headers = extractHeaders(req, [
+    'x-goog-api-key',
+    'x-goog-api-client',
+    'authorization',
+    'content-type',
+    'content-length',
+    'user-agent'
+  ]);
+
+  try {
+    const isGetOrHead = ['GET', 'HEAD'].includes(req.method.toUpperCase());
+    const response = await makeRequestWithRetry({
+      method: req.method as any,
+      url: targetUrl,
+      params: req.query,
+      data: isGetOrHead ? undefined : req.body,
+      headers,
+      validateStatus: () => true
+    });
+
+    res.status(response.status).send(response.data);
+  } catch (error: any) {
+    console.error(`[AI Proxy] Google Error on ${subPath}:`, error?.message);
+    const status = error.response?.status || 502;
+    const data = error.response?.data || {
+      error: {
+        message: error.message || 'AI Proxy failed to reach Google Generative Language API'
+      }
+    };
+    res.status(status).json(data);
+  }
+});
+
+// Generic forwarder for OpenRouter
+aiProxyRouter.all('/openrouter/*', async (req: Request, res: Response) => {
+  const rawPath = req.originalUrl.split('?')[0];
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/openrouter/, '');
+  const targetUrl = `https://openrouter.ai${subPath}`;
+
+  const headers = extractHeaders(req, [
+    'authorization',
+    'content-type',
+    'content-length',
+    'user-agent',
+    'http-referer',
+    'x-title',
+    'accept'
+  ]);
+
+  try {
+    const isGetOrHead = ['GET', 'HEAD'].includes(req.method.toUpperCase());
+    const response = await makeRequestWithRetry({
+      method: req.method as any,
+      url: targetUrl,
+      params: req.query,
+      data: isGetOrHead ? undefined : req.body,
+      headers,
+      validateStatus: () => true
+    });
+
+    res.status(response.status).send(response.data);
+  } catch (error: any) {
+    console.error(`[AI Proxy] OpenRouter Error on ${subPath}:`, error?.message);
+    const status = error.response?.status || 502;
+    const data = error.response?.data || {
+      error: {
+        message: error.message || 'AI Proxy failed to reach OpenRouter'
+      }
+    };
+    res.status(status).json(data);
+  }
+});
+
+// Generic forwarder for LiteLLM
+aiProxyRouter.all('/litellm/*', async (req: Request, res: Response) => {
+  const rawPath = req.originalUrl.split('?')[0];
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/litellm/, '');
+  const targetUrl = `https://raw.githubusercontent.com/BerriAI/litellm/main${subPath || '/model_prices_and_context_window.json'}`;
+
+  const headers = extractHeaders(req, [
+    'accept',
+    'user-agent'
+  ]);
+
+  try {
+    const response = await makeRequestWithRetry({
+      method: 'GET',
+      url: targetUrl,
+      params: req.query,
+      headers,
+      validateStatus: () => true
+    });
+
+    res.status(response.status).send(response.data);
+  } catch (error: any) {
+    console.error(`[AI Proxy] LiteLLM Error on ${subPath}:`, error?.message);
+    const status = error.response?.status || 502;
+    const data = error.response?.data || {
+      error: {
+        message: error.message || 'AI Proxy failed to reach LiteLLM definitions'
+      }
+    };
+    res.status(status).json(data);
+  }
+});
+

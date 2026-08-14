@@ -7,7 +7,7 @@ const BACKEND_OPENAI_PROXY = 'http://localhost:4000/api/proxy/ai/openai/v1';
 
 export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => {
   const trimmed = apiKey?.trim();
-  if (!trimmed || !trimmed.startsWith('sk-')) return false;
+  if (!trimmed || !trimmed.startsWith('sk-') || trimmed.length < 20) return false;
 
   await enforceRateLimit();
 
@@ -17,9 +17,10 @@ export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => 
     await directClient.models.list();
     return true;
   } catch (directErr: any) {
-    // If 401 Unauthorized, the API key is genuinely invalid
+    // If 401 Unauthorized or auth failure, the API key is genuinely invalid
     const status = directErr?.status || directErr?.response?.status;
-    if (status === 401) {
+    const msg = directErr?.message || '';
+    if (status === 401 || (status === 403 && (msg.includes('Incorrect API key') || msg.includes('invalid_api_key')))) {
       return false;
     }
 
@@ -35,12 +36,13 @@ export const validateOpenAIApiKey = async (apiKey: string): Promise<boolean> => 
       return true;
     } catch (proxyErr: any) {
       const proxyStatus = proxyErr?.status || proxyErr?.response?.status;
-      if (proxyStatus === 401) {
+      const proxyMsg = proxyErr?.message || '';
+      if (proxyStatus === 401 || (proxyStatus === 403 && (proxyMsg.includes('Incorrect API key') || proxyMsg.includes('invalid_api_key')))) {
         return false;
       }
       console.warn("[OpenAI] Validation failed on both direct and proxy:", directErr?.message, proxyErr?.message);
       // ponytail: Fallback to syntactic length validation if network/proxy is offline or unreachable
-      return trimmed.length > 20;
+      return trimmed.length > 20 && trimmed.startsWith('sk-');
     }
   }
 };

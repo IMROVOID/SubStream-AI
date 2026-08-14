@@ -120,9 +120,9 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   const openaiModels = filteredModels.filter(m => m.provider === 'openai');
   const anthropicModels = filteredModels.filter(m => m.provider === 'anthropic');
 
-  const hasGoogleKey = Boolean(tempGoogleApiKey.trim() || userGoogleApiKey);
-  const hasOpenAIKey = Boolean(tempOpenAIApiKey.trim() || userOpenAIApiKey);
-  const hasAnthropicKey = Boolean(tempAnthropicApiKey.trim() || userAnthropicApiKey);
+  const isGoogleActive = googleApiKeyStatus === 'valid';
+  const isOpenAIActive = openAIApiKeyStatus === 'valid';
+  const isAnthropicActive = anthropicApiKeyStatus === 'valid';
   const hasYouTubeAuth = Boolean(googleUser);
 
   const isSaveDisabled = 
@@ -243,7 +243,16 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
                       {googleModels.map((model) => {
-                        const isDisabled = !hasGoogleKey;
+                        const isDisabled = !isGoogleActive;
+                        const badgeText = 
+                          googleApiKeyStatus === 'validating' ? 'Validating Key...' :
+                          googleApiKeyStatus === 'invalid' ? 'Invalid API Key' :
+                          'API Key Required';
+                        const badgeStyle =
+                          googleApiKeyStatus === 'invalid' ? 'text-red-400 bg-red-900/20 border-red-900/50' :
+                          googleApiKeyStatus === 'validating' ? 'text-neutral-400 bg-neutral-900/40 border-neutral-800 animate-pulse' :
+                          'text-amber-400 bg-amber-900/20 border-amber-900/50';
+
                         return (
                           <div 
                             key={model.id} 
@@ -257,7 +266,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                               <div>
                                 <h4 className="font-bold text-white mb-1 flex items-center gap-2">
                                   {model.name}
-                                  {isDisabled && <span className="text-[10px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-900/50">API Key Required</span>}
+                                  {isDisabled && <span className={`text-[10px] px-1.5 py-0.5 rounded border ${badgeStyle}`}>{badgeText}</span>}
                                 </h4>
                                 <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                               </div>
@@ -292,7 +301,16 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
                       {openaiModels.map((model) => {
-                        const isDisabled = !hasOpenAIKey;
+                        const isDisabled = !isOpenAIActive;
+                        const badgeText = 
+                          openAIApiKeyStatus === 'validating' ? 'Validating Key...' :
+                          openAIApiKeyStatus === 'invalid' ? 'Invalid API Key' :
+                          'API Key Required';
+                        const badgeStyle =
+                          openAIApiKeyStatus === 'invalid' ? 'text-red-400 bg-red-900/20 border-red-900/50' :
+                          openAIApiKeyStatus === 'validating' ? 'text-neutral-400 bg-neutral-900/40 border-neutral-800 animate-pulse' :
+                          'text-amber-400 bg-amber-900/20 border-amber-900/50';
+
                         return (
                           <div 
                             key={model.id} 
@@ -306,7 +324,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                               <div>
                                 <h4 className="font-bold text-white mb-1 flex items-center gap-2">
                                   {model.name}
-                                  {isDisabled && <span className="text-[10px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-900/50">API Key Required</span>}
+                                  {isDisabled && <span className={`text-[10px] px-1.5 py-0.5 rounded border ${badgeStyle}`}>{badgeText}</span>}
                                 </h4>
                                 <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                               </div>
@@ -341,7 +359,16 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
                       {anthropicModels.map((model) => {
-                        const isDisabled = !hasAnthropicKey;
+                        const isDisabled = !isAnthropicActive;
+                        const badgeText = 
+                          anthropicApiKeyStatus === 'validating' ? 'Validating Key...' :
+                          anthropicApiKeyStatus === 'invalid' ? 'Invalid API Key' :
+                          'API Key Required';
+                        const badgeStyle =
+                          anthropicApiKeyStatus === 'invalid' ? 'text-red-400 bg-red-900/20 border-red-900/50' :
+                          anthropicApiKeyStatus === 'validating' ? 'text-neutral-400 bg-neutral-900/40 border-neutral-800 animate-pulse' :
+                          'text-amber-400 bg-amber-900/20 border-amber-900/50';
+
                         return (
                           <div 
                             key={model.id} 
@@ -355,7 +382,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                               <div>
                                 <h4 className="font-bold text-white mb-1 flex items-center gap-2">
                                   {model.name}
-                                  {isDisabled && <span className="text-[10px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-900/50">API Key Required</span>}
+                                  {isDisabled && <span className={`text-[10px] px-1.5 py-0.5 rounded border ${badgeStyle}`}>{badgeText}</span>}
                                 </h4>
                                 <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                               </div>

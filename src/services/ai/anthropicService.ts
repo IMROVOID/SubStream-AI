@@ -30,7 +30,7 @@ async function fetchAnthropic(
 
 export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> => {
   const trimmed = apiKey?.trim();
-  if (!trimmed || (!trimmed.startsWith('sk-ant-') && !trimmed.startsWith('sk-'))) return false;
+  if (!trimmed || (!trimmed.startsWith('sk-ant-') && !trimmed.startsWith('sk-')) || trimmed.length < 20) return false;
 
   try {
     const response = await fetchAnthropic('/models', {
@@ -43,7 +43,12 @@ export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> 
     });
 
     if (response.ok) return true;
-    if (response.status === 401) return false;
+    if (response.status === 401 || response.status === 403) {
+      const errData = await response.json().catch(() => ({}));
+      if (errData?.error?.type === 'authentication_error' || response.status === 401) {
+        return false;
+      }
+    }
 
     const msgResponse = await fetchAnthropic('/messages', {
       method: 'POST',
@@ -61,7 +66,12 @@ export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> 
     });
 
     if (msgResponse.ok) return true;
-    if (msgResponse.status === 401) return false;
+    if (msgResponse.status === 401 || msgResponse.status === 403) {
+      const errData = await msgResponse.json().catch(() => ({}));
+      if (errData?.error?.type === 'authentication_error' || msgResponse.status === 401) {
+        return false;
+      }
+    }
     return trimmed.length > 20;
   } catch (error) {
     // Fallback to length check if network/proxy is offline or unreachable

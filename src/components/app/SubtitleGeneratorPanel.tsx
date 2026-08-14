@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Languages, ArrowRight, Download, Loader2, Zap } from 'lucide-react';
 import { Button } from '../common/Button';
+import { ComboBox } from '../common/ComboBox';
 import { LANGUAGES } from '../../constants/languages';
 import { AIModel, TranslationStatus } from '../../types';
 
@@ -43,6 +44,25 @@ export const SubtitleGeneratorPanel: React.FC<SubtitleGeneratorPanelProps> = ({
 }) => {
   const availableCaptions = youtubeMeta?.availableCaptions || [];
 
+  const captionOptions = useMemo(() => {
+    if (availableCaptions.length === 0) {
+      return [{ value: '', label: 'No captions available for this video', disabled: true }];
+    }
+    return availableCaptions.map((caption: any) => ({
+      value: caption.id,
+      label: caption.name || caption.language
+    }));
+  }, [availableCaptions]);
+
+  const sourceOptions = useMemo(() => [
+    { value: 'auto', label: '✨ Auto Detect' },
+    ...LANGUAGES.map(l => ({ value: l.name, label: l.name }))
+  ], []);
+
+  const targetOptions = useMemo(() => [
+    ...LANGUAGES.map(l => ({ value: l.name, label: l.name }))
+  ], []);
+
   React.useEffect(() => {
     if (isYouTubeWorkflow && youtubeMeta && availableCaptions.length > 0 && !selectedCaptionId) {
       const defaultCaption = availableCaptions.find((c: any) => 
@@ -60,24 +80,13 @@ export const SubtitleGeneratorPanel: React.FC<SubtitleGeneratorPanelProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
         <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
           <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Target Language</label>
-          <div className="relative">
-            <select
-              className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors"
-              onChange={(e) => setSelectedCaptionId(e.target.value)}
-              value={selectedCaptionId}
-              disabled={videoProcessingStatus === 'EXTRACTING_SUBTITLES'}
-            >
-              {availableCaptions.length === 0 && (
-                <option value="">No captions available for this video</option>
-              )}
-              {availableCaptions.map((caption: any) => (
-                <option key={caption.id} value={caption.id}>
-                  {caption.name || caption.language}
-                </option>
-              ))}
-            </select>
-            <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-          </div>
+          <ComboBox
+            options={captionOptions}
+            value={selectedCaptionId}
+            onChange={setSelectedCaptionId}
+            disabled={videoProcessingStatus === 'EXTRACTING_SUBTITLES'}
+            icon={<Languages className="w-4 h-4 text-neutral-500" />}
+          />
         </div>
         <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20 flex flex-col justify-end">
           <div className="h-full flex items-end">
@@ -119,31 +128,22 @@ export const SubtitleGeneratorPanel: React.FC<SubtitleGeneratorPanelProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20">
               <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Source Language</label>
-              <div className="relative">
-                <select 
-                  className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" 
-                  value={sourceLang} 
-                  onChange={(e) => setSourceLang(e.target.value)}
-                >
-                  <option value="auto">✨ Auto Detect</option>
-                  {LANGUAGES.map(l => <option key={`source-${l.code}`} value={l.name}>{l.name}</option>)}
-                </select>
-                <Languages className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-              </div>
+              <ComboBox
+                options={sourceOptions}
+                value={sourceLang}
+                onChange={setSourceLang}
+                icon={<Languages className="w-4 h-4 text-neutral-500" />}
+              />
             </div>
 
             <div className="p-6 rounded-2xl border border-neutral-800 bg-neutral-900/20 flex flex-col justify-end">
               <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Target Language</label>
-              <div className="relative">
-                <select 
-                  className="w-full appearance-none bg-black border border-neutral-800 text-white px-4 py-3 rounded-xl focus:border-white focus:outline-none transition-colors" 
-                  value={targetLang} 
-                  onChange={(e) => setTargetLang(e.target.value)}
-                >
-                  {LANGUAGES.map(l => <option key={`target-${l.code}`} value={l.name}>{l.name}</option>)}
-                </select>
-                <ArrowRight className="absolute right-4 top-3.5 w-5 h-5 text-neutral-600 pointer-events-none" />
-              </div>
+              <ComboBox
+                options={targetOptions}
+                value={targetLang}
+                onChange={setTargetLang}
+                icon={<ArrowRight className="w-4 h-4 text-neutral-500" />}
+              />
             </div>
           </div>
 

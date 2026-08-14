@@ -46,11 +46,11 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                 : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-600'
             }`}
           >
-            <div className="text-xs text-right max-w-[110px] md:max-w-none leading-tight">
-              <div className="font-bold text-white">
+            <div className="text-xs text-right max-w-[125px] sm:max-w-[200px] md:max-w-none leading-tight min-w-0">
+              <div className="font-bold text-white truncate whitespace-nowrap">
                 {activeModelData ? activeModelData.name : 'No Method Selected'}
               </div>
-              <div className={`text-[10px] uppercase ${
+              <div className={`text-[10px] uppercase truncate whitespace-nowrap ${
                 !activeModelData 
                   ? 'text-amber-400 font-semibold' 
                   : hasProAccess 

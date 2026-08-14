@@ -1,16 +1,33 @@
 import { AIModel } from '../../types';
 import { isMainTextModel, deduplicateToMainModels, sortModelsNewestFirst } from './openRouterModelFetcher';
 
-export async function fetchFromLiteLLM(): Promise<AIModel[]> {
-  const response = await fetch(
-    'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
-  );
+const BACKEND_LITELLM_PROXY = 'http://localhost:4000/api/proxy/ai/litellm/model_prices_and_context_window.json';
 
-  if (!response.ok) {
-    throw new Error(`LiteLLM returned status ${response.status}`);
+export async function fetchFromLiteLLM(): Promise<AIModel[]> {
+  let data: Record<string, any>;
+
+  try {
+    const response = await fetch(
+      'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
+    );
+    if (!response.ok) {
+      throw new Error(`LiteLLM returned status ${response.status}`);
+    }
+    data = await response.json();
+  } catch (directErr: any) {
+    console.warn('[LiteLLM] Direct fetch failed, trying backend AI proxy...', directErr?.message);
+    try {
+      const proxyRes = await fetch(BACKEND_LITELLM_PROXY);
+      if (!proxyRes.ok) {
+        throw new Error(`Backend LiteLLM proxy returned status ${proxyRes.status}`);
+      }
+      data = await proxyRes.json();
+    } catch (proxyErr: any) {
+      console.warn('[LiteLLM] Backend proxy also failed:', proxyErr?.message);
+      throw directErr;
+    }
   }
 
-  const data: Record<string, any> = await response.json();
   const modelsList: AIModel[] = [];
 
   for (const [rawId, info] of Object.entries(data)) {
