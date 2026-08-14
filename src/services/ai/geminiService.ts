@@ -120,41 +120,13 @@ export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => 
   const trimmed = apiKey?.trim();
   if (!trimmed || !trimmed.startsWith('AIzaSy') || trimmed.length < 30) return false;
 
-  const modelsToTry = [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-1.5-pro'
-  ];
-
   await enforceRateLimit();
 
-  // 1. Try direct SDK countTokens
+  // 1. Try direct SDK models.list()
   try {
     const ai = new GoogleGenAI({ apiKey: trimmed });
-    for (const model of modelsToTry) {
-      try {
-        await ai.models.countTokens({ model, contents: [{ role: "user", parts: [{ text: "test" }] }] });
-        return true;
-      } catch (modelErr: any) {
-        const status = modelErr?.status || modelErr?.response?.status;
-        const msg = modelErr?.message || '';
-        const isAuthError = status === 400 || status === 401 || status === 403 ||
-          msg.includes('API_KEY_INVALID') || msg.includes('API key not valid') ||
-          msg.includes('PERMISSION_DENIED') || msg.includes('UNAUTHENTICATED');
-        if (isAuthError) {
-          return false;
-        }
-        const isNotFound = status === 404 || status === 'NOT_FOUND' || msg.includes('NOT_FOUND') || msg.includes('not found');
-        if (isNotFound) {
-          continue;
-        }
-        // If network/SSL error, rethrow to try proxy
-        throw modelErr;
-      }
-    }
+    await ai.models.list();
+    return true;
   } catch (directErr: any) {
     const status = directErr?.status || directErr?.response?.status;
     const msg = directErr?.message || '';
@@ -164,35 +136,26 @@ export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => 
     if (isAuthError) {
       return false;
     }
-  }
 
-  // 2. Try backend proxy if direct browser request failed (e.g. SSL/Network intercept)
-  try {
-    for (const model of modelsToTry) {
-      const proxyRes = await fetch(`${BACKEND_GOOGLE_PROXY}/models/${model}:countTokens?key=${encodeURIComponent(trimmed)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "test" }] }] })
+    // 2. Try backend proxy if direct browser request failed (e.g. SSL/Network intercept/CORS)
+    try {
+      const proxyRes = await fetch(`${BACKEND_GOOGLE_PROXY}/models?key=${encodeURIComponent(trimmed)}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (proxyRes.ok) return true;
       if (proxyRes.status === 400 || proxyRes.status === 401 || proxyRes.status === 403) {
-        const errJson = await proxyRes.json().catch(() => ({}));
-        const errMsg = JSON.stringify(errJson);
-        if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('API key not valid') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('UNAUTHENTICATED')) {
-          return false;
-        }
+        return false;
       }
-      if (proxyRes.status === 404) {
-        continue;
-      }
+    } catch (proxyErr) {
+      console.warn("[Google] Validation failed on both direct and backend proxy:", proxyErr);
+      // ponytail: Fallback to format check ONLY if completely offline/unreachable network error
+      return /^AIzaSy[A-Za-z0-9_-]{30,}$/.test(trimmed);
     }
-  } catch (proxyErr) {
-    console.warn("[Google] Validation failed on both direct and backend proxy:", proxyErr);
-  }
 
-  // 3. Fallback to format check if offline/unreachable
-  return /^AIzaSy[A-Za-z0-9_-]{30,}$/.test(trimmed);
+    return false;
+  }
 };
 
 async function executeGoogleGenerateContent(

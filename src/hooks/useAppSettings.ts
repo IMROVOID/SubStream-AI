@@ -212,6 +212,7 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
     if (storedGoogleKey) {
       setUserGoogleApiKey(storedGoogleKey);
       setTempGoogleApiKey(storedGoogleKey);
+      setGoogleApiKeyStatus('validating');
       validateGoogleApiKey(storedGoogleKey).then(isValid => {
         setGoogleApiKeyStatus(isValid ? 'valid' : 'invalid');
         if (!isValid) setUserGoogleApiKey('');
@@ -223,6 +224,7 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
     if (storedOpenAIKey) {
       setUserOpenAIApiKey(storedOpenAIKey);
       setTempOpenAIApiKey(storedOpenAIKey);
+      setOpenAIApiKeyStatus('validating');
       validateOpenAIApiKey(storedOpenAIKey).then(isValid => {
         setOpenAIApiKeyStatus(isValid ? 'valid' : 'invalid');
         if (!isValid) setUserOpenAIApiKey('');
@@ -234,6 +236,7 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
     if (storedAnthropicKey) {
       setUserAnthropicApiKey(storedAnthropicKey);
       setTempAnthropicApiKey(storedAnthropicKey);
+      setAnthropicApiKeyStatus('validating');
       validateAnthropicApiKey(storedAnthropicKey).then(isValid => {
         setAnthropicApiKeyStatus(isValid ? 'valid' : 'invalid');
         if (!isValid) setUserAnthropicApiKey('');
@@ -357,7 +360,7 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
       setGoogleApiKeyStatus('idle');
       return;
     }
-    if (tempGoogleApiKey === userGoogleApiKey && googleApiKeyStatus === 'valid') {
+    if (tempGoogleApiKey === userGoogleApiKey) {
       return;
     }
     setGoogleApiKeyStatus('validating');
@@ -381,7 +384,7 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
       setOpenAIApiKeyStatus('idle');
       return;
     }
-    if (tempOpenAIApiKey === userOpenAIApiKey && openAIApiKeyStatus === 'valid') {
+    if (tempOpenAIApiKey === userOpenAIApiKey) {
       return;
     }
     setOpenAIApiKeyStatus('validating');
@@ -405,7 +408,7 @@ export function useAppSettings({ showToast, onOpenConfigModal }: UseAppSettingsP
       setAnthropicApiKeyStatus('idle');
       return;
     }
-    if (tempAnthropicApiKey === userAnthropicApiKey && anthropicApiKeyStatus === 'valid') {
+    if (tempAnthropicApiKey === userAnthropicApiKey) {
       return;
     }
     setAnthropicApiKeyStatus('validating');
