@@ -1,58 +1,22 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { HardDrive, Search, ArrowLeft, Folder, FileVideo, FileText, ChevronRight, ChevronLeft, ChevronDown, Download, Loader2, LogOut, LayoutGrid, AlertCircle, Clock, Database, Calendar, RefreshCw, Film, Captions, Menu, X, Grid, List, LayoutList, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
-import { Modal } from './Modal';
-import { Button } from './Button';
-import { DriveFile } from '../types';
-import { listDriveFiles, downloadDriveFile } from '../services/googleDriveService';
-import { getAuthItem, setAuthItem, removeAuthItem } from '../utils/cookieUtils';
+import { Modal } from '../common/Modal';
+import { Button } from '../common/Button';
+import { DriveFile } from '../../types';
+import { listDriveFiles, downloadDriveFile } from '../../services/googleDriveService';
+import { getAuthItem, setAuthItem, removeAuthItem } from '../../utils/cookieUtils';
 
 interface CloudImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportFile: (file: File) => void;
+  hasMethodSelected?: boolean;
+  onRequireMethod?: () => void;
 }
 
 type Step = 'PROVIDERS' | 'AUTH_GDRIVE' | 'EXPLORER';
 type ViewMode = 'GRID' | 'LARGE_GRID' | 'CARDS' | 'LIST';
-
-interface DriveThumbnailProps {
-    file: DriveFile;
-    className?: string;
-    iconClassName?: string;
-}
-
-const DriveThumbnail: React.FC<DriveThumbnailProps> = ({ file, className, iconClassName }) => {
-    const [imgError, setImgError] = useState(false);
-    const isFolder = file.mimeType === 'application/vnd.google-apps.folder';
-
-    if (isFolder || !file.thumbnailLink || imgError) {
-        return (
-            <div className="text-neutral-500 flex items-center justify-center">
-                {isFolder ? (
-                    <Folder className={iconClassName || "w-7 h-7 text-neutral-300"} />
-                ) : file.mimeType.includes('video') ? (
-                    <FileVideo className={iconClassName || "w-7 h-7 text-red-400"} />
-                ) : (
-                    <FileText className={iconClassName || "w-7 h-7 text-blue-400"} />
-                )}
-            </div>
-        );
-    }
-
-    // Replace size thumbnail query to higher res or fallback cleanly
-    const thumbUrl = file.thumbnailLink.replace(/=s\d+$/, '=s400');
-
-    return (
-        <img
-            src={thumbUrl}
-            className={className || "w-full h-full object-cover opacity-80 group-hover:opacity-100"}
-            alt=""
-            referrerPolicy="no-referrer"
-            crossOrigin="anonymous"
-            onError={() => setImgError(true)}
-        />
-    );
-};
+import { DriveThumbnail } from './CloudImportModal/DriveThumbnail';
 
 // --- SVG ICONS ---
 const GoogleDriveIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -169,7 +133,13 @@ const FolderTreeItem: React.FC<{
     );
 };
 
-export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onClose, onImportFile }) => {
+export const CloudImportModal: React.FC<CloudImportModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  onImportFile,
+  hasMethodSelected = true,
+  onRequireMethod
+}) => {
   const [step, setStep] = useState<Step>('PROVIDERS');
   const [provider, setProvider] = useState<'GDRIVE' | 'MEGA' | 'DROPBOX' | null>(null);
   
@@ -332,13 +302,19 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
           const now = Date.now();
           const age = now - parseInt(storedExpiry, 10);
           
-          if (age < 30 * 24 * 60 * 60 * 1000) {
+          // Google OAuth access tokens expire after 1 hour (3600s). Check 50 minutes max age.
+          if (age < 50 * 60 * 1000) {
               setAccessToken(storedToken);
-              fetchDriveProfile(storedToken);
+              setStep('EXPLORER');
           } else {
               removeAuthItem('substream_drive_token');
               removeAuthItem('substream_drive_token_timestamp');
+              removeAuthItem('substream_drive_user');
+              setAccessToken(null);
+              setStep('AUTH_GDRIVE');
           }
+      } else {
+          setStep('AUTH_GDRIVE');
       }
   }, []);
 
@@ -419,16 +395,23 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
             })
             .catch(err => {
                 if (!isCancelled) {
-                    console.error("List Error:", err);
-                    let msg = err.message || "Failed to load files";
-                    if (typeof msg === 'object') msg = JSON.stringify(msg);
-                    
-                    if (msg.includes("403")) msg = "Access Denied: Please enable 'Google Drive API' in your Google Cloud Console.";
-                    if (msg.includes("socket disconnected") || msg.includes("500")) msg = "Connection Error: Server could not connect to Google Drive. Please retry.";
-                    if (msg.includes("400")) msg = "Invalid Request: Malformed query or missing permissions.";
-                    if (msg.includes("timeout")) msg = "Connection Timed Out: Google Drive is taking too long to respond. Please retry.";
-                    
-                    setError(msg);
+                    let rawMsg = typeof err === 'string' ? err : (err?.message || "");
+                    if (typeof rawMsg === 'object') rawMsg = JSON.stringify(rawMsg);
+
+                    const isAuthError = 
+                        rawMsg.includes("AUTH_EXPIRED") || 
+                        rawMsg.includes("401") || 
+                        rawMsg.includes("invalid authentication credentials") || 
+                        rawMsg.includes("UNAUTHENTICATED") || 
+                        rawMsg.includes("OAuth 2 access token");
+
+                    if (isAuthError) {
+                        setError("Your Google Drive session has expired or is unauthorized. Please reconnect your account.");
+                    } else if (rawMsg.includes("ACCESS_DENIED") || rawMsg.includes("403")) {
+                        setError("Access Denied: Google Drive permissions missing. Please verify your account access.");
+                    } else {
+                        setError("Connection Error: Unable to fetch Google Drive files. Please try again.");
+                    }
                 }
             })
             .finally(() => {
@@ -448,6 +431,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
         const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
             headers: { Authorization: `Bearer ${token}` }
         });
+        if (!res.ok) return;
         const data = await res.json();
         setUserInfo(data);
 
@@ -455,7 +439,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
             setUserProfileBlob(data.picture);
         }
 
-      } catch (e) { console.error("Profile fetch failed", e); }
+      } catch {}
   };
 
   const handleDriveLogin = () => {
@@ -508,6 +492,12 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
 
   const handleImport = async () => {
       if (!selectedFile || !accessToken) return;
+
+      if (!hasMethodSelected) {
+          onRequireMethod?.();
+          onClose();
+          return;
+      }
 
       setIsImporting(true);
       setImportProgress(10); 
@@ -1025,12 +1015,19 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                         <div className="h-full flex flex-col items-center justify-center text-red-400 gap-4 text-center px-8">
                                             <AlertCircle className="w-12 h-12 opacity-50" />
                                             <div className="space-y-1">
-                                                <h3 className="font-bold text-lg">Connection Error</h3>
-                                                <p className="text-sm text-neutral-400">{error}</p>
+                                                <h3 className="font-bold text-lg text-white">Connection Error</h3>
+                                                <p className="text-sm text-neutral-400 max-w-md">{error}</p>
                                             </div>
-                                            <Button variant="outline" onClick={handleRefresh} icon={<RefreshCw className="w-4 h-4"/>}>
-                                                Try Again
-                                            </Button>
+                                            <div className="flex items-center gap-3">
+                                                {(error.includes("expired") || error.includes("unauthorized") || error.includes("reconnect") || error.includes("Denied")) && (
+                                                    <Button onClick={handleDriveLogin} className="px-5 py-2 text-xs">
+                                                        Reconnect Google Drive
+                                                    </Button>
+                                                )}
+                                                <Button variant="outline" onClick={handleRefresh} icon={<RefreshCw className="w-4 h-4"/>}>
+                                                    Try Again
+                                                </Button>
+                                            </div>
                                         </div>
                                     ) : sortedFiles.length === 0 ? (
                                         <div className="h-full flex flex-col items-center justify-center text-neutral-500 gap-3 opacity-50">
@@ -1202,7 +1199,7 @@ export const CloudImportModal: React.FC<CloudImportModalProps> = ({ isOpen, onCl
                                             <Button 
                                                 onClick={handleImport}
                                                 disabled={isImporting}
-                                                className="w-full mt-auto md:mt-0 !w-full"
+                                                className="w-full max-w-full mt-auto md:mt-0 !w-full"
                                                 progress={isImporting ? importProgress : undefined}
                                                 statusText={isImporting ? "Downloading..." : ""}
                                             >

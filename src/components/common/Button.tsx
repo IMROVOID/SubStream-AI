@@ -35,22 +35,24 @@ export const Button: React.FC<ButtonProps> = ({
     <button 
       className={`
         ${baseStyles} 
-        ${isProgressActive ? 'bg-neutral-800 border-neutral-700 text-white w-64 md:w-80' : variants[variant]} 
-        ${isProgressActive ? '!px-0 !py-0' : ''}
-        ${className}
+        ${isProgressActive 
+          ? (completed 
+              ? `!bg-transparent !border-0 !shadow-none !text-white !px-3 !py-2 ${className}` 
+              : `!bg-neutral-800 !border !border-neutral-700 !text-white w-64 md:w-80 max-w-full !px-0 !py-0 shadow-lg shadow-black/40 ${className}`)
+          : `${variants[variant]} ${className}`}
       `} 
       disabled={disabled || isProgressActive}
       {...props}
     >
       {isProgressActive ? (
-        <div className="relative w-full h-12 flex items-center justify-center px-4">
+        <div className={`relative flex items-center justify-center ${completed ? 'h-auto w-auto px-1' : 'w-full h-12 px-4'}`}>
            
            {/* Content Layer (Status + Percentage or Done) */}
            <div className="relative z-10 flex items-center gap-2 animate-fade-in w-full justify-center">
               {completed ? (
                  <>
-                   <Check className="w-5 h-5 text-green-400" />
-                   <span className="text-green-400 font-bold">Download Complete</span>
+                   <Check className="w-4 h-4 text-green-400" />
+                   <span className="text-green-400 font-semibold text-[0.8rem]">Download Complete</span>
                  </>
               ) : (
                  <div className="flex items-center justify-center gap-2 min-w-0">

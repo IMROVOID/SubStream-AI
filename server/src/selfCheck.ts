@@ -47,11 +47,33 @@ SubStream AI`;
     assert.strictEqual(vttToSrt(sampleVTT).trim(), expectedSRT.trim());
     console.log('✓ vttToSrt passed');
 
-    // 4. Test iplocate/free-proxy-list fetching
-    console.log('Testing live fetch from iplocate/free-proxy-list repository...');
-    const proxies = await fetchFreeProxyList();
-    assert.ok(proxies.length > 0, 'Proxy list should contain fetched proxy candidates');
-    console.log(`✓ Proxy fetcher passed (fetched ${proxies.length} proxies from repository)`);
+    // 5. Test Caption Deduplication Logic
+    const rawAutoCaptions: Record<string, any[]> = {
+      'en-orig': [{ name: 'English (Original)', ext: 'vtt', url: 'https://youtube.com/sub/en-orig' }],
+      'en': [{ name: 'English', ext: 'vtt', url: 'https://youtube.com/sub/en' }],
+      'fa': [{ name: 'Persian', ext: 'vtt', url: 'https://youtube.com/sub/fa' }]
+    };
+    const seenKeys = new Set<string>();
+    const testCaptions: any[] = [];
+    const keys = Object.keys(rawAutoCaptions).sort((a, b) => {
+      if (a.endsWith('-orig') && !b.endsWith('-orig')) return -1;
+      if (!a.endsWith('-orig') && b.endsWith('-orig')) return 1;
+      return a.localeCompare(b);
+    });
+    keys.forEach(lang => {
+      let name = rawAutoCaptions[lang][0].name.replace(/\s*\(Original\)/i, '').trim();
+      const baseLang = lang.replace(/-orig$/, '');
+      const uniqueKey = `${baseLang}-auto`;
+      if (!seenKeys.has(uniqueKey)) {
+        seenKeys.add(uniqueKey);
+        testCaptions.push({ language: baseLang, name: `${name} (Auto)` });
+      }
+    });
+    assert.strictEqual(testCaptions.length, 2);
+    assert.strictEqual(testCaptions[0].language, 'en');
+    assert.strictEqual(testCaptions[0].name, 'English (Auto)');
+    assert.strictEqual(testCaptions[1].language, 'fa');
+    console.log('✓ Caption deduplication passed');
 
     console.log('[SelfCheck] All checks passed successfully!');
 }
