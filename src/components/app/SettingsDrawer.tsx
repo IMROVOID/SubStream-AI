@@ -37,6 +37,7 @@ interface SettingsDrawerProps {
   openGroups: Record<string, boolean>;
   toggleGroup: (group: string) => void;
   googleUser: any;
+  googleAccessToken?: string | null;
   onGoogleLoginSuccess: (res: any) => void;
   onGoogleLogout: () => void;
   userGoogleApiKey: string;
@@ -81,6 +82,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   openGroups,
   toggleGroup,
   googleUser,
+  googleAccessToken,
   onGoogleLoginSuccess,
   onGoogleLogout,
   userGoogleApiKey,
@@ -623,7 +625,8 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             <YouTubeAuth 
               onLoginSuccess={onGoogleLoginSuccess} 
               onLogout={onGoogleLogout} 
-              userInfo={googleUser} 
+              userInfo={googleUser}
+              activeToken={googleAccessToken}
             />
             <Button 
               onClick={handleSaveKeys} 

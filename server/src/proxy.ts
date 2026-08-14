@@ -1,3 +1,4 @@
+import https from 'https';
 import net from 'net';
 import { execSync } from 'child_process';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
@@ -125,6 +126,8 @@ export const getSystemProxy = async (): Promise<string | null> => {
     return pool[proxyPoolIndex % pool.length];
 };
 
+const defaultHttpsAgent = new https.Agent({ rejectUnauthorized: false });
+
 export const directAxiosClient = axios.create({
     timeout: 60000,
     headers: { 
@@ -133,6 +136,7 @@ export const directAxiosClient = axios.create({
     },
     maxBodyLength: Infinity, 
     maxContentLength: Infinity,
+    httpsAgent: defaultHttpsAgent,
     proxy: false
 });
 
@@ -149,14 +153,19 @@ export const createAxiosClient = (proxyUrl: string | null) => {
 
     if (proxyUrl) {
         try {
-            const agent = new HttpsProxyAgent(proxyUrl);
+            const agent = new HttpsProxyAgent(proxyUrl, {
+                rejectUnauthorized: false
+            });
             config.httpsAgent = agent;
             config.httpAgent = agent;
             config.proxy = false; 
         } catch (e: any) {
             console.warn("[Server] Invalid Proxy URL format. Falling back to direct.", e?.message);
+            config.httpsAgent = defaultHttpsAgent;
+            config.proxy = false;
         }
     } else {
+        config.httpsAgent = defaultHttpsAgent;
         config.proxy = false; 
     }
 
@@ -188,31 +197,45 @@ export const makeRequestWithRetry = async (config: AxiosRequestConfig, retries =
         return await client(config);
     } catch (error: any) {
         const status = error?.response?.status;
-        const isProxyError = error.code === 'ECONNREFUSED' || 
-                             error.code === 'ENOTFOUND' || 
-                             (error.message && (error.message.includes('ECONNREFUSED') || error.message.includes('Unable to connect to proxy')));
+        const msg = (error?.message || '').toLowerCase();
+        const code = error?.code || '';
 
-        // ponytail: Automatically rotate proxy if proxy connection drops OR if target returns rate limit (429/403)
-        const isProxyBlocked = isProxyError || status === 429 || status === 403;
+        const isProxyOrCertError = 
+            code === 'ECONNREFUSED' || 
+            code === 'ENOTFOUND' || 
+            code === 'ECONNRESET' ||
+            code === 'ETIMEDOUT' ||
+            code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+            code === 'CERT_HAS_EXPIRED' ||
+            code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+            code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+            code === 'CERT_COMMON_NAME_INVALID' ||
+            msg.includes('econnrefused') || 
+            msg.includes('unable to connect to proxy') ||
+            msg.includes('certificate') ||
+            msg.includes('tls') ||
+            msg.includes('ssl');
 
-        if (isProxyBlocked && retries > 0 && currentProxyUrl) {
-            console.warn(`[Proxy] Request on '${currentProxyUrl}' failed (${status ? `HTTP ${status}` : error.message || error.code}). Rotating proxy...`);
+        const isBlockedOrRateLimited = isProxyOrCertError || status === 429 || status === 403;
+
+        if (isBlockedOrRateLimited && retries > 0) {
+            console.warn(`[Proxy] Request ${currentProxyUrl ? `on '${currentProxyUrl}'` : 'direct'} failed (${status ? `HTTP ${status}` : error.message || code}). Rotating proxy...`);
             const nextProxy = await rotateProxy();
-            if (nextProxy && nextProxy !== currentProxyUrl) {
+            if (nextProxy) {
                 return makeRequestWithRetry(config, retries - 1);
             }
         }
 
         const isNetworkError = !error.response && (
-            error.code === 'ECONNRESET' || 
-            error.code === 'ETIMEDOUT' || 
-            error.code === 'ERR_BAD_RESPONSE' ||
-            (error.message && error.message.includes('socket disconnected')) ||
-            (error.message && error.message.includes('timeout'))
+            code === 'ECONNRESET' || 
+            code === 'ETIMEDOUT' || 
+            code === 'ERR_BAD_RESPONSE' ||
+            msg.includes('socket disconnected') ||
+            msg.includes('timeout')
         );
         
         if (isNetworkError && retries > 0) {
-            console.log(`[Proxy] Network error (${error.message || error.code}). Retrying... (${retries} left)`);
+            console.log(`[Proxy] Network error (${error.message || code}). Retrying... (${retries} left)`);
             await new Promise(r => setTimeout(r, 1000));
             return makeRequestWithRetry(config, retries - 1);
         }

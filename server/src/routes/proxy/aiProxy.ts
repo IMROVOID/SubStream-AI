@@ -16,9 +16,9 @@ const extractHeaders = (req: Request, allowedHeaderNames: string[]): Record<stri
 };
 
 // Generic forwarder for OpenAI
-aiProxyRouter.all('/openai/*', async (req: Request, res: Response) => {
+aiProxyRouter.all(['/openai', '/openai/*'], async (req: Request, res: Response) => {
   const rawPath = req.originalUrl.split('?')[0];
-  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/openai/, '');
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/openai/, '') || '';
   const targetUrl = `https://api.openai.com${subPath}`;
 
   const headers = extractHeaders(req, [
@@ -55,9 +55,9 @@ aiProxyRouter.all('/openai/*', async (req: Request, res: Response) => {
 });
 
 // Generic forwarder for Anthropic
-aiProxyRouter.all('/anthropic/*', async (req: Request, res: Response) => {
+aiProxyRouter.all(['/anthropic', '/anthropic/*'], async (req: Request, res: Response) => {
   const rawPath = req.originalUrl.split('?')[0];
-  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/anthropic/, '');
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/anthropic/, '') || '';
   const targetUrl = `https://api.anthropic.com${subPath}`;
 
   const headers = extractHeaders(req, [
@@ -101,9 +101,9 @@ aiProxyRouter.all('/anthropic/*', async (req: Request, res: Response) => {
 });
 
 // Generic forwarder for Google Generative AI
-aiProxyRouter.all('/google/*', async (req: Request, res: Response) => {
+aiProxyRouter.all(['/google', '/google/*'], async (req: Request, res: Response) => {
   const rawPath = req.originalUrl.split('?')[0];
-  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/google/, '');
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/google/, '') || '';
   const targetUrl = `https://generativelanguage.googleapis.com${subPath}`;
 
   const headers = extractHeaders(req, [
@@ -140,9 +140,9 @@ aiProxyRouter.all('/google/*', async (req: Request, res: Response) => {
 });
 
 // Generic forwarder for OpenRouter
-aiProxyRouter.all('/openrouter/*', async (req: Request, res: Response) => {
+aiProxyRouter.all(['/openrouter', '/openrouter/*'], async (req: Request, res: Response) => {
   const rawPath = req.originalUrl.split('?')[0];
-  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/openrouter/, '');
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/openrouter/, '') || '';
   const targetUrl = `https://openrouter.ai${subPath}`;
 
   const headers = extractHeaders(req, [
@@ -180,9 +180,9 @@ aiProxyRouter.all('/openrouter/*', async (req: Request, res: Response) => {
 });
 
 // Generic forwarder for LiteLLM
-aiProxyRouter.all('/litellm/*', async (req: Request, res: Response) => {
+aiProxyRouter.all(['/litellm', '/litellm/*'], async (req: Request, res: Response) => {
   const rawPath = req.originalUrl.split('?')[0];
-  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/litellm/, '');
+  const subPath = rawPath.replace(/^\/api\/proxy\/ai\/litellm/, '') || '';
   const targetUrl = `https://raw.githubusercontent.com/BerriAI/litellm/main${subPath || '/model_prices_and_context_window.json'}`;
 
   const headers = extractHeaders(req, [

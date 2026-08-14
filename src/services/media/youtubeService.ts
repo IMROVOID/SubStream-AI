@@ -1,5 +1,7 @@
 import { YouTubeVideoMetadata, YouTubeCaptionTrack, YouTubeUserVideo } from "../../types";
 import { downloadFile, normalizeResolutions } from "../../utils/srtUtils";
+import { requestGoogleAccessToken, YOUTUBE_SCOPE } from "../../utils/googleAuthHelper";
+import { setAuthItem } from "../../utils/cookieUtils";
 
 const BACKEND_URL = "http://localhost:4000/api";
 
@@ -90,7 +92,38 @@ export async function downloadYouTubeVideoWithSubs(videoUrl: string, trackToken:
   }
 }
 
-export async function fetchUserVideos(accessToken: string): Promise<YouTubeUserVideo[]> {
+/**
+ * Silently refreshes the YouTube access token using GIS.
+ */
+export async function refreshYouTubeAccessToken(): Promise<string> {
+  const freshToken = await requestGoogleAccessToken({
+    scope: YOUTUBE_SCOPE,
+    prompt: '' // Silent background renewal
+  });
+  setAuthItem('substream_google_token', freshToken, 1);
+  setAuthItem('substream_google_token_timestamp', Date.now().toString(), 30);
+  setAuthItem('substream_google_session', 'active', 30);
+  return freshToken;
+}
+
+export async function fetchUserVideos(accessToken: string, onTokenRefreshed?: (token: string) => void): Promise<YouTubeUserVideo[]> {
+  try {
+    return await executeFetchUserVideos(accessToken);
+  } catch (err: any) {
+    if (err?.message?.includes("Session expired") || err?.message?.includes("401")) {
+      try {
+        const freshToken = await refreshYouTubeAccessToken();
+        onTokenRefreshed?.(freshToken);
+        return await executeFetchUserVideos(freshToken);
+      } catch {
+        throw new Error("Session expired. Please re-authenticate YouTube.");
+      }
+    }
+    throw err;
+  }
+}
+
+async function executeFetchUserVideos(accessToken: string): Promise<YouTubeUserVideo[]> {
   const channelResp = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', {
     headers: { 'Authorization': `Bearer ${accessToken}` }
   });
@@ -152,7 +185,35 @@ function formatDuration(isoDuration: string): string {
   return `${h}${m}${s}`.replace(/^00:/, ''); 
 }
 
-export async function uploadVideoToYouTube(accessToken: string, videoFile: File, title: string, onProgress?: (percent: number) => void): Promise<string> {
+export async function uploadVideoToYouTube(
+  accessToken: string, 
+  videoFile: File, 
+  title: string, 
+  onProgress?: (percent: number) => void,
+  onTokenRefreshed?: (token: string) => void
+): Promise<string> {
+  try {
+    return await executeUploadVideoToYouTube(accessToken, videoFile, title, onProgress);
+  } catch (err: any) {
+    if (err?.message?.includes("Session Expired") || err?.message?.includes("401")) {
+      try {
+        const freshToken = await refreshYouTubeAccessToken();
+        onTokenRefreshed?.(freshToken);
+        return await executeUploadVideoToYouTube(freshToken, videoFile, title, onProgress);
+      } catch {
+        throw new Error("Session Expired. Please re-authenticate YouTube.");
+      }
+    }
+    throw err;
+  }
+}
+
+async function executeUploadVideoToYouTube(
+  accessToken: string, 
+  videoFile: File, 
+  title: string, 
+  onProgress?: (percent: number) => void
+): Promise<string> {
   const metadata = {
     snippet: {
       title: title,
@@ -231,9 +292,15 @@ export async function uploadVideoToYouTube(accessToken: string, videoFile: File,
   });
 }
 
-export async function pollForCaptionReady(accessToken: string, videoId: string, onProgress?: (msg: string, percent: number) => void): Promise<boolean> {
+export async function pollForCaptionReady(
+  accessToken: string, 
+  videoId: string, 
+  onProgress?: (msg: string, percent: number) => void,
+  onTokenRefreshed?: (newToken: string) => void
+): Promise<boolean> {
   const MAX_ATTEMPTS = 120;
   const INTERVAL_MS = 10000;
+  let currentToken = accessToken;
 
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const percent = Math.round((i / MAX_ATTEMPTS) * 100);
@@ -241,13 +308,22 @@ export async function pollForCaptionReady(accessToken: string, videoId: string, 
     try {
       if (onProgress) onProgress(`Waiting for YouTube to process video... (${i + 1}/${MAX_ATTEMPTS})`, percent);
       
-      const response = await fetch(`${BACKEND_URL}/proxy/captions?token=${encodeURIComponent(accessToken)}&videoId=${videoId}`);
+      const response = await fetch(`${BACKEND_URL}/proxy/captions?token=${encodeURIComponent(currentToken)}&videoId=${videoId}`);
 
       if (response.ok) {
         const data = await response.json();
         if (data.items && data.items.length > 0) {
           if (onProgress) onProgress("Video processing complete!", 100);
           return true;
+        }
+      } else if (response.status === 401) {
+        try {
+          const freshToken = await refreshYouTubeAccessToken();
+          currentToken = freshToken;
+          onTokenRefreshed?.(freshToken);
+          continue;
+        } catch {
+          // Refresh failed
         }
       } else {
         const errText = await response.text();

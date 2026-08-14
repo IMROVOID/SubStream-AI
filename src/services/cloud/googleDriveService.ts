@@ -1,4 +1,6 @@
 import { DriveFile } from "../../types";
+import { requestGoogleAccessToken, GOOGLE_DRIVE_SCOPE } from "../../utils/googleAuthHelper";
+import { setAuthItem } from "../../utils/cookieUtils";
 
 const BACKEND_URL = "http://localhost:4000/api/proxy";
 
@@ -23,23 +25,60 @@ async function checkProxyAvailability(): Promise<boolean> {
 }
 
 /**
- * Fetches the contents of a specific folder via Local Proxy or Direct REST API.
+ * Silently refreshes the Google Drive access token using GIS.
  */
-export async function listDriveFiles(accessToken: string, folderId: string = 'root', searchQuery: string = ''): Promise<DriveFile[]> {
+export async function refreshGoogleDriveAccessToken(): Promise<string> {
+  const freshToken = await requestGoogleAccessToken({
+    scope: GOOGLE_DRIVE_SCOPE,
+    prompt: '' // Silent background check
+  });
+  setAuthItem('substream_drive_token', freshToken, 1);
+  setAuthItem('substream_drive_token_timestamp', Date.now().toString(), 30);
+  setAuthItem('substream_drive_session', 'active', 30);
+  return freshToken;
+}
+
+/**
+ * Fetches the contents of a specific folder via Local Proxy or Direct REST API.
+ * Includes automated 401 silent token refresh and retry.
+ */
+export async function listDriveFiles(
+  accessToken: string, 
+  folderId: string = 'root', 
+  searchQuery: string = '',
+  onTokenRefreshed?: (newToken: string) => void
+): Promise<DriveFile[]> {
+  try {
+    return await executeListDriveFiles(accessToken, folderId, searchQuery);
+  } catch (error: any) {
+    if (error?.message?.includes("AUTH_EXPIRED") || error?.message?.includes("401")) {
+      try {
+        const freshToken = await refreshGoogleDriveAccessToken();
+        onTokenRefreshed?.(freshToken);
+        return await executeListDriveFiles(freshToken, folderId, searchQuery);
+      } catch (refreshErr) {
+        throw new Error("AUTH_EXPIRED: Your Google Drive session has expired. Please sign in again.");
+      }
+    }
+    throw error;
+  }
+}
+
+async function executeListDriveFiles(accessToken: string, folderId: string, searchQuery: string): Promise<DriveFile[]> {
   let query = '';
 
   if (folderId === 'virtual-videos') {
     query = "(mimeType contains 'video/') and trashed = false";
   } 
   else if (folderId === 'virtual-subtitles') {
-    query = "(fileExtension = 'srt' or fileExtension = 'vtt') and trashed = false";
+    query = "(name contains '.srt' or name contains '.vtt') and trashed = false";
   } 
   else {
-    query = `('${folderId}' in parents and trashed = false) and (mimeType = 'application/vnd.google-apps.folder' or mimeType contains 'video/' or fileExtension = 'srt' or fileExtension = 'vtt')`;
+    query = `('${folderId}' in parents and trashed = false) and (mimeType = 'application/vnd.google-apps.folder' or mimeType contains 'video/' or name contains '.srt' or name contains '.vtt')`;
   }
 
   if (searchQuery) {
-    const safeSearch = searchQuery.replace(/'/g, "\\'");
+    const safeSearch = searchQuery.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     query += ` and name contains '${safeSearch}'`;
   }
 
@@ -112,8 +151,31 @@ export { listDriveFiles as fetchDriveFiles };
 
 /**
  * Downloads a file from Google Drive via the Local Proxy, falling back to direct API download.
+ * Includes automated 401 silent token refresh and retry.
  */
-export async function downloadDriveFile(accessToken: string, fileId: string, fileName: string): Promise<File> {
+export async function downloadDriveFile(
+  accessToken: string, 
+  fileId: string, 
+  fileName: string,
+  onTokenRefreshed?: (newToken: string) => void
+): Promise<File> {
+  try {
+    return await executeDownloadDriveFile(accessToken, fileId, fileName);
+  } catch (error: any) {
+    if (error?.message?.includes("AUTH_EXPIRED") || error?.message?.includes("401")) {
+      try {
+        const freshToken = await refreshGoogleDriveAccessToken();
+        onTokenRefreshed?.(freshToken);
+        return await executeDownloadDriveFile(freshToken, fileId, fileName);
+      } catch {
+        throw new Error("AUTH_EXPIRED: Your Google Drive session has expired. Please sign in again.");
+      }
+    }
+    throw error;
+  }
+}
+
+async function executeDownloadDriveFile(accessToken: string, fileId: string, fileName: string): Promise<File> {
   const driveDownloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
   
   try {
