@@ -24,7 +24,7 @@ const activeRefreshPromises = new Map<string, Promise<string>>();
  * Supports silent renewal (prompt: '') and interactive centered popups (prompt: 'consent').
  */
 export async function requestGoogleAccessToken(options: RequestTokenOptions): Promise<string> {
-  const { scope, prompt = 'consent', timeoutMs = 120000 } = options;
+  const { scope, prompt = 'consent', timeoutMs = 180000 } = options;
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   if (!clientId) {
@@ -99,7 +99,6 @@ function openGoogleOAuthPopup(
 
     const cleanup = () => {
       resolved = true;
-      clearInterval(checkClosedInterval);
       clearTimeout(safetyTimeout);
       window.removeEventListener('message', handleWindowMessage);
       channel.close();
@@ -128,19 +127,6 @@ function openGoogleOAuthPopup(
         reject(new Error('Authentication timed out. Please try again.'));
       }
     }, timeoutMs);
-
-    // Periodically check if user closed the popup before completing auth
-    const checkClosedInterval = setInterval(() => {
-      if (popup.closed && !resolved) {
-        // Allow brief 800ms grace period in case the message or redirect is currently in flight
-        setTimeout(() => {
-          if (!resolved) {
-            cleanup();
-            reject(new Error('Authentication cancelled: Popup window was closed.'));
-          }
-        }, 800);
-      }
-    }, 500);
   });
 }
 

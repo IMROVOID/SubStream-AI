@@ -24,62 +24,43 @@ export function App() {
 
   const { toasts, showToast } = useToast();
 
-  const isYouTubeAuthCallback = useMemo(() => {
-    return window.location.hash.includes('access_token') && window.location.hash.includes('state=youtube_auth');
+  const authCallbackInfo = useMemo(() => {
+    if (!window.location.hash.includes('access_token')) return null;
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const token = params.get('access_token');
+    const state = params.get('state');
+    if (!token) return null;
+    return { token, state: state || 'youtube_auth' };
   }, []);
 
-  const isDriveAuthCallback = useMemo(() => {
-    return window.location.hash.includes('access_token') && window.location.hash.includes('state=drive_auth');
-  }, []);
+  const isOAuthCallback = Boolean(authCallbackInfo);
 
   // OAuth Callback Popup Handler Effect
   useEffect(() => {
-    if (isYouTubeAuthCallback) {
-      const hash = window.location.hash.substring(1);
-      const params = new URLSearchParams(hash);
-      const accessToken = params.get('access_token');
+    if (authCallbackInfo) {
+      const { token, state } = authCallbackInfo;
+      const isDrive = state === 'drive_auth';
+      const channelName = isDrive ? 'substream_drive_auth_channel' : 'substream_auth_channel';
+      const messageType = isDrive ? 'DRIVE_AUTH_SUCCESS' : 'YOUTUBE_AUTH_SUCCESS';
 
-      if (accessToken) {
-        if (window.opener) {
-          try {
-            window.opener.postMessage({ type: 'YOUTUBE_AUTH_SUCCESS', token: accessToken }, window.location.origin);
-          } catch (e) {
-            console.error(e);
-          }
+      if (window.opener) {
+        try {
+          window.opener.postMessage({ type: messageType, token }, window.location.origin);
+        } catch (e) {
+          console.error(e);
         }
-        const channel = new BroadcastChannel('substream_auth_channel');
-        channel.postMessage({ token: accessToken });
-        channel.close();
-        setTimeout(() => {
-          window.close();
-          window.open('', '_self')?.close();
-        }, 500);
       }
-    }
+      const channel = new BroadcastChannel(channelName);
+      channel.postMessage({ token });
+      channel.close();
 
-    if (isDriveAuthCallback) {
-      const hash = window.location.hash.substring(1);
-      const params = new URLSearchParams(hash);
-      const accessToken = params.get('access_token');
-
-      if (accessToken) {
-        if (window.opener) {
-          try {
-            window.opener.postMessage({ type: 'DRIVE_AUTH_SUCCESS', token: accessToken }, window.location.origin);
-          } catch (e) {
-            console.error(e);
-          }
-        }
-        const channel = new BroadcastChannel('substream_drive_auth_channel');
-        channel.postMessage({ token: accessToken });
-        channel.close();
-        setTimeout(() => {
-          window.close();
-          window.open('', '_self')?.close();
-        }, 500);
-      }
+      setTimeout(() => {
+        window.close();
+        window.open('', '_self')?.close();
+      }, 500);
     }
-  }, [isYouTubeAuthCallback, isDriveAuthCallback]);
+  }, [authCallbackInfo]);
 
   const appSettings = useAppSettings({
     showToast,
@@ -99,7 +80,7 @@ export function App() {
     resetDrag
   });
 
-  if (isYouTubeAuthCallback || isDriveAuthCallback) {
+  if (isOAuthCallback) {
     return <AuthCallbackView />;
   }
 
