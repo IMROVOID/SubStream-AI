@@ -1,4 +1,5 @@
 import { SubtitleNode } from '../types';
+import { LANGUAGES } from '../constants/languages';
 
 // Helper to convert SRT timestamp (00:00:00,000) to milliseconds
 const timeToMs = (timeString: string): number => {
@@ -172,7 +173,71 @@ export const downloadFile = (filename: string, content: string | Blob) => {
   document.body.removeChild(element);
 };
 
+export const getFormattedDownloadFilename = (
+  originalName: string | undefined,
+  sourceLang: string = 'auto',
+  targetLang: string = 'none',
+  selectedCaptionId: string = '',
+  extension: string = 'srt'
+): string => {
+  // 1. Base name without extension
+  let rawName = originalName || 'Media';
+  rawName = rawName.replace(/\.[^/.]+$/, '');
+  // Sanitize illegal filesystem characters: < > : " / \ | ? *
+  const cleanName = rawName.replace(/[<>:"/\\|?*]/g, '_').trim() || 'Media';
+
+  // 2. Determine language label
+  let langLabel = '';
+  if (targetLang && targetLang !== 'none') {
+    const matched = LANGUAGES.find(
+      l => l.name.toLowerCase() === targetLang.toLowerCase() || l.code.toLowerCase() === targetLang.toLowerCase()
+    );
+    langLabel = matched ? matched.name : targetLang;
+  } else if (selectedCaptionId) {
+    const matched = LANGUAGES.find(
+      l => l.code.toLowerCase() === selectedCaptionId.toLowerCase() || l.name.toLowerCase() === selectedCaptionId.toLowerCase()
+    );
+    langLabel = matched ? matched.name : selectedCaptionId;
+  } else if (sourceLang && sourceLang !== 'auto') {
+    const matched = LANGUAGES.find(
+      l => l.name.toLowerCase() === sourceLang.toLowerCase() || l.code.toLowerCase() === sourceLang.toLowerCase()
+    );
+    langLabel = matched ? matched.name : sourceLang;
+  } else {
+    langLabel = 'Transcripted';
+  }
+
+  // Capitalize language label
+  langLabel = langLabel.charAt(0).toUpperCase() + langLabel.slice(1);
+
+  const cleanExt = extension.replace(/^\./, '');
+  return `${cleanName}_SubStream_${langLabel}.${cleanExt}`;
+};
+
 export const vttToSrt = (vttData: string): string => {
     const subtitles = parseSRT(vttData);
     return stringifySRT(subtitles);
+};
+
+/**
+ * Normalizes and filters video resolutions to always and only return genuine vertical video heights
+ * (e.g. 4320, 2160, 1440, 1080, 720, 480, 360, 240, 144) dynamically for any video
+ * (standard 16:9, 4:3, 21:9 ultrawide, 9:16 vertical, or custom resolutions like 900p, 540p).
+ * Excludes horizontal width numbers (such as 1920, 1280, 960, 640, 428, 320, 214) from appearing as resolution tiers,
+ * and preserves the exact available resolution formats without synthesizing non-existent tiers.
+ */
+export const normalizeResolutions = (resolutions: (number | string)[] = []): number[] => {
+  // Known width artifacts that should never be labeled as heights
+  const KNOWN_WIDTH_ARTIFACTS = new Set([1920, 1280, 960, 640, 428, 426, 320, 256, 214]);
+
+  const numeric = resolutions
+    .map(r => typeof r === 'string' ? parseInt(r.replace(/\D/g, ''), 10) : r)
+    .filter((r): r is number => typeof r === 'number' && !isNaN(r) && r >= 144);
+
+  // Filter out known width artifacts
+  const cleanHeights = numeric.filter(r => !KNOWN_WIDTH_ARTIFACTS.has(r));
+  const validList = cleanHeights.length > 0 ? cleanHeights : numeric;
+
+  const result = new Set<number>(validList);
+  return Array.from(result).sort((a, b) => b - a);
 };

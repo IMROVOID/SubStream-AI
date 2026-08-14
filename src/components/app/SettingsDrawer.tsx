@@ -14,10 +14,10 @@ import {
   Gauge, 
   ExternalLink 
 } from 'lucide-react';
-import { Modal } from '../Modal';
-import { Button } from '../Button';
-import { ScrollFadeContainer } from '../ScrollFadeContainer';
-import { YouTubeAuth } from '../YouTubeAuth';
+import { Modal } from '../common/Modal';
+import { Button } from '../common/Button';
+import { ScrollFadeContainer } from '../common/ScrollFadeContainer';
+import { YouTubeAuth } from '../common/YouTubeAuth';
 import { AIModel, RPMLimit } from '../../types';
 import { OPENAI_RPM_OPTIONS, ANTHROPIC_RPM_OPTIONS } from '../../constants/models';
 
@@ -64,7 +64,7 @@ interface SettingsDrawerProps {
   handleCustomRPMChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   selectedGeminiTier: GeminiTier;
   setSelectedGeminiTier: (tier: GeminiTier) => void;
-  activeModelData: AIModel;
+  activeModelData: AIModel | null;
 }
 
 export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
@@ -120,10 +120,18 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
   const openaiModels = filteredModels.filter(m => m.provider === 'openai');
   const anthropicModels = filteredModels.filter(m => m.provider === 'anthropic');
 
+  const hasGoogleKey = Boolean(tempGoogleApiKey.trim() || userGoogleApiKey);
+  const hasOpenAIKey = Boolean(tempOpenAIApiKey.trim() || userOpenAIApiKey);
+  const hasAnthropicKey = Boolean(tempAnthropicApiKey.trim() || userAnthropicApiKey);
+  const hasYouTubeAuth = Boolean(googleUser);
+
   const isSaveDisabled = 
-    googleApiKeyStatus === 'invalid' || googleApiKeyStatus === 'validating' || 
-    openAIApiKeyStatus === 'invalid' || openAIApiKeyStatus === 'validating' || 
-    anthropicApiKeyStatus === 'invalid' || anthropicApiKeyStatus === 'validating';
+    googleApiKeyStatus === 'validating' || 
+    openAIApiKeyStatus === 'validating' || 
+    anthropicApiKeyStatus === 'validating' ||
+    (tempGoogleApiKey.trim() !== '' && googleApiKeyStatus === 'invalid') ||
+    (tempOpenAIApiKey.trim() !== '' && openAIApiKeyStatus === 'invalid') ||
+    (tempAnthropicApiKey.trim() !== '' && anthropicApiKeyStatus === 'invalid');
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="AI Configuration">
@@ -186,21 +194,21 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
                       {youtubeModel.map((model) => {
-                        const isDisabled = !googleUser;
+                        const isDisabled = !hasYouTubeAuth;
                         return (
                           <div 
                             key={model.id} 
                             onClick={() => !isDisabled && setSelectedModelId(model.id)} 
-                            className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${
-                              isDisabled ? 'opacity-50 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
-                              selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'
+                            className={`relative p-4 rounded-xl border transition-all duration-200 ${
+                              isDisabled ? 'opacity-40 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                              selectedModelId === model.id ? 'bg-neutral-800 border-white cursor-pointer' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700 cursor-pointer'
                             }`}
                           >
                             <div className="flex items-start justify-between">
                               <div>
                                 <h4 className="font-bold text-white mb-1 flex items-center gap-2">
                                   {model.name}
-                                  {!googleUser && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
+                                  {isDisabled && <span className="text-[10px] text-red-400 bg-red-900/20 px-1.5 py-0.5 rounded border border-red-900/50">Auth Required</span>}
                                 </h4>
                                 <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
                               </div>
@@ -234,30 +242,37 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.google ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
-                      {googleModels.map((model) => (
-                        <div 
-                          key={model.id} 
-                          onClick={() => setSelectedModelId(model.id)} 
-                          className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${
-                            selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
-                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                      {googleModels.map((model) => {
+                        const isDisabled = !hasGoogleKey;
+                        return (
+                          <div 
+                            key={model.id} 
+                            onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                            className={`relative p-4 rounded-xl border transition-all duration-200 ${
+                              isDisabled ? 'opacity-40 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                              selectedModelId === model.id ? 'bg-neutral-800 border-white cursor-pointer' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700 cursor-pointer'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                  {model.name}
+                                  {isDisabled && <span className="text-[10px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-900/50">API Key Required</span>}
+                                </h4>
+                                <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                              </div>
+                              {selectedModelId === model.id && <CheckCircle2 className="w-5 h-5 text-white shrink-0" />}
                             </div>
-                            {selectedModelId === model.id && <CheckCircle2 className="w-5 h-5 text-white shrink-0" />}
-                          </div>
-                          <div className="flex items-center justify-between gap-2 mt-3">
-                            <div className="flex flex-wrap gap-1.5">
-                              {model.tags?.map(tag => (
-                                <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span>
-                              ))}
+                            <div className="flex items-center justify-between gap-2 mt-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {model.tags?.map(tag => (
+                                  <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -276,30 +291,37 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.openai ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
-                      {openaiModels.map((model) => (
-                        <div 
-                          key={model.id} 
-                          onClick={() => setSelectedModelId(model.id)} 
-                          className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${
-                            selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
-                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                      {openaiModels.map((model) => {
+                        const isDisabled = !hasOpenAIKey;
+                        return (
+                          <div 
+                            key={model.id} 
+                            onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                            className={`relative p-4 rounded-xl border transition-all duration-200 ${
+                              isDisabled ? 'opacity-40 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                              selectedModelId === model.id ? 'bg-neutral-800 border-white cursor-pointer' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700 cursor-pointer'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                  {model.name}
+                                  {isDisabled && <span className="text-[10px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-900/50">API Key Required</span>}
+                                </h4>
+                                <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                              </div>
+                              {selectedModelId === model.id && <CheckCircle2 className="w-5 h-5 text-white shrink-0" />}
                             </div>
-                            {selectedModelId === model.id && <CheckCircle2 className="w-5 h-5 text-white shrink-0" />}
-                          </div>
-                          <div className="flex items-center justify-between gap-2 mt-3">
-                            <div className="flex flex-wrap gap-1.5">
-                              {model.tags?.map(tag => (
-                                <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span>
-                              ))}
+                            <div className="flex items-center justify-between gap-2 mt-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {model.tags?.map(tag => (
+                                  <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -318,30 +340,37 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                 <div className={`grid transition-[grid-template-rows,opacity] duration-300 ease-in-out ${openGroups.anthropic ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                   <div className="overflow-hidden">
                     <div className="space-y-3 pt-2 pb-1 pl-2 border-l border-neutral-800 ml-2">
-                      {anthropicModels.map((model) => (
-                        <div 
-                          key={model.id} 
-                          onClick={() => setSelectedModelId(model.id)} 
-                          className={`relative cursor-pointer p-4 rounded-xl border transition-all duration-200 ${
-                            selectedModelId === model.id ? 'bg-neutral-800 border-white' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="font-bold text-white mb-1">{model.name}</h4>
-                              <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                      {anthropicModels.map((model) => {
+                        const isDisabled = !hasAnthropicKey;
+                        return (
+                          <div 
+                            key={model.id} 
+                            onClick={() => !isDisabled && setSelectedModelId(model.id)} 
+                            className={`relative p-4 rounded-xl border transition-all duration-200 ${
+                              isDisabled ? 'opacity-40 cursor-not-allowed bg-neutral-900/30 border-neutral-800' : 
+                              selectedModelId === model.id ? 'bg-neutral-800 border-white cursor-pointer' : 'bg-neutral-900/50 border-neutral-800 hover:bg-neutral-800/50 hover:border-neutral-700 cursor-pointer'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h4 className="font-bold text-white mb-1 flex items-center gap-2">
+                                  {model.name}
+                                  {isDisabled && <span className="text-[10px] text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded border border-amber-900/50">API Key Required</span>}
+                                </h4>
+                                <p className="text-xs text-neutral-400 leading-relaxed pr-8">{model.description}</p>
+                              </div>
+                              {selectedModelId === model.id && <CheckCircle2 className="w-5 h-5 text-white shrink-0" />}
                             </div>
-                            {selectedModelId === model.id && <CheckCircle2 className="w-5 h-5 text-white shrink-0" />}
-                          </div>
-                          <div className="flex items-center justify-between gap-2 mt-3">
-                            <div className="flex flex-wrap gap-1.5">
-                              {model.tags?.map(tag => (
-                                <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span>
-                              ))}
+                            <div className="flex items-center justify-between gap-2 mt-3">
+                              <div className="flex flex-wrap gap-1.5">
+                                {model.tags?.map(tag => (
+                                  <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-black/50 text-neutral-400 border border-neutral-800">{tag}</span>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -448,7 +477,7 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             </div>
 
             {/* RATE LIMIT SECTION */}
-            {activeModelData.provider !== 'youtube' && (() => {
+            {activeModelData && activeModelData.provider !== 'youtube' ? (() => {
               const currentRpmOptions = activeModelData.provider === 'anthropic' ? ANTHROPIC_RPM_OPTIONS : OPENAI_RPM_OPTIONS;
               const standardIdx = currentRpmOptions.findIndex(o => o.value === selectedRPM);
               const currentRpmOptionIndex = isCustomRPM ? 3 : (standardIdx >= 0 ? standardIdx : 1);
@@ -554,7 +583,11 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                   )}
                 </div>
               );
-            })()}
+            })() : !activeModelData ? (
+              <div className="p-4 rounded-xl bg-neutral-900/40 border border-neutral-800 text-center text-xs text-neutral-500">
+                No AI model or method selected. Enter an API key or authenticate YouTube to enable methods.
+              </div>
+            ) : null}
 
           </div>
 

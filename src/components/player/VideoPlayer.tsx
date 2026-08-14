@@ -1,36 +1,16 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { 
-  Settings, 
-  Maximize, 
-  Minimize, 
-  PictureInPicture2, 
-  Subtitles, 
-  ChevronRight, 
-  ChevronLeft, 
-  Gauge, 
-  Monitor, 
-  Loader2, 
-  AlertCircle,
-  Check,
-  Volume2,
-  Volume1,
-  VolumeX
-} from 'lucide-react';
-import { fetchYouTubeStreamUrl } from '../services/youtubeService';
+import { Loader2, AlertCircle } from 'lucide-react';
+import { fetchYouTubeStreamUrl } from '../../services/youtubeService';
+import { PlayerControls } from './PlayerControls';
+import { PlayerSubtitleOverlay, SubtitleCue } from './PlayerSubtitleOverlay';
+import { normalizeResolutions } from '../../utils/srtUtils';
 
 interface VideoPlayerProps {
-  videoSrc: string; // Blob URL, Direct Link, or YouTube URL/ID
-  srtContent: string; // Raw SRT or VTT content for the track
+  videoSrc: string;
+  srtContent: string;
   isYouTube?: boolean;
   availableResolutions?: number[];
   className?: string;
-}
-
-interface SubtitleCue {
-  id: number;
-  start: number; // seconds
-  end: number; // seconds
-  text: string;
 }
 
 function parseSrtToCues(srt: string): SubtitleCue[] {
@@ -92,7 +72,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Refs for preserving playback position & play state across quality changes
   const pendingSeekTimeRef = useRef<number>(0);
   const wasPlayingRef = useRef<boolean>(false);
   
@@ -102,7 +81,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isBuffering, setIsBuffering] = useState<boolean>(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
 
-  // Player state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(1);
@@ -115,30 +93,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isSeeking, setIsSeeking] = useState<boolean>(false);
   const [nativeResolution, setNativeResolution] = useState<number | null>(null);
 
-  // Dynamic Quality options list based on source video resolutions or detected video height/width
   const qualityOptions = useMemo(() => {
-    const standardTiers = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144];
-    const resSet = new Set<number>();
-
-    if (availableResolutions && availableResolutions.length > 0) {
-      availableResolutions.forEach(r => {
-        if (typeof r === 'number' && r > 0) resSet.add(r);
-      });
+    const rawList = [...(availableResolutions || [])];
+    if (nativeResolution && nativeResolution >= 144) {
+      rawList.push(nativeResolution);
     }
-
-    if (nativeResolution && nativeResolution > 0) {
-      resSet.add(nativeResolution);
-    }
-
-    if (resSet.size === 0) {
-      return ['Auto', '1080p', '720p', '480p', '360p', '240p', '144p'];
-    }
-
-    const maxRes = Math.max(...Array.from(resSet), 1080);
-    standardTiers.filter(r => r <= maxRes).forEach(r => resSet.add(r));
-
-    const sorted = Array.from(resSet).sort((a, b) => b - a);
-    return ['Auto', ...sorted.map(r => `${r}p`)];
+    const cleanList = normalizeResolutions(rawList);
+    return ['Auto', ...cleanList.map(r => `${r}p`)];
   }, [availableResolutions, nativeResolution]);
 
   const activeQualityText = useMemo(() => {
@@ -153,7 +114,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return selectedQuality;
   }, [selectedQuality, qualityOptions]);
 
-  // ponytail: Ensure video wrapper stays 100% width/height without transform scaling to eliminate side borders
   const renderScaleWrapperStyle = useMemo(() => {
     const selectedResNum = parseInt(selectedQuality.replace(/\D/g, ''), 10);
     return {
@@ -163,24 +123,19 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } as React.CSSProperties;
   }, [selectedQuality]);
   
-  // Subtitle Customization State
   const [subtitleSize, setSubtitleSize] = useState<'small' | 'medium' | 'large' | 'xlarge'>('medium');
   const [subtitleBg, setSubtitleBg] = useState<'dark' | 'solid' | 'semi' | 'none'>('dark');
   const [subtitleColor, setSubtitleColor] = useState<'white' | 'yellow'>('white');
   const [subtitleOpacity, setSubtitleOpacity] = useState<number>(1);
   
-  // Settings Popover State
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [settingsView, setSettingsView] = useState<'main' | 'quality' | 'speed' | 'subtitles' | 'subtitleSize' | 'subtitleBg' | 'subtitleColor' | 'subtitleOpacity'>('main');
 
-  // Controls Visibility Timer
   const [showControls, setShowControls] = useState<boolean>(true);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Parse SRT cues
   const cues = useMemo(() => parseSrtToCues(srtContent), [srtContent]);
 
-  // Current active subtitle cue
   const activeCue = useMemo(() => {
     if (!showSubtitles || cues.length === 0) return null;
     const currentMatch = cues.find(c => currentTime >= c.start && currentTime <= c.end);
@@ -189,7 +144,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return null;
   }, [cues, currentTime, showSubtitles]);
 
-  // Resolve YouTube Stream URL if isYouTube
   useEffect(() => {
     if (!isYouTube || !videoSrc) {
       setResolvedSrc(videoSrc);
@@ -203,14 +157,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setIsResolving(true);
     setResolveError(null);
 
-    // Save exact position & play state before fetching new resolution stream
     if (videoRef.current) {
       pendingSeekTimeRef.current = videoRef.current.currentTime || 0;
       wasPlayingRef.current = !videoRef.current.paused;
     }
 
-    const numOptions = (availableResolutions || [])
-      .filter(r => typeof r === 'number' && r > 0);
+    const numOptions = (availableResolutions || []).filter(r => typeof r === 'number' && r > 0);
     const maxRes = numOptions.length > 0 ? Math.max(...numOptions) : 1080;
     const autoTarget = Math.min(maxRes, 1080);
     const qualityParam = selectedQuality === 'Auto' ? `${autoTarget}p` : selectedQuality;
@@ -230,12 +182,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
       });
 
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, [videoSrc, isYouTube, selectedQuality, availableResolutions]);
 
-  // ponytail: Continuous Audio/Video Lock-Step Sync Controller to prevent drift and network buffering desync
   useEffect(() => {
     if (!resolvedAudioSrc || !videoRef.current || !audioRef.current) return;
 
@@ -244,7 +193,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const a = audioRef.current;
       if (!v || !a) return;
 
-      // Sync playback state
       if (v.paused && !a.paused) {
         a.pause();
       } else if (!v.paused && a.paused && !isBuffering && !isResolving) {
@@ -252,12 +200,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         a.play().catch(() => {});
       }
 
-      // Sync playback rate
       if (a.playbackRate !== v.playbackRate) {
         a.playbackRate = v.playbackRate;
       }
 
-      // Drift correction
       const drift = Math.abs(v.currentTime - a.currentTime);
       if (drift > 0.15 && !isSeeking) {
         a.currentTime = v.currentTime;
@@ -268,7 +214,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => clearInterval(interval);
   }, [resolvedAudioSrc, isBuffering, isResolving, isSeeking]);
 
-  // Handle User Activity for Controls Autohide
   const handleMouseMove = () => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -282,15 +227,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const togglePlay = () => {
     if (!videoRef.current) return;
-
     const v = videoRef.current;
     const a = audioRef.current;
 
     if (!v.paused) {
       v.pause();
-      if (a && !a.paused) {
-        a.pause();
-      }
+      if (a && !a.paused) a.pause();
       setIsPlaying(false);
     } else {
       setIsBuffering(false);
@@ -340,22 +282,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     setCurrentTime(val);
-    if (videoRef.current && !isNaN(val)) {
-      videoRef.current.currentTime = val;
-    }
-    if (audioRef.current && !isNaN(val)) {
-      audioRef.current.currentTime = val;
-    }
+    if (videoRef.current && !isNaN(val)) videoRef.current.currentTime = val;
+    if (audioRef.current && !isNaN(val)) audioRef.current.currentTime = val;
   };
 
   const changeSpeed = (speed: number) => {
     setPlaybackSpeed(speed);
-    if (videoRef.current) {
-      videoRef.current.playbackRate = speed;
-    }
-    if (audioRef.current) {
-      audioRef.current.playbackRate = speed;
-    }
+    if (videoRef.current) videoRef.current.playbackRate = speed;
+    if (audioRef.current) audioRef.current.playbackRate = speed;
     setSettingsView('main');
   };
 
@@ -401,11 +335,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
-  const isCurrentlyMuted = isMuted || volume <= 0.05;
-  const volumePercent = isCurrentlyMuted ? 0 : volume * 100;
-
-  // Restore playback & seek position seamlessly when new stream data loads
   const handleMediaLoadedData = () => {
     if (!videoRef.current) return;
     
@@ -422,9 +351,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     if (pendingSeekTimeRef.current > 0) {
       videoRef.current.currentTime = pendingSeekTimeRef.current;
-      if (audioRef.current) {
-        audioRef.current.currentTime = pendingSeekTimeRef.current;
-      }
+      if (audioRef.current) audioRef.current.currentTime = pendingSeekTimeRef.current;
       setCurrentTime(pendingSeekTimeRef.current);
       pendingSeekTimeRef.current = 0;
     }
@@ -448,7 +375,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       onMouseLeave={() => isPlaying && !isSeeking && setShowControls(false)}
       className={`w-full bg-black rounded-2xl overflow-hidden aspect-video border border-neutral-800 relative group select-none ${className}`}
     >
-      {/* Overlay: Stream Resolution Loading */}
       {isResolving && (
         <div className="absolute inset-0 z-40 bg-black/75 backdrop-blur-md flex flex-col items-center justify-center gap-3 text-neutral-400">
           <Loader2 className="w-8 h-8 text-white animate-spin" />
@@ -456,7 +382,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Overlay: Stream Error */}
       {!isResolving && resolveError && (
         <div className="absolute inset-0 z-40 bg-neutral-950 flex flex-col items-center justify-center gap-3 text-neutral-400 px-6 text-center">
           <AlertCircle className="w-8 h-8 text-neutral-400" />
@@ -464,7 +389,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Overlay: Stream Buffering Spinner */}
       {isBuffering && !isResolving && !resolveError && (
         <div className="absolute inset-0 z-30 pointer-events-none flex items-center justify-center">
           <div className="p-3 bg-black/60 backdrop-blur-md rounded-2xl">
@@ -473,7 +397,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Main Video Element - Kept mounted in DOM at all times */}
       <div 
         className="w-full h-full flex items-center justify-center overflow-hidden bg-black relative cursor-pointer"
         onClick={togglePlay}
@@ -482,30 +405,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <video
             ref={videoRef}
             src={resolvedSrc || undefined}
-            className="w-full h-full object-cover cursor-pointer"
+            className="w-full h-full object-contain cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               togglePlay();
             }}
-            onPlay={() => {
-              setIsPlaying(true);
-            }}
+            onPlay={() => setIsPlaying(true)}
             onPause={() => {
               setIsPlaying(false);
-            }}
-            onWaiting={() => {
-              setIsBuffering(true);
-            }}
-            onPlaying={() => {
               setIsBuffering(false);
-              setIsPlaying(true);
             }}
+            onWaiting={() => setIsBuffering(true)}
+            onPlaying={() => {
+              setIsPlaying(true);
+              setIsBuffering(false);
+            }}
+            onCanPlay={() => setIsBuffering(false)}
+            onCanPlayThrough={() => setIsBuffering(false)}
             onSeeked={() => {
+              setIsBuffering(false);
               if (audioRef.current && videoRef.current) {
                 audioRef.current.currentTime = videoRef.current.currentTime;
               }
             }}
-            onCanPlay={() => setIsBuffering(false)}
             onTimeUpdate={() => {
               if (!isSeeking && videoRef.current) {
                 setCurrentTime(videoRef.current.currentTime);
@@ -528,12 +450,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       </div>
 
-      {/* Synced Audio Track (For High Resolution Separate Audio/Video Streams) */}
       {resolvedAudioSrc && (
         <audio
           ref={audioRef}
           src={resolvedAudioSrc}
-          muted={isCurrentlyMuted}
+          muted={isMuted || volume <= 0.05}
           onLoadedMetadata={() => {
             if (audioRef.current && audioRef.current.duration && !isNaN(audioRef.current.duration)) {
               setDuration(prev => prev > 0 ? prev : audioRef.current!.duration);
@@ -542,452 +463,57 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         />
       )}
 
-      {/* Subtitle SoftSub Cue Overlay */}
-      {activeCue && !isResolving && !resolveError && (
-        <div 
-          className={`absolute left-1/2 -translate-x-1/2 max-w-[85%] text-center pointer-events-none z-20 transition-all duration-300 ${
-            showControls || !isPlaying ? 'bottom-14' : 'bottom-5'
-          }`}
-        >
-          <span 
-            className={`rounded-xl font-medium inline-block leading-relaxed font-vazirmatn transition-all duration-200 ${
-              subtitleColor === 'yellow' ? 'text-yellow-300' : 'text-white'
-            } ${
-              subtitleSize === 'small' ? 'text-[11px] sm:text-sm md:text-base px-2 py-0.5 sm:px-3.5 sm:py-1.5' :
-              subtitleSize === 'large' ? 'text-sm sm:text-lg md:text-xl px-3 py-1.5 sm:px-5 sm:py-2.5' :
-              subtitleSize === 'xlarge' ? 'text-base sm:text-xl md:text-2xl px-4 py-2 sm:px-6 sm:py-3' :
-              'text-xs sm:text-base md:text-lg px-2.5 py-1 sm:px-4 sm:py-2'
-            } ${
-              subtitleBg === 'solid' ? 'bg-black border border-white/10 shadow-2xl' :
-              subtitleBg === 'semi' ? 'bg-black/50 backdrop-blur-sm border border-white/5' :
-              subtitleBg === 'none' ? 'bg-transparent border-0 shadow-none [text-shadow:_0_2px_10px_rgba(0,0,0,1)]' :
-              'bg-black/85 backdrop-blur-md border border-white/10 shadow-2xl'
-            }`}
-            style={{ 
-              fontFamily: "'Vazirmatn', 'Inter', system-ui, sans-serif",
-              opacity: subtitleOpacity 
-            }}
-          >
-            {activeCue.text}
-          </span>
-        </div>
-      )}
+      <PlayerSubtitleOverlay 
+        activeCue={activeCue}
+        showControls={showControls}
+        isPlaying={isPlaying}
+        isResolving={isResolving}
+        resolveError={resolveError}
+        subtitleColor={subtitleColor}
+        subtitleSize={subtitleSize}
+        subtitleBg={subtitleBg}
+        subtitleOpacity={subtitleOpacity}
+      />
 
-      {/* Single-Row Monochromatic Controls */}
       {!resolveError && (
-        <div 
-          className={`absolute bottom-0 left-0 right-0 px-4 py-3 bg-gradient-to-t from-black/90 via-black/40 to-transparent flex items-center justify-between gap-3 transition-all duration-300 z-30 ${
-            showControls || !isPlaying || isSeeking ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-2 pointer-events-none'
-          }`}
-        >
-          {/* Left Controls: Play, Mute, Time */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            {/* Play / Pause Button */}
-            <button 
-              onClick={togglePlay} 
-              className="text-white/80 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 flex items-center justify-center"
-              title={isPlaying ? "Pause" : "Play"}
-            >
-              {isPlaying ? (
-                <svg className="w-4 h-4 fill-white text-white" viewBox="0 0 24 24">
-                  <rect x="6" y="4" width="4" height="16" rx="1.5" />
-                  <rect x="14" y="4" width="4" height="16" rx="1.5" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4 fill-white text-white" viewBox="0 0 24 24">
-                  <path d="M7 4.75a1 1 0 0 1 1.53-.84l11 6.25a1 1 0 0 1 0 1.68l-11 6.25A1 1 0 0 1 7 17.25V4.75z" />
-                </svg>
-              )}
-            </button>
-
-            {/* Mute & Volume Slider */}
-            <div className="flex items-center group/volume relative">
-              <button 
-                onClick={toggleMute} 
-                className="text-white/80 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-white/10 flex items-center justify-center"
-                title={isCurrentlyMuted ? "Unmute" : "Mute"}
-              >
-                {isCurrentlyMuted ? (
-                  <VolumeX className="w-4 h-4 text-white/60" />
-                ) : volume < 0.5 ? (
-                  <Volume1 className="w-4 h-4 text-white" />
-                ) : (
-                  <Volume2 className="w-4 h-4 text-white" />
-                )}
-              </button>
-
-              {/* Collapsible Volume Slider Container */}
-              <div className="max-w-0 opacity-0 overflow-hidden group-hover/volume:max-w-[70px] group-hover/volume:opacity-100 transition-all duration-300 ease-out flex items-center">
-                <div className="w-14 h-1 relative flex items-center rounded-full overflow-hidden bg-white/20 ml-1">
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={isCurrentlyMuted ? 0 : volume}
-                    onChange={handleVolumeChange}
-                    className="w-full h-full opacity-0 cursor-pointer relative z-10"
-                  />
-                  <div 
-                    className="absolute left-0 top-0 bottom-0 bg-white rounded-full pointer-events-none transition-all"
-                    style={{ width: `${volumePercent}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Time Display */}
-            <div className="text-[11px] font-mono text-neutral-300 font-medium tracking-tight whitespace-nowrap">
-              <span>{formatTime(currentTime)}</span>
-              <span className="mx-1 text-neutral-500">/</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-          </div>
-
-          {/* Center Timeline Progress Scrubber with Single Knob */}
-          <div className="flex-1 relative flex items-center group/timeline mx-1 h-3">
-            <input
-              type="range"
-              min={0}
-              max={duration || 100}
-              step={0.1}
-              value={currentTime}
-              onMouseDown={() => setIsSeeking(true)}
-              onTouchStart={() => setIsSeeking(true)}
-              onChange={handleSeekChange}
-              onMouseUp={() => setIsSeeking(false)}
-              onTouchEnd={() => setIsSeeking(false)}
-              className="w-full h-full opacity-0 cursor-pointer relative z-10"
-            />
-            <div className="w-full h-1 bg-white/20 rounded-full pointer-events-none absolute left-0 right-0 group-hover/timeline:h-1.5 transition-all overflow-hidden">
-              <div 
-                className="h-full bg-white rounded-full pointer-events-none transition-all"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-            {/* Single Circle Knob */}
-            <div 
-              className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow-md pointer-events-none opacity-0 group-hover/timeline:opacity-100 transition-opacity z-20"
-              style={{ left: `calc(${Math.min(98.5, Math.max(0, progressPercent))}% - 4px)` }}
-            />
-          </div>
-
-          {/* Right Controls: CC, Settings, PiP, Fullscreen */}
-          <div className="flex items-center gap-1.5 shrink-0 relative">
-            {/* Subtitles CC Toggle */}
-            <button
-              onClick={() => setShowSubtitles(!showSubtitles)}
-              className={`p-1.5 rounded-lg text-xs font-bold transition-all ${
-                showSubtitles ? 'text-white bg-white/20 border border-white/30' : 'text-neutral-400 hover:text-white hover:bg-white/10'
-              }`}
-              title="Toggle Subtitles"
-            >
-              <Subtitles className="w-4 h-4" />
-            </button>
-
-            {/* Settings Button */}
-            <div className="relative">
-              <button
-                onClick={() => {
-                  setShowSettings(!showSettings);
-                  setSettingsView('main');
-                }}
-                className={`p-1.5 rounded-lg transition-all ${
-                  showSettings ? 'text-white bg-white/20' : 'text-neutral-400 hover:text-white hover:bg-white/10'
-                }`}
-                title="Settings"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-
-              {/* Settings Menu Popover */}
-              {showSettings && (
-                <div className="absolute bottom-10 right-0 w-56 bg-neutral-950/85 backdrop-blur-2xl border border-white/10 rounded-2xl p-2 shadow-2xl shadow-black/80 z-50 text-xs overflow-hidden transition-all duration-200 animate-fade-in">
-                  {settingsView === 'main' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('quality')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 active:scale-[0.98] text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <Monitor className="w-4 h-4 text-neutral-400" />
-                          <span className="font-semibold">Quality</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span>{activeQualityText}</span>
-                          <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => setSettingsView('speed')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 active:scale-[0.98] text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <Gauge className="w-4 h-4 text-neutral-400" />
-                          <span className="font-semibold">Speed</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span>{playbackSpeed}×</span>
-                          <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => setSettingsView('subtitles')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 active:scale-[0.98] text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <Subtitles className="w-4 h-4 text-neutral-400" />
-                          <span className="font-semibold">Subtitles</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span className="capitalize">{subtitleSize}</span>
-                          <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </button>
-                    </div>
-                  )}
-
-                  {settingsView === 'quality' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('main')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Quality</span>
-                      </button>
-                      <div className="max-h-48 overflow-y-auto thin-scrollbar space-y-0.5">
-                        {qualityOptions.map((q) => (
-                          <button
-                            key={q}
-                            onClick={() => changeQuality(q)}
-                            className={`flex items-center justify-between w-full px-3 py-2 rounded-xl text-left transition-all duration-150 ${
-                              selectedQuality === q ? 'bg-white/15 text-white font-bold' : 'text-neutral-300 hover:bg-white/10'
-                            }`}
-                          >
-                            <span>{q}</span>
-                            {selectedQuality === q && <Check className="w-3.5 h-3.5 text-white" />}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {settingsView === 'speed' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('main')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Playback Speed</span>
-                      </button>
-                      <div className="max-h-48 overflow-y-auto thin-scrollbar space-y-0.5">
-                        {[0.5, 0.75, 1, 1.25, 1.5, 2].map((spd) => (
-                          <button
-                            key={spd}
-                            onClick={() => changeSpeed(spd)}
-                            className={`flex items-center justify-between w-full px-3 py-2 rounded-xl text-left transition-all duration-150 ${
-                              playbackSpeed === spd ? 'bg-white/15 text-white font-bold' : 'text-neutral-300 hover:bg-white/10'
-                            }`}
-                          >
-                            <span>{spd === 1 ? '1× (Normal)' : `${spd}×`}</span>
-                            {playbackSpeed === spd && <Check className="w-3.5 h-3.5 text-white" />}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {settingsView === 'subtitles' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('main')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Subtitles</span>
-                      </button>
-                      <button
-                        onClick={() => setSettingsView('subtitleSize')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <span className="font-medium">Font Size</span>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span className="capitalize">{subtitleSize}</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => setSettingsView('subtitleColor')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <span className="font-medium">Caption Color</span>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span className="capitalize">{subtitleColor}</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => setSettingsView('subtitleBg')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <span className="font-medium">Background</span>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span className="capitalize">{subtitleBg === 'none' ? 'No BG' : subtitleBg}</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => setSettingsView('subtitleOpacity')}
-                        className="flex items-center justify-between w-full px-3 py-2.5 rounded-xl hover:bg-white/10 text-neutral-200 hover:text-white transition-all duration-150"
-                      >
-                        <span className="font-medium">Opacity</span>
-                        <div className="flex items-center gap-1 text-neutral-400 text-[11px]">
-                          <span>{Math.round(subtitleOpacity * 100)}%</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </div>
-                      </button>
-                    </div>
-                  )}
-
-                  {settingsView === 'subtitleSize' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('subtitles')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Font Size</span>
-                      </button>
-                      {[
-                        { id: 'small', label: 'Small' },
-                        { id: 'medium', label: 'Medium (Default)' },
-                        { id: 'large', label: 'Large' },
-                        { id: 'xlarge', label: 'Extra Large' }
-                      ].map((opt) => (
-                        <button
-                          key={opt.id}
-                          onClick={() => { setSubtitleSize(opt.id as any); setSettingsView('subtitles'); }}
-                          className={`flex items-center justify-between w-full px-3 py-2 rounded-xl text-left transition-all duration-150 ${
-                            subtitleSize === opt.id ? 'bg-white/15 text-white font-bold' : 'text-neutral-300 hover:bg-white/10'
-                          }`}
-                        >
-                          <span>{opt.label}</span>
-                          {subtitleSize === opt.id && <Check className="w-3.5 h-3.5 text-white" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {settingsView === 'subtitleColor' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('subtitles')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Caption Color</span>
-                      </button>
-                      {[
-                        { id: 'white', label: 'White (Default)' },
-                        { id: 'yellow', label: 'Yellow' }
-                      ].map((opt) => (
-                        <button
-                          key={opt.id}
-                          onClick={() => { setSubtitleColor(opt.id as any); setSettingsView('subtitles'); }}
-                          className={`flex items-center justify-between w-full px-3 py-2 rounded-xl text-left transition-all duration-150 ${
-                            subtitleColor === opt.id ? 'bg-white/15 text-white font-bold' : 'text-neutral-300 hover:bg-white/10'
-                          }`}
-                        >
-                          <span className={opt.id === 'yellow' ? 'text-yellow-300 font-semibold' : ''}>{opt.label}</span>
-                          {subtitleColor === opt.id && <Check className="w-3.5 h-3.5 text-white" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {settingsView === 'subtitleBg' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('subtitles')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Background Style</span>
-                      </button>
-                      {[
-                        { id: 'dark', label: 'Dark Glass' },
-                        { id: 'solid', label: 'Solid Black' },
-                        { id: 'semi', label: 'Semi-Transparent' },
-                        { id: 'none', label: 'No Background' }
-                      ].map((opt) => (
-                        <button
-                          key={opt.id}
-                          onClick={() => { setSubtitleBg(opt.id as any); setSettingsView('subtitles'); }}
-                          className={`flex items-center justify-between w-full px-3 py-2 rounded-xl text-left transition-all duration-150 ${
-                            subtitleBg === opt.id ? 'bg-white/15 text-white font-bold' : 'text-neutral-300 hover:bg-white/10'
-                          }`}
-                        >
-                          <span>{opt.label}</span>
-                          {subtitleBg === opt.id && <Check className="w-3.5 h-3.5 text-white" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {settingsView === 'subtitleOpacity' && (
-                    <div className="flex flex-col gap-1 transition-all duration-200">
-                      <button
-                        onClick={() => setSettingsView('subtitles')}
-                        className="flex items-center gap-1.5 px-2 py-1.5 text-neutral-400 hover:text-white font-semibold border-b border-white/10 mb-1 active:scale-[0.98] transition-all duration-150"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        <span>Background Opacity</span>
-                      </button>
-                      {[
-                        { val: 1, label: '100%' },
-                        { val: 0.85, label: '85%' },
-                        { val: 0.6, label: '60%' }
-                      ].map((opt) => (
-                        <button
-                          key={opt.val}
-                          onClick={() => { setSubtitleOpacity(opt.val); setSettingsView('subtitles'); }}
-                          className={`flex items-center justify-between w-full px-3 py-2 rounded-xl text-left transition-all duration-150 ${
-                            subtitleOpacity === opt.val ? 'bg-white/15 text-white font-bold' : 'text-neutral-300 hover:bg-white/10'
-                          }`}
-                        >
-                          <span>{opt.label}</span>
-                          {subtitleOpacity === opt.val && <Check className="w-3.5 h-3.5 text-white" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Picture in Picture */}
-            <button
-              onClick={togglePictureInPicture}
-              className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"
-              title="Picture in Picture"
-            >
-              <PictureInPicture2 className="w-4 h-4" />
-            </button>
-
-            {/* Fullscreen Button */}
-            <button
-              onClick={toggleFullscreen}
-              className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"
-              title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            >
-              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
+        <PlayerControls 
+          isPlaying={isPlaying}
+          isMuted={isMuted}
+          volume={volume}
+          currentTime={currentTime}
+          duration={duration}
+          playbackSpeed={playbackSpeed}
+          selectedQuality={selectedQuality}
+          qualityOptions={qualityOptions}
+          activeQualityText={activeQualityText}
+          showSubtitles={showSubtitles}
+          isFullscreen={isFullscreen}
+          isSeeking={isSeeking}
+          showControls={showControls}
+          showSettings={showSettings}
+          settingsView={settingsView}
+          subtitleSize={subtitleSize}
+          subtitleBg={subtitleBg}
+          subtitleColor={subtitleColor}
+          subtitleOpacity={subtitleOpacity}
+          togglePlay={togglePlay}
+          toggleMute={toggleMute}
+          handleVolumeChange={handleVolumeChange}
+          handleSeekChange={handleSeekChange}
+          setIsSeeking={setIsSeeking}
+          setShowSubtitles={setShowSubtitles}
+          setShowSettings={setShowSettings}
+          setSettingsView={setSettingsView}
+          changeQuality={changeQuality}
+          changeSpeed={changeSpeed}
+          setSubtitleSize={setSubtitleSize}
+          setSubtitleBg={setSubtitleBg}
+          setSubtitleColor={setSubtitleColor}
+          setSubtitleOpacity={setSubtitleOpacity}
+          togglePictureInPicture={togglePictureInPicture}
+          toggleFullscreen={toggleFullscreen}
+          formatTime={formatTime}
+        />
       )}
     </div>
   );

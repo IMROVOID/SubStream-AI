@@ -2,8 +2,8 @@ import { AIModel, AVAILABLE_MODELS } from '../../types';
 import { fetchFromOpenRouter } from './openRouterModelFetcher';
 import { fetchFromLiteLLM } from './liteLLMModelFetcher';
 
-const SYNC_CACHE_KEY = 'substream_synced_models_v4';
-const SYNC_INFO_KEY = 'substream_models_sync_info_v4';
+const SYNC_CACHE_KEY = 'substream_synced_models_v5';
+const SYNC_INFO_KEY = 'substream_models_sync_info_v5';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface ModelSyncInfo {
@@ -20,6 +20,7 @@ export interface SyncResult {
 
 function mergeWithSystemModels(dynamicModels: AIModel[]): AIModel[] {
   const systemModels = AVAILABLE_MODELS.filter(m => m.provider === 'youtube');
+
   const staticRatesMap = new Map<string, any>();
   for (const m of AVAILABLE_MODELS) {
     if (m.rateLimits) {
@@ -27,8 +28,18 @@ function mergeWithSystemModels(dynamicModels: AIModel[]): AIModel[] {
     }
   }
 
+  // Enrich dynamic models with known rate limits or default tier limits for Google models
   const enrichedDynamic = dynamicModels.map(dm => {
-    const rateLimits = staticRatesMap.get(dm.id);
+    let rateLimits = staticRatesMap.get(dm.id);
+    if (!rateLimits && dm.provider === 'google') {
+      // Default rate limits for newly discovered Google models
+      rateLimits = {
+        free: 10,
+        tier1: 1000,
+        tier2: 2000,
+        tier3: 10000
+      };
+    }
     return rateLimits ? { ...dm, rateLimits } : dm;
   });
 
@@ -55,7 +66,7 @@ export function getSyncInfo(): ModelSyncInfo | null {
   }
 }
 
-export async function syncModels(forceRefresh = false): Promise<SyncResult> {
+export async function syncModels(forceRefresh = true): Promise<SyncResult> {
   const cachedInfo = getSyncInfo();
   const cachedModels = getCachedModels();
 

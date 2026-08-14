@@ -1,5 +1,5 @@
 import React from 'react';
-import { SubtitleNode } from '../types';
+import { SubtitleNode } from '../../types';
 
 interface SubtitleCardProps {
   subtitle: SubtitleNode;

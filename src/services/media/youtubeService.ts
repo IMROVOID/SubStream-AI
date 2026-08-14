@@ -1,5 +1,5 @@
 import { YouTubeVideoMetadata, YouTubeCaptionTrack, YouTubeUserVideo } from "../../types";
-import { downloadFile } from "../../utils/srtUtils";
+import { downloadFile, normalizeResolutions } from "../../utils/srtUtils";
 
 const BACKEND_URL = "http://localhost:4000/api";
 
@@ -28,7 +28,7 @@ export async function getVideoDetails(videoUrl: string): Promise<{ meta: YouTube
     }));
     
     data.meta.videoUrl = data.meta.videoUrl || videoUrl;
-    data.meta.availableResolutions = (data.resolutions || []).filter((r: any) => typeof r === 'number' && r >= 144);
+    data.meta.availableResolutions = normalizeResolutions(data.resolutions || []);
 
     return { meta: data.meta, captions: mappedCaptions };
 

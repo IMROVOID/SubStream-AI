@@ -12,22 +12,49 @@ export const AVAILABLE_MODELS: AIModel[] = [
 
   // --- GOOGLE MODELS (Version Descending) ---
   {
-    id: 'gemini-3-pro-preview',
-    name: 'Gemini 3.0 Pro',
-    description: 'Highest reasoning capability. Best for complex dialogue, cultural nuances, and context retention.',
-    tags: ['Preview', 'Slower', 'Most Powerful'],
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    description: 'Cutting-edge hybrid reasoning and high-speed processing. Flagship Gemini model.',
+    tags: ['Flagship', 'Ultra Fast', 'Google'],
     provider: 'google',
     rateLimits: {
-      tier1: 50,
-      tier2: 1000,
-      tier3: 2000
+      free: 10,
+      tier1: 1000,
+      tier2: 2000,
+      tier3: 10000
+    }
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    description: 'Next-generation high-efficiency model. Ideal for complex subtitle translation and quick turnaround.',
+    tags: ['Next-Gen', 'Fast', 'Google'],
+    provider: 'google',
+    rateLimits: {
+      free: 10,
+      tier1: 1000,
+      tier2: 2000,
+      tier3: 10000
+    }
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    description: 'Cost-optimized frontier model. Extremely fast and lightweight for high volume.',
+    tags: ['Lite', 'Economy', 'Google'],
+    provider: 'google',
+    rateLimits: {
+      free: 15,
+      tier1: 2000,
+      tier2: 5000,
+      tier3: 20000
     }
   },
   {
     id: 'gemini-2.5-pro',
     name: 'Gemini 2.5 Pro',
-    description: 'Balanced performance with advanced reasoning capabilities. Great for most subtitles.',
-    tags: ['Stable', 'High Quality'],
+    description: 'Balanced performance with advanced reasoning capabilities. Great for nuanced subtitles.',
+    tags: ['Stable', 'High Quality', 'Google'],
     provider: 'google',
     rateLimits: {
       free: 2,
@@ -39,8 +66,8 @@ export const AVAILABLE_MODELS: AIModel[] = [
   {
     id: 'gemini-2.5-flash',
     name: 'Gemini 2.5 Flash',
-    description: 'Next-generation high-speed model. Ideal for large files and quick turnaround.',
-    tags: ['Stable', 'Ultra Fast'],
+    description: 'High-speed model. Ideal for large files and quick turnaround.',
+    tags: ['Stable', 'Ultra Fast', 'Google'],
     provider: 'google',
     rateLimits: {
       free: 10,
@@ -53,51 +80,25 @@ export const AVAILABLE_MODELS: AIModel[] = [
     id: 'gemini-2.5-flash-lite',
     name: 'Gemini 2.5 Flash Lite',
     description: 'Cost-optimized version of 2.5 Flash. Extremely fast and affordable for high volume.',
-    tags: ['Lite', 'Economy'],
+    tags: ['Lite', 'Economy', 'Google'],
     provider: 'google',
     rateLimits: {
       free: 15,
       tier1: 4000,
       tier2: 10000,
       tier3: 30000
-    }
-  },
-  {
-    id: 'gemini-2.0-pro',
-    name: 'Gemini 2.0 Pro',
-    description: 'Previous generation high-intelligence model. Reliable for standard translation tasks.',
-    tags: ['Stable', 'Smart'],
-    provider: 'google',
-    rateLimits: {
-      free: 2,
-      tier1: 60, 
-      tier2: 1000,
-      tier3: 2000
     }
   },
   {
     id: 'gemini-2.0-flash',
     name: 'Gemini 2.0 Flash',
     description: 'Optimized for speed and efficiency. Good for straightforward content and quick results.',
-    tags: ['Stable', 'Efficient'],
+    tags: ['Stable', 'Efficient', 'Google'],
     provider: 'google',
     rateLimits: {
       free: 15,
       tier1: 2000,
       tier2: 10000,
-      tier3: 30000
-    }
-  },
-  {
-    id: 'gemini-2.0-flash-lite-preview-02-05',
-    name: 'Gemini 2.0 Flash Lite',
-    description: 'The most cost-effective model in the 2.0 family. Good balance of speed and quality.',
-    tags: ['Preview', 'Lite', 'Budget'],
-    provider: 'google',
-    rateLimits: {
-      free: 30,
-      tier1: 4000,
-      tier2: 20000,
       tier3: 30000
     }
   },

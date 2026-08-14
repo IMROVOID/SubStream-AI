@@ -2,24 +2,53 @@ import { SubtitleNode } from "../../types";
 import { enforceRateLimit } from "./rateLimiter";
 import { cleanAndRepairJSON, getTranslationPrompt } from "./geminiService";
 
-export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> => {
-  if (!apiKey || (!apiKey.startsWith('sk-ant-') && !apiKey.startsWith('sk-'))) return false;
+const DIRECT_ANTHROPIC_URL = 'https://api.anthropic.com/v1';
+const BACKEND_ANTHROPIC_PROXY = 'http://localhost:4000/api/proxy/ai/anthropic/v1';
+
+async function fetchAnthropic(
+  endpoint: string,
+  options: RequestInit
+): Promise<Response> {
+  await enforceRateLimit();
+
+  // Try direct first
   try {
-    await enforceRateLimit();
-    const response = await fetch('https://api.anthropic.com/v1/models', {
+    const directRes = await fetch(`${DIRECT_ANTHROPIC_URL}${endpoint}`, options);
+    // If the server responded (even with a 4xx/5xx status code), return it directly
+    return directRes;
+  } catch (err: any) {
+    console.warn("[Anthropic Service] Direct request failed with network error, retrying via backend AI proxy...", err?.message);
+    try {
+      const proxyRes = await fetch(`${BACKEND_ANTHROPIC_PROXY}${endpoint}`, options);
+      return proxyRes;
+    } catch (proxyErr: any) {
+      console.error("[Anthropic Service] Proxy request also failed:", proxyErr?.message);
+      throw err;
+    }
+  }
+}
+
+export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> => {
+  const trimmed = apiKey?.trim();
+  if (!trimmed || (!trimmed.startsWith('sk-ant-') && !trimmed.startsWith('sk-'))) return false;
+
+  try {
+    const response = await fetchAnthropic('/models', {
       method: 'GET',
       headers: {
-        'x-api-key': apiKey,
+        'x-api-key': trimmed,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true'
       }
     });
-    if (response.ok) return true;
 
-    const msgResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    if (response.ok) return true;
+    if (response.status === 401) return false;
+
+    const msgResponse = await fetchAnthropic('/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': apiKey,
+        'x-api-key': trimmed,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
         'content-type': 'application/json'
@@ -30,9 +59,13 @@ export const validateAnthropicApiKey = async (apiKey: string): Promise<boolean> 
         messages: [{ role: 'user', content: 'hi' }]
       })
     });
-    return msgResponse.ok;
+
+    if (msgResponse.ok) return true;
+    if (msgResponse.status === 401) return false;
+    return trimmed.length > 20;
   } catch (error) {
-    return false;
+    // Fallback to length check if network/proxy is offline or unreachable
+    return trimmed.length > 20;
   }
 };
 
@@ -40,8 +73,7 @@ export async function translateWithAnthropic(subtitles: SubtitleNode[], sourceLa
   const contentToTranslate = subtitles.map(s => ({ id: s.id, text: s.text }));
   const systemPrompt = getTranslationPrompt(sourceLang, targetLang, contentToTranslate);
 
-  await enforceRateLimit();
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchAnthropic('/messages', {
     method: 'POST',
     headers: {
       'x-api-key': apiKey,

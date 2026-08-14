@@ -11,7 +11,9 @@ interface MediaUploadSectionProps {
   draggedFileInfo: { name: string; type: 'subtitle' | 'video' | 'unknown' } | null;
   onOpenUrlModal: (type: 'URL' | 'YOUTUBE') => void;
   onOpenCloudModal: () => void;
-  showToast: (msg: string) => void;
+  showToast: (msg: string, details?: string, type?: 'info' | 'success' | 'error') => void;
+  hasMethodSelected: boolean;
+  onRequireMethod: () => void;
 }
 
 export const MediaUploadSection: React.FC<MediaUploadSectionProps> = ({
@@ -23,9 +25,28 @@ export const MediaUploadSection: React.FC<MediaUploadSectionProps> = ({
   draggedFileInfo,
   onOpenUrlModal,
   onOpenCloudModal,
-  showToast
+  showToast,
+  hasMethodSelected,
+  onRequireMethod
 }) => {
   if (file) return null;
+
+  const handleClickContainer = () => {
+    if (!hasMethodSelected) {
+      onRequireMethod();
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleContainerDrop = (e: React.DragEvent) => {
+    if (!hasMethodSelected) {
+      e.preventDefault();
+      onRequireMethod();
+      return;
+    }
+    handleDrop(e);
+  };
 
   return (
     <>
@@ -49,8 +70,8 @@ export const MediaUploadSection: React.FC<MediaUploadSectionProps> = ({
       <div 
         className="flex flex-col items-center justify-center text-center cursor-pointer min-h-[220px] w-full relative transition-all duration-300"
         onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onDrop={handleContainerDrop}
+        onClick={handleClickContainer}
       >
         <input 
           type="file" 

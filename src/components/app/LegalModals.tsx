@@ -1,6 +1,6 @@
 import React from 'react';
 import { Shield, HardDrive, Youtube } from 'lucide-react';
-import { Modal } from '../Modal';
+import { Modal } from '../common/Modal';
 
 interface LegalModalsProps {
   activeModal: 'NONE' | 'CONFIG' | 'TOS' | 'PRIVACY';

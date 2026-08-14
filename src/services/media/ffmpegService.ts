@@ -144,9 +144,12 @@ export async function addSrtToVideo(
   targetLangCode: string,
   originalSrt?: string,
   sourceLangCode?: string,
-  targetResolution?: number
+  targetResolution?: number,
+  onProgress?: (percent: number) => void
 ): Promise<Blob> {
+  onProgress?.(15);
   await ffmpeg.writeFile('input.video', await fetchFile(videoFile));
+  onProgress?.(40);
   await ffmpeg.writeFile('translated.srt', new TextEncoder().encode(translatedSrt));
   
   const command = [
@@ -162,11 +165,8 @@ export async function addSrtToVideo(
   const outputFileName = 'output.mkv';
   command.push('-map', '0:v?', '-map', '0:a?', '-map', '0:s?', '-map', '0:d?');
 
-  if (targetResolution && targetResolution > 0) {
-    command.push('-vf', `scale=-2:min(${targetResolution}\\,ih)`, '-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-c:a', 'copy');
-  } else {
-    command.push('-c', 'copy');
-  }
+  // Lossless instant stream-copy for video and audio
+  command.push('-c:v', 'copy', '-c:a', 'copy');
 
   command.push(
     '-map', '1', 
@@ -187,8 +187,23 @@ export async function addSrtToVideo(
 
   command.push(outputFileName);
 
-  await ffmpeg.exec(command);
+  onProgress?.(65);
+  const progressListener = ({ progress }: { progress: number }) => {
+    if (progress > 0 && progress <= 1) {
+      onProgress?.(Math.round(65 + progress * 25));
+    }
+  };
+  ffmpeg.on('progress', progressListener);
+
+  try {
+    await ffmpeg.exec(command);
+  } finally {
+    ffmpeg.off('progress', progressListener);
+  }
+
+  onProgress?.(95);
   const data = await ffmpeg.readFile(outputFileName);
+  onProgress?.(100);
 
   if (data instanceof Uint8Array) {
     const dataCopy = new Uint8Array(data);

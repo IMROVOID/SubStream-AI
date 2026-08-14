@@ -117,7 +117,7 @@ export const fixTimestampIssues = (segments: { start: string; end: string; text:
 export const validateGoogleApiKey = async (apiKey: string): Promise<boolean> => {
   if (!apiKey || !apiKey.startsWith('AIzaSy')) return false;
 
-  const modelsToTry = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
   const ai = new GoogleGenAI({ apiKey });
 
   for (const model of modelsToTry) {

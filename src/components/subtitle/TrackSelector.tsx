@@ -1,12 +1,12 @@
 import React from 'react';
 import { Bot, FileText, Youtube, Sparkles, Languages, ArrowRight } from 'lucide-react';
-import { ExtractedSubtitleTrack, AIModel, LANGUAGES } from '../types';
+import { ExtractedSubtitleTrack, AIModel, LANGUAGES } from '../../types';
 
 interface TrackSelectorProps {
   tracks: ExtractedSubtitleTrack[];
   onSelectTrack: (trackIndex: number) => void;
   onGenerate: () => void;
-  activeModel: AIModel;
+  activeModel: AIModel | null;
   isYouTubeAuthenticated: boolean;
   sourceLang: string;
   setSourceLang: (lang: string) => void;
@@ -26,14 +26,14 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({
   setTargetLang
 }) => {
   
-  const isYouTubeModel = activeModel.provider === 'youtube';
+  const isYouTubeModel = activeModel?.provider === 'youtube';
 
   return (
     <div className="animate-fade-in space-y-6 max-w-2xl mx-auto">
       <div className="text-center space-y-2">
         <h2 className="text-xl font-bold text-white">Configuration</h2>
         <p className="text-neutral-400">
-          Configure languages before generating subtitles with <strong>{activeModel.name}</strong>.
+          Configure languages before generating subtitles with <strong>{activeModel?.name || 'AI'}</strong>.
         </p>
       </div>
 
@@ -68,6 +68,7 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({
                         value={targetLang} 
                         onChange={(e) => setTargetLang(e.target.value)}
                     >
+                        <option value="none">-- None (Transcription Only) --</option>
                         {LANGUAGES.map(l => <option key={`tgt-${l.code}`} value={l.name}>{l.name}</option>)}
                     </select>
                 </div>
@@ -98,6 +99,8 @@ export const TrackSelector: React.FC<TrackSelectorProps> = ({
             <p className="text-xs text-neutral-400 mt-1">
               {isYouTubeModel 
                 ? "Uploads unlisted to YouTube -> Transcribes -> Translates." 
+                : targetLang === 'none'
+                ? `Extracts Audio -> Transcribes (${sourceLang === 'auto' ? 'Auto' : sourceLang}).`
                 : `Extracts Audio -> Transcribes (${sourceLang === 'auto' ? 'Auto' : sourceLang}) -> Translates to ${targetLang}.`}
             </p>
           </div>
